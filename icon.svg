@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Fond vert sapin (rempli pour l'icône "maskable") -->
+  <rect width="512" height="512" fill="#2f5e3e"/>
+  <!-- Montagnes crème -->
+  <path d="M70 372 L196 188 L276 286 L328 226 L450 372 Z" fill="#f1f6f4"/>
+  <!-- Petites neiges -->
+  <path d="M196 188 L222 226 L170 226 Z" fill="#ffffff"/>
+  <!-- Tracé pointillé (ocre) -->
+  <path d="M96 420 Q256 338 416 420" fill="none" stroke="#e3b878" stroke-width="16"
+        stroke-linecap="round" stroke-dasharray="2 30"/>
+  <!-- Épingle souvenir (orange) -->
+  <g transform="translate(307 266)">
+    <path d="M0 96 L-36 24 A40 40 0 1 1 36 24 Z" fill="#d35438"/>
+    <circle cx="0" cy="-8" r="40" fill="#d35438"/>
+    <circle cx="0" cy="-8" r="17" fill="#ffffff"/>
+  </g>
+</svg>

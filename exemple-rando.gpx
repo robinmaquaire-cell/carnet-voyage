@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Carnet de voyage - exemple" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Boucle du Lac de Lauvitel</name>
+    <desc>Trace d'exemple pour tester le carnet de voyage</desc>
+  </metadata>
+  <wpt lat="45.0510" lon="5.9420">
+    <name>Parking du Bourg-d'Arud</name>
+  </wpt>
+  <wpt lat="45.0635" lon="5.9505">
+    <name>Lac de Lauvitel</name>
+  </wpt>
+  <trk>
+    <name>Boucle du Lac de Lauvitel</name>
+    <trkseg>
+      <trkpt lat="45.0510" lon="5.9420"><ele>950</ele></trkpt>
+      <trkpt lat="45.0518" lon="5.9428"><ele>968</ele></trkpt>
+      <trkpt lat="45.0526" lon="5.9437"><ele>985</ele></trkpt>
+      <trkpt lat="45.0533" lon="5.9449"><ele>1004</ele></trkpt>
+      <trkpt lat="45.0541" lon="5.9460"><ele>1025</ele></trkpt>
+      <trkpt lat="45.0550" lon="5.9468"><ele>1051</ele></trkpt>
+      <trkpt lat="45.0559" lon="5.9474"><ele>1080</ele></trkpt>
+      <trkpt lat="45.0569" lon="5.9479"><ele>1112</ele></trkpt>
+      <trkpt lat="45.0580" lon="5.9483"><ele>1147</ele></trkpt>
+      <trkpt lat="45.0592" lon="5.9487"><ele>1185</ele></trkpt>
+      <trkpt lat="45.0604" lon="5.9491"><ele>1224</ele></trkpt>
+      <trkpt lat="45.0616" lon="5.9496"><ele>1262</ele></trkpt>
+      <trkpt lat="45.0627" lon="5.9501"><ele>1295</ele></trkpt>
+      <trkpt lat="45.0635" lon="5.9505"><ele>1320</ele></trkpt>
+      <trkpt lat="45.0642" lon="5.9516"><ele>1332</ele></trkpt>
+      <trkpt lat="45.0647" lon="5.9529"><ele>1340</ele></trkpt>
+      <trkpt lat="45.0650" lon="5.9544"><ele>1345</ele></trkpt>
+      <trkpt lat="45.0649" lon="5.9559"><ele>1342</ele></trkpt>
+      <trkpt lat="45.0645" lon="5.9572"><ele>1335</ele></trkpt>
+      <trkpt lat="45.0638" lon="5.9581"><ele>1320</ele></trkpt>
+      <trkpt lat="45.0629" lon="5.9585"><ele>1298</ele></trkpt>
+      <trkpt lat="45.0619" lon="5.9584"><ele>1270</ele></trkpt>
+      <trkpt lat="45.0609" lon="5.9579"><ele>1238</ele></trkpt>
+      <trkpt lat="45.0599" lon="5.9571"><ele>1203</ele></trkpt>
+      <trkpt lat="45.0589" lon="5.9561"><ele>1167</ele></trkpt>
+      <trkpt lat="45.0579" lon="5.9550"><ele>1130</ele></trkpt>
+      <trkpt lat="45.0569" lon="5.9538"><ele>1094</ele></trkpt>
+      <trkpt lat="45.0559" lon="5.9527"><ele>1060</ele></trkpt>
+      <trkpt lat="45.0549" lon="5.9515"><ele>1028</ele></trkpt>
+      <trkpt lat="45.0539" lon="5.9501"><ele>1000</ele></trkpt>
+      <trkpt lat="45.0530" lon="5.9484"><ele>978</ele></trkpt>
+      <trkpt lat="45.0522" lon="5.9465"><ele>962</ele></trkpt>
+      <trkpt lat="45.0516" lon="5.9444"><ele>953</ele></trkpt>
+      <trkpt lat="45.0510" lon="5.9420"><ele>950</ele></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Carnet de voyage</title>
+
+  <!-- Installation sur l'écran d'accueil (PWA) -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#2f5e3e" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Carnet" />
+
+  <!-- Leaflet : la librairie qui affiche la carte interactive -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+
+  <!-- MapLibre GL : moteur de carte "vectorielle" (fond personnalisable) -->
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+
+  <!-- Nos styles à nous -->
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- Barre du haut : titre de l'app + actions principales -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">▲</span>
+      <span class="brand-name">Carnet&nbsp;de&nbsp;voyage</span>
+    </div>
+
+    <!-- Indicateur discret de sauvegarde automatique -->
+    <span id="statut-sauvegarde" class="statut-sauvegarde" hidden>✓ Enregistré</span>
+
+    <div class="topbar-actions">
+      <!-- Bouton "ajouter un souvenir" : apparaît une fois une trace chargée -->
+      <button id="btn-ajout-souvenir" class="btn btn-accent" hidden>
+        <span class="btn-ico">📍</span> Ajouter un souvenir
+      </button>
+
+      <!-- Ouvre le panneau de personnalisation du style -->
+      <button id="btn-style" class="btn btn-ghost-clair" hidden>🎨 Style</button>
+
+      <!-- Exporter le carnet en un fichier .json : apparaît avec une trace -->
+      <button id="btn-exporter" class="btn btn-ghost-clair" hidden>Exporter</button>
+
+      <!-- Réinitialiser : efface la trace et les souvenirs (avec confirmation) -->
+      <button id="btn-reinitialiser" class="btn btn-ghost-clair" hidden>Réinitialiser</button>
+
+      <!-- Importer un carnet .json déjà sauvegardé -->
+      <label class="btn btn-ghost-clair">
+        Importer
+        <input id="import-input" type="file" accept=".json,application/json" hidden />
+      </label>
+
+      <!-- Bouton qui déclenche le choix d'un fichier .gpx -->
+      <label class="btn btn-primary">
+        Charger un GPX
+        <input id="gpx-input" type="file" accept=".gpx,application/gpx+xml" hidden />
+      </label>
+    </div>
+  </header>
+
+  <!-- Zone principale : la carte occupe tout l'espace -->
+  <main class="layout">
+    <div id="map" class="map"></div>
+
+    <!-- Calque "parchemin" pour l'ambiance médiévale (par-dessus le fond, sous le titre) -->
+    <div id="parchemin" class="parchemin"></div>
+
+    <!-- Cartouche de titre affiché sur la carte (rempli via le panneau Style) -->
+    <div id="carte-titre" class="carte-titre" hidden></div>
+
+    <!-- Petit bandeau d'infos sur la trace chargée (caché tant qu'il n'y a rien) -->
+    <div id="trace-info" class="trace-info" hidden>
+      <span id="trace-name" class="trace-info-name">—</span>
+      <span id="trace-stats" class="trace-info-stats"></span>
+    </div>
+
+    <!-- Message d'accueil tant qu'aucune trace n'est chargée -->
+    <div id="welcome" class="welcome">
+      <div class="welcome-card">
+        <h1>Transforme ta trace en carnet de voyage</h1>
+        <p>Commence par charger un fichier <strong>.gpx</strong> de ta randonnée ou de ton voyage.</p>
+        <label class="btn btn-primary btn-lg">
+          Charger un GPX
+          <input id="gpx-input-welcome" type="file" accept=".gpx,application/gpx+xml" hidden />
+        </label>
+        <p class="welcome-hint">Pas de fichier sous la main ? Utilise <code>exemple-rando.gpx</code> fourni avec l'application.</p>
+      </div>
+    </div>
+
+    <!-- Bandeau d'aide affiché pendant qu'on attend un clic pour poser un souvenir -->
+    <div id="banniere-ajout" class="banniere-ajout" hidden>
+      <span>📍 Clique sur la carte à l'endroit de ton souvenir</span>
+      <button id="annuler-ajout" class="banniere-annuler">Annuler</button>
+    </div>
+
+    <!-- Fiche d'un souvenir : panneau qui s'ouvre sur le côté -->
+    <aside id="panneau" class="panneau" hidden>
+      <header class="panneau-tete">
+        <input id="souvenir-titre" class="panneau-titre" type="text" placeholder="Nom du souvenir" />
+        <button id="fermer-panneau" class="icone-btn" title="Fermer">✕</button>
+      </header>
+
+      <!-- Navigation d'un souvenir à l'autre, dans l'ordre du carnet -->
+      <nav class="panneau-nav">
+        <button id="souvenir-precedent" class="nav-btn" title="Souvenir précédent">←</button>
+        <span id="souvenir-compteur" class="nav-compteur">— / —</span>
+        <button id="souvenir-suivant" class="nav-btn" title="Souvenir suivant">→</button>
+      </nav>
+
+      <div class="panneau-corps">
+        <!-- Réorganiser ce souvenir dans l'ordre du carnet -->
+        <div class="souvenir-ordre">
+          <span class="souvenir-ordre-label">Ordre dans le carnet</span>
+          <div class="souvenir-ordre-btns">
+            <button id="souvenir-avancer" class="btn-ordre" title="Le placer plus tôt">↑ Avancer</button>
+            <button id="souvenir-reculer" class="btn-ordre" title="Le placer plus tard">↓ Reculer</button>
+          </div>
+        </div>
+
+        <p class="panneau-coords" id="souvenir-coords">—</p>
+
+        <!-- Pictogramme de l'épingle -->
+        <section class="fiche-section">
+          <h3>Pictogramme</h3>
+          <div id="souvenir-pictos" class="picto-grille"></div>
+        </section>
+
+        <!-- Photos du souvenir -->
+        <section class="fiche-section">
+          <div class="fiche-section-tete">
+            <h3>Photos</h3>
+            <label class="btn btn-ghost btn-petit">
+              + Ajouter
+              <input id="ajout-photos" type="file" accept="image/*" multiple hidden />
+            </label>
+          </div>
+          <div id="souvenir-photos" class="galerie"></div>
+          <p id="galerie-vide" class="galerie-vide">Aucune photo pour l'instant.</p>
+        </section>
+
+        <!-- Récit du souvenir -->
+        <section class="fiche-section">
+          <h3>Récit</h3>
+          <textarea id="souvenir-texte" class="fiche-texte"
+                    placeholder="Raconte ce moment : ce que tu as vu, ressenti, vécu…"></textarea>
+        </section>
+      </div>
+      <footer class="panneau-pied">
+        <button id="supprimer-souvenir" class="btn btn-danger">Supprimer ce souvenir</button>
+      </footer>
+    </aside>
+
+    <!-- Panneau Style : personnalisation de la carte (ouvre à gauche) -->
+    <aside id="panneau-style" class="panneau panneau-gauche" hidden>
+      <header class="panneau-tete">
+        <span class="panneau-titre-fixe">🎨 Style de la carte</span>
+        <button id="fermer-style" class="icone-btn" title="Fermer">✕</button>
+      </header>
+      <div class="panneau-corps">
+
+        <!-- Titre de la carte -->
+        <section class="style-section">
+          <h3>Titre de la carte</h3>
+          <input id="style-titre" class="style-input" type="text"
+                 placeholder="Ex : Boucle du Lac de Lauvitel" maxlength="60" />
+          <p class="style-aide">Laisse vide pour ne rien afficher sur la carte.</p>
+        </section>
+
+        <!-- Tracé du parcours -->
+        <section class="style-section">
+          <h3>Tracé du parcours</h3>
+
+          <label class="style-label">Couleur</label>
+          <div id="trace-couleurs" class="nuancier"></div>
+          <label class="style-label-couleur">
+            Personnalisée
+            <input id="trace-couleur-perso" type="color" value="#c8893d" />
+          </label>
+
+          <label class="style-label">Épaisseur : <span id="trace-epaisseur-val">4</span> px</label>
+          <input id="trace-epaisseur" class="style-range" type="range" min="2" max="10" step="1" value="4" />
+
+          <label class="style-label">Type de ligne</label>
+          <div id="trace-type" class="segment" role="group">
+            <button class="segment-btn" data-type="plein">Plein</button>
+            <button class="segment-btn" data-type="pointilles">Pointillés</button>
+            <button class="segment-btn" data-type="tirets">Tirets</button>
+          </div>
+        </section>
+
+        <!-- Fond de carte -->
+        <section class="style-section">
+          <h3>Fond de carte</h3>
+          <div id="fond-carte" class="segment segment-colonne" role="group">
+            <button class="segment-btn" data-fond="topo">Topographique</button>
+            <button class="segment-btn" data-fond="clair">Clair (voyage)</button>
+            <button class="segment-btn" data-fond="epure">Épuré</button>
+            <button class="segment-btn" data-fond="vectoriel">Vectoriel ✏️</button>
+            <button class="segment-btn" data-fond="perso">Personnalisé…</button>
+          </div>
+
+          <!-- Réglage du fond personnalisé (visible quand "Personnalisé" est choisi) -->
+          <div id="fond-perso-bloc" class="fond-perso" hidden>
+            <label class="style-label">Exemples prêts à l'emploi</label>
+            <div id="fond-perso-exemples" class="fond-exemples"></div>
+
+            <label class="style-label">…ou colle une adresse de tuiles</label>
+            <input id="fond-perso-url" class="style-input" type="text"
+                   placeholder="https://…/{z}/{x}/{y}.png" />
+            <p class="style-aide">L'adresse doit contenir <code>{z}</code>, <code>{x}</code> et <code>{y}</code>.</p>
+          </div>
+
+          <!-- Réglages du fond vectoriel (visible quand "Vectoriel" est choisi) -->
+          <div id="vecteur-bloc" class="vecteur-bloc" hidden>
+            <button id="preset-ancienne" class="btn btn-accent btn-petit preset-btn">✶ Préréglage : Carte ancienne</button>
+
+            <label class="style-label">Couleurs des zones</label>
+            <div class="zone-rangees">
+              <label class="zone-rangee">Eau <input type="color" data-zone="eau" /></label>
+              <label class="zone-rangee">Forêt <input type="color" data-zone="foret" /></label>
+              <label class="zone-rangee">Prairie <input type="color" data-zone="prairie" /></label>
+              <label class="zone-rangee">Bâti <input type="color" data-zone="bati" /></label>
+              <label class="zone-rangee">Fond <input type="color" data-zone="fond" /></label>
+            </div>
+            <button id="zones-reset" class="btn btn-ghost btn-petit">Couleurs d'origine</button>
+          </div>
+        </section>
+
+        <!-- Ambiance (teinte générale) -->
+        <section class="style-section">
+          <h3>Ambiance</h3>
+          <div id="ambiance-carte" class="segment segment-grille" role="group">
+            <button class="segment-btn" data-ambiance="naturel">Naturel</button>
+            <button class="segment-btn" data-ambiance="ancien">Ancien</button>
+            <button class="segment-btn" data-ambiance="doux">Doux</button>
+            <button class="segment-btn" data-ambiance="medieval">Médiéval</button>
+          </div>
+        </section>
+
+        <!-- Noms des souvenirs affichés sur la carte -->
+        <section class="style-section">
+          <h3>Noms des souvenirs</h3>
+          <label class="style-switch">
+            <input id="labels-afficher" type="checkbox" />
+            <span>Afficher les noms sur la carte</span>
+          </label>
+
+          <div id="labels-reglages" hidden>
+            <label class="style-label">Police</label>
+            <div id="labels-police" class="segment segment-grille" role="group">
+              <button class="segment-btn" data-police="systeme">Système</button>
+              <button class="segment-btn" data-police="serif">Serif</button>
+              <button class="segment-btn" data-police="etroite">Étroite</button>
+              <button class="segment-btn" data-police="titre">Titre</button>
+            </div>
+
+            <label class="style-label">Couleur</label>
+            <div id="labels-couleurs" class="nuancier"></div>
+
+            <label class="style-label">Taille</label>
+            <div id="labels-taille" class="segment" role="group">
+              <button class="segment-btn" data-taille="petit">Petit</button>
+              <button class="segment-btn" data-taille="moyen">Moyen</button>
+              <button class="segment-btn" data-taille="grand">Grand</button>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </aside>
+  </main>
+
+  <!-- Petite fenêtre pour saisir le nom au moment de poser un souvenir -->
+  <div id="modal-nom" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <h2>Nouveau souvenir</h2>
+      <p class="modal-sous-titre">Donne-lui un nom court et parlant.</p>
+      <input id="champ-nom" type="text" placeholder="Ex : Pique-nique au bord du lac" maxlength="80" />
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="annuler-nom">Annuler</button>
+        <button class="btn btn-accent" id="valider-nom">Créer le souvenir</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Visionneuse plein écran pour regarder une photo en grand -->
+  <div id="lightbox" class="lightbox" hidden>
+    <button id="lightbox-fermer" class="lightbox-fermer" title="Fermer">✕</button>
+    <button id="lightbox-prec" class="lightbox-nav lightbox-prec" title="Photo précédente">‹</button>
+    <figure class="lightbox-centre">
+      <img id="lightbox-img" class="lightbox-img" alt="Photo du souvenir" />
+      <figcaption class="lightbox-barre">
+        <button id="lightbox-couverture" class="btn-couv" title="Choisir comme photo de couverture">☆ Couverture</button>
+        <input id="lightbox-legende" class="lightbox-legende" type="text"
+               placeholder="Ajouter une légende à cette photo…" maxlength="140" />
+        <span id="lightbox-compteur" class="lightbox-compteur"></span>
+      </figcaption>
+    </figure>
+    <button id="lightbox-suiv" class="lightbox-nav lightbox-suiv" title="Photo suivante">›</button>
+  </div>
+
+  <!-- Petit message temporaire (succès / erreur) -->
+  <div id="toast" class="toast" hidden></div>
+
+  <!-- Leaflet (le moteur de la carte) -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <!-- MapLibre GL + le pont qui l'intègre dans Leaflet (fond vectoriel) -->
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
+
+  <!-- Notre code -->
+  <script src="gpx.js"></script>
+  <script src="db.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
