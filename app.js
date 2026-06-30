@@ -1743,6 +1743,14 @@ function init() {
 
   // On enregistre le service worker (pour l'installation et le hors-ligne).
   if ("serviceWorker" in navigator) {
+    // Quand une nouvelle version prend le contrôle, on recharge la page pour
+    // l'appliquer aussitôt (sinon l'app resterait sur l'ancien code en cache).
+    let rechargement = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (rechargement) return;
+      rechargement = true;
+      window.location.reload();
+    });
     navigator.serviceWorker.register("sw.js").catch(() => {
       /* sans service worker, l'app fonctionne quand même (juste pas hors-ligne) */
     });
