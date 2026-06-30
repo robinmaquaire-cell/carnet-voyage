@@ -520,6 +520,7 @@ function ouvrirPanneau(souvenir) {
   majPictoActif(souvenir.pictogramme);
   afficherGalerie(souvenir);
   majNavigation();
+  majFondPanneau();
 }
 
 /** Met à jour le compteur "n / total" et l'état (actif/grisé) des flèches. */
@@ -570,6 +571,17 @@ function naviguerSouvenir(decalage) {
 function fermerPanneau() {
   document.getElementById("panneau").hidden = true;
   etat.souvenirActif = null;
+  majFondPanneau();
+}
+
+/**
+ * Affiche le fond assombri seulement quand la fiche est ouverte en mode
+ * visualisation (où elle s'affiche comme une pop up centrée).
+ */
+function majFondPanneau() {
+  const ouvert = !document.getElementById("panneau").hidden;
+  document.getElementById("panneau-fond").hidden =
+    !(ouvert && etat.mode === "visualisation");
 }
 
 /** Renomme le souvenir actif (au fil de la frappe dans le champ titre). */
@@ -1559,7 +1571,10 @@ function definirMode(mode) {
 
   // Les champs de saisie passent en lecture seule en visualisation.
   document.getElementById("souvenir-titre").readOnly = vue;
-  document.getElementById("souvenir-texte").readOnly = vue;
+  const recit = document.getElementById("souvenir-texte");
+  recit.readOnly = vue;
+  // En lecture seule, on retire le texte d'invite (qui suggère d'écrire).
+  recit.placeholder = vue ? "" : "Raconte ce moment : ce que tu as vu, ressenti, vécu…";
   const legende = document.getElementById("lightbox-legende");
   legende.readOnly = vue;
   legende.placeholder = vue ? "" : "Ajouter une légende à cette photo…";
@@ -1569,6 +1584,9 @@ function definirMode(mode) {
     desarmerAjout();
     fermerPanneauStyle();
   }
+
+  // Le fond assombri (pop up) ne concerne que la visualisation.
+  majFondPanneau();
 
   // On mémorise le choix pour le prochain démarrage.
   try { localStorage.setItem("carnet-mode", etat.mode); } catch (e) {}
@@ -1630,6 +1648,8 @@ function init() {
 
   // --- Panneau latéral (fiche du souvenir) ---
   document.getElementById("fermer-panneau")
+    .addEventListener("click", fermerPanneau);
+  document.getElementById("panneau-fond")
     .addEventListener("click", fermerPanneau);
   document.getElementById("supprimer-souvenir")
     .addEventListener("click", supprimerSouvenirActif);
