@@ -37,28 +37,31 @@
     <span id="statut-sauvegarde" class="statut-sauvegarde" hidden>✓ Enregistré</span>
 
     <div class="topbar-actions">
+      <!-- Bascule Édition / Visualisation : apparaît une fois une trace chargée -->
+      <button id="btn-mode" class="btn btn-ghost-clair" hidden>👁 Mode visualisation</button>
+
       <!-- Bouton "ajouter un souvenir" : apparaît une fois une trace chargée -->
-      <button id="btn-ajout-souvenir" class="btn btn-accent" hidden>
+      <button id="btn-ajout-souvenir" class="btn btn-accent edition-seule" hidden>
         <span class="btn-ico">📍</span> Ajouter un souvenir
       </button>
 
       <!-- Ouvre le panneau de personnalisation du style -->
-      <button id="btn-style" class="btn btn-ghost-clair" hidden>🎨 Style</button>
+      <button id="btn-style" class="btn btn-ghost-clair edition-seule" hidden>🎨 Style</button>
 
       <!-- Exporter le carnet en un fichier .json : apparaît avec une trace -->
       <button id="btn-exporter" class="btn btn-ghost-clair" hidden>Exporter</button>
 
       <!-- Réinitialiser : efface la trace et les souvenirs (avec confirmation) -->
-      <button id="btn-reinitialiser" class="btn btn-ghost-clair" hidden>Réinitialiser</button>
+      <button id="btn-reinitialiser" class="btn btn-ghost-clair edition-seule" hidden>Réinitialiser</button>
 
       <!-- Importer un carnet .json déjà sauvegardé -->
-      <label class="btn btn-ghost-clair">
+      <label id="label-importer" class="btn btn-ghost-clair edition-seule">
         Importer
         <input id="import-input" type="file" accept=".json,application/json" hidden />
       </label>
 
       <!-- Bouton qui déclenche le choix d'un fichier .gpx -->
-      <label class="btn btn-primary">
+      <label id="label-gpx" class="btn btn-primary edition-seule">
         Charger un GPX
         <input id="gpx-input" type="file" accept=".gpx,application/gpx+xml" hidden />
       </label>
@@ -116,7 +119,7 @@
 
       <div class="panneau-corps">
         <!-- Réorganiser ce souvenir dans l'ordre du carnet -->
-        <div class="souvenir-ordre">
+        <div class="souvenir-ordre edition-seule">
           <span class="souvenir-ordre-label">Ordre dans le carnet</span>
           <div class="souvenir-ordre-btns">
             <button id="souvenir-avancer" class="btn-ordre" title="Le placer plus tôt">↑ Avancer</button>
@@ -127,7 +130,7 @@
         <p class="panneau-coords" id="souvenir-coords">—</p>
 
         <!-- Pictogramme de l'épingle -->
-        <section class="fiche-section">
+        <section class="fiche-section edition-seule">
           <h3>Pictogramme</h3>
           <div id="souvenir-pictos" class="picto-grille"></div>
         </section>
@@ -136,13 +139,13 @@
         <section class="fiche-section">
           <div class="fiche-section-tete">
             <h3>Photos</h3>
-            <label class="btn btn-ghost btn-petit">
+            <label class="btn btn-ghost btn-petit edition-seule">
               + Ajouter
               <input id="ajout-photos" type="file" accept="image/*" multiple hidden />
             </label>
           </div>
           <div id="souvenir-photos" class="galerie"></div>
-          <p id="galerie-vide" class="galerie-vide">Aucune photo pour l'instant. Astuce : tu peux en sélectionner plusieurs à la fois.</p>
+          <p id="galerie-vide" class="galerie-vide">Aucune photo<span class="edition-seule"> pour l'instant. Astuce : tu peux en sélectionner plusieurs à la fois.</span></p>
         </section>
 
         <!-- Récit du souvenir -->
@@ -152,7 +155,7 @@
                     placeholder="Raconte ce moment : ce que tu as vu, ressenti, vécu…"></textarea>
         </section>
       </div>
-      <footer class="panneau-pied">
+      <footer class="panneau-pied edition-seule">
         <button id="supprimer-souvenir" class="btn btn-danger">Supprimer ce souvenir</button>
       </footer>
     </aside>
@@ -297,7 +300,7 @@
     <figure class="lightbox-centre">
       <img id="lightbox-img" class="lightbox-img" alt="Photo du souvenir" />
       <figcaption class="lightbox-barre">
-        <button id="lightbox-couverture" class="btn-couv" title="Choisir comme photo de couverture">☆ Couverture</button>
+        <button id="lightbox-couverture" class="btn-couv edition-seule" title="Choisir comme photo de couverture">☆ Couverture</button>
         <input id="lightbox-legende" class="lightbox-legende" type="text"
                placeholder="Ajouter une légende à cette photo…" maxlength="140" />
         <span id="lightbox-compteur" class="lightbox-compteur"></span>

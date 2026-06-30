@@ -17,6 +17,7 @@ const etat = {
   modeAjout: false,       // vrai quand on attend un clic sur la carte pour poser un souvenir
   souvenirActif: null,    // le souvenir dont la fiche est ouverte dans le panneau
   style: null,            // les réglages d'apparence (rempli au démarrage)
+  mode: "edition",        // "edition" ou "visualisation" (lecture seule)
 };
 
 // Compteur pour donner un identifiant unique à chaque souvenir.
@@ -237,6 +238,7 @@ function afficherTrace(trace) {
   document.getElementById("welcome").hidden = true;
 
   // On rend disponibles l'ajout de souvenirs, le style, l'export et la réinit.
+  document.getElementById("btn-mode").hidden = false;
   document.getElementById("btn-ajout-souvenir").hidden = false;
   document.getElementById("btn-style").hidden = false;
   document.getElementById("btn-exporter").hidden = false;
@@ -374,6 +376,7 @@ function renumeroterSouvenirs() {
 
 /** Active le "mode ajout" : le prochain clic sur la carte posera un souvenir. */
 function armerAjout() {
+  if (etat.mode === "visualisation") return; // pas d'ajout en lecture seule
   etat.modeAjout = true;
   document.getElementById("map").classList.add("mode-ajout");
   document.getElementById("banniere-ajout").hidden = false;
@@ -1320,6 +1323,7 @@ function basculerBlocPerso(visible) {
 
 /** Ouvre le panneau Style. */
 function ouvrirPanneauStyle() {
+  if (etat.mode === "visualisation") return; // édition seulement
   synchroniserControlesStyle();
   document.getElementById("panneau-style").hidden = false;
 }
@@ -1489,7 +1493,11 @@ async function reinitialiserCarnet() {
   // On recentre la carte sur la vue par défaut (la France).
   etat.carte.setView([46.6, 2.5], 6);
 
+  // On revient en mode édition pour le prochain carnet.
+  definirMode("edition");
+
   // On masque les boutons liés à une trace et on réaffiche l'accueil.
+  document.getElementById("btn-mode").hidden = true;
   document.getElementById("btn-ajout-souvenir").hidden = true;
   document.getElementById("btn-style").hidden = true;
   document.getElementById("btn-exporter").hidden = true;
@@ -1534,6 +1542,41 @@ async function chargerCarnetSauvegarde() {
   } catch (e) {
     // Pas de carnet ou IndexedDB indisponible : on démarre à vide, sans bruit.
   }
+}
+
+/* =========================================================
+   Mode Édition / Visualisation (lecture seule)
+   ========================================================= */
+
+/** Applique le mode demandé : "edition" ou "visualisation". */
+function definirMode(mode) {
+  etat.mode = mode === "visualisation" ? "visualisation" : "edition";
+  const vue = etat.mode === "visualisation";
+
+  document.body.classList.toggle("mode-visualisation", vue);
+  document.getElementById("btn-mode").textContent =
+    vue ? "✏️ Mode édition" : "👁 Mode visualisation";
+
+  // Les champs de saisie passent en lecture seule en visualisation.
+  document.getElementById("souvenir-titre").readOnly = vue;
+  document.getElementById("souvenir-texte").readOnly = vue;
+  const legende = document.getElementById("lightbox-legende");
+  legende.readOnly = vue;
+  legende.placeholder = vue ? "" : "Ajouter une légende à cette photo…";
+
+  // En visualisation : on coupe l'ajout en cours et le panneau Style.
+  if (vue) {
+    desarmerAjout();
+    fermerPanneauStyle();
+  }
+
+  // On mémorise le choix pour le prochain démarrage.
+  try { localStorage.setItem("carnet-mode", etat.mode); } catch (e) {}
+}
+
+/** Bascule entre Édition et Visualisation. */
+function basculerMode() {
+  definirMode(etat.mode === "visualisation" ? "edition" : "visualisation");
 }
 
 /* ---------------------------------------------------------
@@ -1732,6 +1775,13 @@ function init() {
     .addEventListener("click", exporterCarnet);
   document.getElementById("btn-reinitialiser")
     .addEventListener("click", reinitialiserCarnet);
+  document.getElementById("btn-mode")
+    .addEventListener("click", basculerMode);
+
+  // On restaure le mode (édition / visualisation) choisi la dernière fois.
+  let modeSauve = "edition";
+  try { modeSauve = localStorage.getItem("carnet-mode") || "edition"; } catch (e) {}
+  definirMode(modeSauve);
   document.getElementById("import-input")
     .addEventListener("change", (e) => {
       importerCarnetFichier(e.target.files[0]);

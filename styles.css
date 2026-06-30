@@ -1032,6 +1032,34 @@ body {
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
+/* ---------- Mode visualisation (lecture seule) ---------- */
+/* Tout ce qui sert à éditer disparaît. */
+body.mode-visualisation .edition-seule { display: none !important; }
+
+/* Les champs deviennent du texte simple, non modifiable. */
+body.mode-visualisation .panneau-titre,
+body.mode-visualisation .fiche-texte {
+  border-color: transparent;
+  background: transparent;
+  cursor: default;
+  padding-left: 2px;
+}
+body.mode-visualisation .fiche-texte { resize: none; }
+body.mode-visualisation .lightbox-legende {
+  background: transparent;
+  border: none;
+  color: #fff;
+  text-align: center;
+  cursor: default;
+}
+
+/* Indicateur "Visualisation" sur le bouton de bascule quand il est actif */
+body.mode-visualisation #btn-mode {
+  background: var(--ocre);
+  border-color: var(--ocre);
+  color: #fff;
+}
+
 /* ---------- Responsive (téléphone) ---------- */
 @media (max-width: 600px) {
   /* Barre du haut : le titre sur une ligne, les actions sur une rangée
