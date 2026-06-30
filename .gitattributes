@@ -1,0 +1,4 @@
+# Normalise les fins de ligne pour éviter des différences inutiles entre machines.
+* text=auto eol=lf
+*.svg text
+*.gpx text
