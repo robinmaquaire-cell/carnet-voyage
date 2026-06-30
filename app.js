@@ -1604,8 +1604,12 @@ function init() {
   // --- Photos et récit ---
   document.getElementById("ajout-photos")
     .addEventListener("change", (e) => {
-      ajouterPhotos(e.target.files);
-      e.target.value = ""; // permet de réimporter le même fichier ensuite
+      // On fige la liste des fichiers AVANT de vider le champ : sinon, comme
+      // l'ajout est asynchrone (redimensionnement), vider le champ effacerait
+      // la sélection en cours et seule la 1re photo serait ajoutée.
+      const fichiers = Array.from(e.target.files);
+      e.target.value = ""; // permet de re-sélectionner les mêmes fichiers ensuite
+      ajouterPhotos(fichiers);
     });
   document.getElementById("souvenir-texte")
     .addEventListener("input", (e) => {
