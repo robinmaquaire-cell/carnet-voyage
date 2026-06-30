@@ -18,6 +18,8 @@ const etat = {
   souvenirActif: null,    // le souvenir dont la fiche est ouverte dans le panneau
   style: null,            // les réglages d'apparence (rempli au démarrage)
   mode: "edition",        // "edition" ou "visualisation" (lecture seule)
+  miniCarte: null,        // petite carte de situation dans la pop up (visualisation)
+  miniCouche: null,       // calque (trace + épingle) de la mini-carte
 };
 
 // Compteur pour donner un identifiant unique à chaque souvenir.
@@ -521,6 +523,7 @@ function ouvrirPanneau(souvenir) {
   afficherGalerie(souvenir);
   majNavigation();
   majFondPanneau();
+  majMiniCarte(souvenir);
 }
 
 /** Met à jour le compteur "n / total" et l'état (actif/grisé) des flèches. */
@@ -582,6 +585,68 @@ function majFondPanneau() {
   const ouvert = !document.getElementById("panneau").hidden;
   document.getElementById("panneau-fond").hidden =
     !(ouvert && etat.mode === "visualisation");
+}
+
+/* ---------- Mini-carte de situation (pop up visualisation) ---------- */
+
+/** Crée la petite carte de situation (non interactive) une seule fois. */
+function creerMiniCarte() {
+  etat.miniCarte = L.map("mini-map", {
+    zoomControl: false,
+    attributionControl: false,
+    dragging: false,
+    scrollWheelZoom: false,
+    doubleClickZoom: false,
+    boxZoom: false,
+    keyboard: false,
+    touchZoom: false,
+    tap: false,
+  });
+  // Fond clair et léger (indépendant du fond principal).
+  L.tileLayer(
+    "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+    { subdomains: "abcd", maxZoom: 20 }
+  ).addTo(etat.miniCarte);
+  etat.miniCouche = L.layerGroup().addTo(etat.miniCarte);
+}
+
+/** Met à jour la mini-carte pour situer le souvenir donné sur le parcours. */
+function majMiniCarte(souvenir) {
+  // Uniquement en visualisation, avec une trace et un souvenir.
+  if (etat.mode !== "visualisation" || !etat.trace || !souvenir) return;
+  if (!etat.miniCarte) creerMiniCarte();
+
+  etat.miniCouche.clearLayers();
+
+  // Le tracé, en fin pour le contexte.
+  etat.trace.segments.forEach((seg) => {
+    L.polyline(seg, { color: "#c8893d", weight: 3, opacity: 0.85 })
+      .addTo(etat.miniCouche);
+  });
+
+  // L'épingle du souvenir (même pictogramme que sur la grande carte).
+  const numero = etat.souvenirs.indexOf(souvenir) + 1;
+  L.marker([souvenir.lat, souvenir.lng], {
+    icon: creerIconeSouvenir(numero, souvenir.pictogramme),
+  }).addTo(etat.miniCouche);
+
+  // Tous les points pour cadrer sur l'ensemble du parcours.
+  const points = [];
+  etat.trace.segments.forEach((seg) => seg.forEach((p) => points.push(p)));
+  points.push([souvenir.lat, souvenir.lng]);
+
+  // La carte vient peut-être d'être affichée : on recalcule sa taille puis on cadre.
+  setTimeout(() => {
+    etat.miniCarte.invalidateSize();
+    if (points.length) {
+      // Plus de marge en haut pour que l'épingle (qui pointe vers le bas)
+      // ne soit pas coupée par le bord.
+      etat.miniCarte.fitBounds(points, {
+        paddingTopLeft: [20, 46],
+        paddingBottomRight: [20, 20],
+      });
+    }
+  }, 30);
 }
 
 /** Renomme le souvenir actif (au fil de la frappe dans le champ titre). */
@@ -1587,6 +1652,9 @@ function definirMode(mode) {
 
   // Le fond assombri (pop up) ne concerne que la visualisation.
   majFondPanneau();
+
+  // Si on passe en visualisation avec une fiche ouverte, on rafraîchit la mini-carte.
+  if (vue && etat.souvenirActif) majMiniCarte(etat.souvenirActif);
 
   // On mémorise le choix pour le prochain démarrage.
   try { localStorage.setItem("carnet-mode", etat.mode); } catch (e) {}

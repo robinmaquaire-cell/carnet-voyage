@@ -1036,6 +1036,20 @@ body {
 /* Tout ce qui sert à éditer disparaît. */
 body.mode-visualisation .edition-seule { display: none !important; }
 
+/* Éléments réservés au mode visualisation (ex. mini-carte de situation). */
+.visu-seule { display: none; }
+body.mode-visualisation .visu-seule { display: block; }
+
+/* Mini-carte de situation en haut de la pop up. */
+.mini-map {
+  height: 160px;
+  margin-bottom: 14px;
+  border: 1.5px solid var(--ligne);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--papier);
+}
+
 /* Les champs deviennent du texte simple, non modifiable. */
 body.mode-visualisation .panneau-titre,
 body.mode-visualisation .fiche-texte {
