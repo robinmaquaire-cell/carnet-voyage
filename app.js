@@ -1815,7 +1815,13 @@ const FORMATS_PAPIER = {
 const COLONNES_PAR_DEFAUT = { A4: 2, A3: 2, A2: 3, A1: 3, A0: 4 };
 
 // Réglages courants de l'affiche (mémorisés le temps de la session).
-const reglagesAffiche = { format: "A4", orientation: "portrait", colonnes: 2 };
+const reglagesAffiche = {
+  format: "A4",
+  orientation: "portrait",
+  colonnes: 2,
+  police: "systeme",
+  couleur: "#2f3b34",
+};
 
 /** Ouvre la fenêtre de réglages de l'affiche PDF. */
 function ouvrirModalAffiche() {
@@ -1826,6 +1832,8 @@ function ouvrirModalAffiche() {
   majSegment("affiche-format", "format", reglagesAffiche.format);
   majSegment("affiche-orientation", "orientation", reglagesAffiche.orientation);
   majSegment("affiche-colonnes", "colonnes", String(reglagesAffiche.colonnes));
+  majSegment("affiche-police", "police", reglagesAffiche.police);
+  document.getElementById("affiche-couleur").value = reglagesAffiche.couleur;
   document.getElementById("modal-affiche").hidden = false;
 }
 
@@ -1939,9 +1947,14 @@ function creerMiniCarteImpression(conteneur, souvenir) {
   etat.trace.segments.forEach((seg) => {
     L.polyline(seg, { color: "#c8893d", weight: 2, opacity: 0.85 }).addTo(couche);
   });
-  const numero = etat.souvenirs.indexOf(souvenir) + 1;
-  L.marker([souvenir.lat, souvenir.lng], {
-    icon: creerIconeSouvenir(numero, souvenir.pictogramme),
+  // Un simple point (pas la grande épingle numérotée, bien trop grande pour
+  // une aussi petite carte : elle se retrouvait systématiquement tronquée).
+  L.circleMarker([souvenir.lat, souvenir.lng], {
+    radius: 5,
+    weight: 2,
+    color: "#fff",
+    fillColor: "#d35438",
+    fillOpacity: 1,
   }).addTo(couche);
 
   carte.invalidateSize();
@@ -1949,7 +1962,7 @@ function creerMiniCarteImpression(conteneur, souvenir) {
   etat.trace.segments.forEach((seg) => seg.forEach((p) => points.push(p)));
   points.push([souvenir.lat, souvenir.lng]);
   if (points.length) {
-    carte.fitBounds(points, { paddingTopLeft: [8, 24], paddingBottomRight: [8, 8] });
+    carte.fitBounds(points, { paddingTopLeft: [8, 8], paddingBottomRight: [8, 8] });
   }
 
   return new Promise((resolve) => {
@@ -1992,12 +2005,17 @@ function attendreCarteChargee() {
 
 // Marge (mm) de la page imprimée ; doit correspondre à la marge posée dans @page.
 const MARGE_IMPRESSION_MM = 12;
+// Marge de sécurité supplémentaire (mm) retirée de la hauteur de la carte :
+// si le navigateur affiche ses propres en-tête/pied de page à l'impression
+// (titre, date, numéro de page), ça grignote de la place sur chaque feuille.
+// Cette marge évite que la carte déborde alors sur une 2e page.
+const MARGE_SECURITE_ENTETE_MM = 20;
 
 /**
- * Applique le format de papier, l'orientation et le nombre de colonnes
- * choisis. Fixe aussi la taille EXACTE (en mm) de la carte principale : elle
- * sera la même hors écran (pendant la préparation) et à l'impression, pour
- * que Leaflet n'ait pas à se redimensionner une seconde fois.
+ * Applique le format de papier, l'orientation, le nombre de colonnes et le
+ * style du texte choisis. Fixe aussi la taille EXACTE (en mm) de la carte
+ * principale, À SA PLACE NORMALE (pas de changement de position au moment
+ * d'imprimer, pour éviter tout décalage de Leaflet).
  */
 function appliquerReglagesImpression(reglages) {
   const [lPortrait, hPortrait] = FORMATS_PAPIER[reglages.format] || FORMATS_PAPIER.A4;
@@ -2016,10 +2034,15 @@ function appliquerReglagesImpression(reglages) {
   style.textContent = `@media print { @page { size: ${largeur}mm ${hauteur}mm; margin: ${MARGE_IMPRESSION_MM}mm; } }`;
 
   document.documentElement.style.setProperty("--impression-colonnes", String(reglages.colonnes || 2));
+  document.documentElement.style.setProperty(
+    "--impression-police",
+    (POLICES[reglages.police] || POLICES.systeme).css
+  );
+  document.documentElement.style.setProperty("--impression-couleur-texte", reglages.couleur || "#2f3b34");
 
   const carteEl = document.querySelector("main.layout");
   carteEl.style.width = (largeur - MARGE_IMPRESSION_MM * 2) + "mm";
-  carteEl.style.height = (hauteur - MARGE_IMPRESSION_MM * 2) + "mm";
+  carteEl.style.height = (hauteur - MARGE_IMPRESSION_MM * 2 - MARGE_SECURITE_ENTETE_MM) + "mm";
 }
 
 /** Remet la carte à sa taille normale (après impression, ou en cas d'annulation). */
@@ -2768,6 +2791,15 @@ function init() {
   // Une fois la fenêtre d'impression fermée (ou annulée), on remet la carte
   // à sa taille normale.
   window.addEventListener("afterprint", terminerImpression);
+  // Sécurité supplémentaire : "afterprint" ne se déclenche pas toujours de
+  // façon fiable (notamment en cliquant "Annuler" dans certains navigateurs).
+  // On surveille aussi le changement d'état du media "print" lui-même.
+  if (window.matchMedia) {
+    const mqPrint = window.matchMedia("print");
+    const surChangementPrint = (mq) => { if (!mq.matches) terminerImpression(); };
+    if (mqPrint.addEventListener) mqPrint.addEventListener("change", surChangementPrint);
+    else if (mqPrint.addListener) mqPrint.addListener(surChangementPrint); // anciens navigateurs
+  }
   document.getElementById("btn-reinitialiser")
     .addEventListener("click", reinitialiserCarnet);
 
@@ -2793,6 +2825,12 @@ function init() {
     reglagesAffiche.colonnes = Number(v);
     majSegment("affiche-colonnes", "colonnes", v);
   });
+  brancherSegment("affiche-police", "police", (v) => {
+    reglagesAffiche.police = v;
+    majSegment("affiche-police", "police", v);
+  });
+  document.getElementById("affiche-couleur")
+    .addEventListener("input", (e) => { reglagesAffiche.couleur = e.target.value; });
   document.getElementById("btn-mode")
     .addEventListener("click", basculerMode);
 

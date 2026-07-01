@@ -1380,6 +1380,17 @@ body.mode-visualisation #panneau {
   color: var(--foret-fonce);
 }
 
+/* Police et couleur choisies dans les réglages de l'affiche. */
+.impression-carte-titre,
+.impression-carte-texte,
+.impression-recit-titre {
+  font-family: var(--impression-police, "Avenir Next", system-ui, sans-serif);
+}
+.impression-carte-titre,
+.impression-carte-texte {
+  color: var(--impression-couleur-texte, #2f3b34);
+}
+
 /* Disposition en colonnes façon "journal" : chaque carte s'empile dans la
    colonne la moins remplie, plutôt qu'une grille où une case courte laisse
    un vide sous elle (column-fill:auto = remplissage séquentiel, pas de
@@ -1424,10 +1435,8 @@ body.mode-visualisation #panneau {
   flex: 1;
   min-width: 0;
   margin: 0;
-  font-family: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
   font-weight: 800;
   font-size: 15px;
-  color: var(--foret-fonce);
   overflow-wrap: break-word;
 }
 .impression-mini-map {
@@ -1467,7 +1476,6 @@ body.mode-visualisation #panneau {
   margin: 0;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--encre);
   white-space: pre-wrap;
 }
 
@@ -1485,17 +1493,21 @@ body.mode-visualisation #panneau {
   border: 1px solid var(--ligne);
 }
 
-/* Pendant la préparation de l'affiche (avant l'ouverture de la boîte
-   d'impression), la carte principale est agrandie à sa taille FINALE
-   d'impression (largeur/hauteur posées en JS, cf. appliquerReglagesImpression)
-   mais positionnée hors écran. Ainsi Leaflet charge ses tuiles à la bonne
-   taille AVANT que l'impression ne démarre : le passage en mode impression
-   ne provoque plus aucun redimensionnement (donc plus aucun décalage). */
+/* Préserve les couleurs/fonds à l'impression (certains navigateurs les
+   suppriment par défaut si "Graphiques d'arrière-plan" n'est pas coché). */
+body.mode-impression,
+body.mode-impression .leaflet-container,
+body.mode-impression .impression-carte-interieur {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* La carte est normalement un élément flexible (flex:1) qui s'étire pour
+   remplir la fenêtre : sa hauteur (largeur/hauteur posées en JS en mm) serait
+   ignorée par le calcul flexbox. On désactive donc le flex le temps de
+   l'export, pour que la taille exacte demandée soit bien appliquée. */
 body.mode-impression main.layout {
-  position: fixed;
-  top: 0;
-  left: -100000px;
-  z-index: -1;
+  flex: none;
 }
 
 @media print {
@@ -1511,17 +1523,15 @@ body.mode-impression main.layout {
   #panneau-style, .modal-overlay, #toast, #trace-info,
   .leaflet-control-zoom { display: none !important; }
 
-  /* ...la carte reprend sa place dans la page, à l'identique de sa taille
-     hors écran (aucun redimensionnement au moment d'imprimer)... */
+  /* La carte principale (déjà redimensionnée en JS à sa taille finale,
+     à sa place normale dans la page — pas de changement de position au
+     moment d'imprimer) occupe une page pleine ; les souvenirs suivent. */
   body.mode-impression main.layout {
-    position: relative;
-    top: auto;
-    left: auto;
     break-after: page;
     page-break-after: always;
   }
 
-  /* ...et la zone d'impression reprend sa place normale dans la page. */
+  /* La zone d'impression (souvenirs) reprend sa place normale dans la page. */
   #impression {
     position: static;
     left: auto;
