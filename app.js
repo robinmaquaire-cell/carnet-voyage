@@ -15,6 +15,7 @@ const etat = {
   trace: null,            // les données de la trace { name, segments, waypoints }
   souvenirs: [],          // la liste des points souvenirs posés par l'utilisateur
   stock: [],              // souvenirs "en réserve" (sans position), à poser plus tard
+  pictosPerso: [],        // pictogrammes personnalisés importés par l'utilisateur
   modeAjout: false,       // vrai quand on attend un clic sur la carte pour poser un souvenir
   souvenirActif: null,    // le souvenir dont la fiche est ouverte dans le panneau
   style: null,            // les réglages d'apparence (rempli au démarrage)
@@ -130,6 +131,20 @@ const PICTOS = [
   { cle: "ville",    glyph: "🏙️", label: "Ville" },
 ];
 const PICTO_GLYPH = Object.fromEntries(PICTOS.map((p) => [p.cle, p.glyph]));
+
+// Taille maximale (en pixels) d'un pictogramme personnalisé importé (petite
+// image, jamais affichée bien grande) ; export en PNG pour garder la transparence.
+const PICTO_TAILLE_MAX = 128;
+
+/**
+ * Renvoie le pictogramme personnalisé correspondant à une clé "perso:<id>",
+ * ou null si la clé désigne un pictogramme prédéfini (ou n'existe plus).
+ */
+function obtenirPictoPerso(cle) {
+  if (!cle || !cle.startsWith("perso:")) return null;
+  const id = Number(cle.slice("perso:".length));
+  return etat.pictosPerso.find((p) => p.id === id) || null;
+}
 
 // Fonds de carte disponibles (tous gratuits, sans clé).
 const FONDS = {
@@ -307,7 +322,8 @@ function chargerFichierGpx(fichier) {
  * @param {number} numero  Le rang du souvenir (1, 2, 3...).
  */
 function creerIconeSouvenir(numero, pictoCle) {
-  const glyph = PICTO_GLYPH[pictoCle]; // vide pour la pastille par défaut
+  const perso = obtenirPictoPerso(pictoCle);
+  const glyph = perso ? "" : PICTO_GLYPH[pictoCle]; // vide pour la pastille par défaut
 
   // La forme de l'épingle (goutte + pastille blanche).
   const pin = `
@@ -317,10 +333,12 @@ function creerIconeSouvenir(numero, pictoCle) {
       <circle cx="17" cy="16" r="8.5" fill="#ffffff"/>
     </svg>`;
 
-  // Contenu : soit le numéro (pastille), soit le pictogramme + un petit badge numéro.
-  const contenu = glyph
-    ? `<span class="pin-glyph">${glyph}</span><span class="pin-num">${numero}</span>`
-    : `<span class="pin-chiffre">${numero}</span>`;
+  // Contenu : image perso, ou pictogramme prédéfini, ou simple numéro (pastille).
+  const contenu = perso
+    ? `<img class="pin-image" src="${perso.src}" alt=""><span class="pin-num">${numero}</span>`
+    : glyph
+      ? `<span class="pin-glyph">${glyph}</span><span class="pin-num">${numero}</span>`
+      : `<span class="pin-chiffre">${numero}</span>`;
 
   return L.divIcon({
     className: "",
@@ -547,7 +565,7 @@ function deplacerSouvenirVersPoint(souvenir, latlng) {
 
 /* ---------- Pictogramme d'un souvenir ---------- */
 
-/** Crée les boutons du sélecteur de pictogramme. */
+/** Crée les boutons du sélecteur de pictogramme (prédéfinis + personnalisés). */
 function construirePictos() {
   const c = document.getElementById("souvenir-pictos");
   c.innerHTML = "";
@@ -560,6 +578,81 @@ function construirePictos() {
     b.addEventListener("click", () => choisirPictogramme(p.cle));
     c.appendChild(b);
   });
+
+  // Pictogrammes personnalisés importés par l'utilisateur (avec suppression).
+  etat.pictosPerso.forEach((p) => {
+    const cle = "perso:" + p.id;
+    const b = document.createElement("button");
+    b.className = "picto-btn picto-btn-perso";
+    b.dataset.picto = cle;
+    b.title = p.nom;
+    b.innerHTML = `<img src="${p.src}" alt="">`;
+    b.addEventListener("click", () => choisirPictogramme(cle));
+
+    const suppr = document.createElement("button");
+    suppr.className = "picto-perso-suppr";
+    suppr.type = "button";
+    suppr.textContent = "✕";
+    suppr.title = "Retirer ce pictogramme";
+    suppr.addEventListener("click", (e) => {
+      e.stopPropagation();
+      supprimerPictoPerso(p.id);
+    });
+
+    const wrap = document.createElement("div");
+    wrap.className = "picto-perso-wrap";
+    wrap.appendChild(b);
+    wrap.appendChild(suppr);
+    c.appendChild(wrap);
+  });
+}
+
+/** Importe une image et l'ajoute à la bibliothèque de pictogrammes personnalisés. */
+async function ajouterPictoPerso(fichier) {
+  if (!fichier || !fichier.type.startsWith("image/")) return;
+  try {
+    const src = await importerImage(fichier, PICTO_TAILLE_MAX, "image/png");
+    const nom = (fichier.name || "").replace(/\.[^.]+$/, "").slice(0, 40) || "Pictogramme";
+    etat.pictosPerso.push({ id: prochainIdSouvenir++, nom, src });
+    construirePictos();
+    planifierSauvegarde();
+    toast("Pictogramme importé");
+  } catch (e) {
+    toast(e.message || "Impossible d'importer ce pictogramme.", true);
+  }
+}
+
+/**
+ * Retire un pictogramme personnalisé de la bibliothèque. Les souvenirs qui
+ * l'utilisaient reviennent à la pastille numérotée par défaut.
+ */
+function supprimerPictoPerso(id) {
+  const p = etat.pictosPerso.find((x) => x.id === id);
+  if (!p) return;
+  const ok = window.confirm(
+    `Retirer le pictogramme « ${p.nom} » ?\n\nLes souvenirs qui l'utilisent reprendront la pastille numérotée.`
+  );
+  if (!ok) return;
+
+  const cle = "perso:" + id;
+  etat.pictosPerso = etat.pictosPerso.filter((x) => x.id !== id);
+
+  etat.souvenirs.forEach((s) => {
+    if (s.pictogramme !== cle) return;
+    s.pictogramme = "souvenir";
+    if (s.marker) s.marker.setIcon(creerIconeSouvenir(etat.souvenirs.indexOf(s) + 1, "souvenir"));
+  });
+  etat.stock.forEach((s) => {
+    if (s.pictogramme === cle) s.pictogramme = "souvenir";
+  });
+  if (etat.souvenirActif && etat.souvenirActif.pictogramme === cle) {
+    etat.souvenirActif.pictogramme = "souvenir";
+    majPictoBoutonActuel("souvenir");
+  }
+
+  construirePictos();
+  planifierSauvegarde();
+  toast("Pictogramme retiré");
 }
 
 /** Met en évidence le pictogramme actif. */
@@ -571,8 +664,14 @@ function majPictoActif(cle) {
 
 /** Met à jour le glyphe affiché sur le bouton "Choisir un pictogramme". */
 function majPictoBoutonActuel(cle) {
+  const el = document.getElementById("picto-actuel-glyph");
+  const perso = obtenirPictoPerso(cle);
+  if (perso) {
+    el.innerHTML = `<img src="${perso.src}" alt="">`;
+    return;
+  }
   const p = PICTOS.find((x) => x.cle === (cle || "souvenir"));
-  document.getElementById("picto-actuel-glyph").textContent = (p && p.glyph) || "①";
+  el.textContent = (p && p.glyph) || "①";
 }
 
 /** Change le pictogramme du souvenir affiché et met à jour son épingle. */
@@ -815,9 +914,11 @@ const PHOTO_TAILLE_MAX = 1600;
  * Lit un fichier image choisi par l'utilisateur, le redimensionne si besoin,
  * et renvoie une "data URL" (l'image encodée en texte) prête à être stockée.
  * @param {File} fichier  Le fichier image.
- * @returns {Promise<string>} l'image en data URL (format JPEG).
+ * @param {number} tailleMax  Taille max (px) du plus grand côté.
+ * @param {string} format  Format d'export ("image/jpeg" ou "image/png").
+ * @returns {Promise<string>} l'image en data URL.
  */
-function importerImage(fichier) {
+function importerImage(fichier, tailleMax = PHOTO_TAILLE_MAX, format = "image/jpeg") {
   return new Promise((resolve, reject) => {
     const lecteur = new FileReader();
     lecteur.onerror = () => reject(new Error("Lecture de l'image impossible."));
@@ -828,8 +929,8 @@ function importerImage(fichier) {
         // Calcul de la nouvelle taille en gardant les proportions.
         let { width, height } = img;
         const plusGrandCote = Math.max(width, height);
-        if (plusGrandCote > PHOTO_TAILLE_MAX) {
-          const ratio = PHOTO_TAILLE_MAX / plusGrandCote;
+        if (plusGrandCote > tailleMax) {
+          const ratio = tailleMax / plusGrandCote;
           width = Math.round(width * ratio);
           height = Math.round(height * ratio);
         }
@@ -838,8 +939,9 @@ function importerImage(fichier) {
         canvas.width = width;
         canvas.height = height;
         canvas.getContext("2d").drawImage(img, 0, 0, width, height);
-        // Export en JPEG, qualité 0,82 (bon compromis netteté / poids).
-        resolve(canvas.toDataURL("image/jpeg", 0.82));
+        // JPEG qualité 0,82 (bon compromis netteté / poids) ; le PNG garde
+        // la transparence, utile pour les pictogrammes importés.
+        resolve(canvas.toDataURL(format, 0.82));
       };
       img.src = lecteur.result;
     };
@@ -1554,6 +1656,8 @@ function serialiserCarnet() {
     trace: etat.trace,
     style: etat.style,
     prochainId: prochainIdSouvenir,
+    // Pictogrammes personnalisés importés par l'utilisateur.
+    pictosPerso: etat.pictosPerso.map((p) => ({ id: p.id, nom: p.nom, src: p.src })),
     // Souvenirs "en réserve" (sans position).
     stock: etat.stock.map((s) => ({
       id: s.id,
@@ -1596,6 +1700,12 @@ function restaurerCarnet(donnees) {
   // On reconstitue d'abord le style : afficherTrace l'utilise pour dessiner.
   etat.style = fusionnerStyle(donnees.style);
 
+  // Les pictogrammes personnalisés, AVANT les souvenirs : leurs épingles en ont besoin.
+  etat.pictosPerso = Array.isArray(donnees.pictosPerso)
+    ? donnees.pictosPerso.map((p) => ({ id: p.id, nom: p.nom || "Pictogramme", src: p.src }))
+    : [];
+  construirePictos();
+
   // La réserve (souvenirs sans position).
   etat.stock = (donnees.stock || []).map((s) => ({
     id: s.id,
@@ -1628,8 +1738,8 @@ function restaurerCarnet(donnees) {
 
   renumeroterSouvenirs();
 
-  // On reprend le compteur d'identifiants là où il en était (souvenirs + réserve).
-  const maxId = [...etat.souvenirs, ...etat.stock]
+  // On reprend le compteur d'identifiants là où il en était (souvenirs + réserve + pictos).
+  const maxId = [...etat.souvenirs, ...etat.stock, ...etat.pictosPerso]
     .reduce((m, s) => Math.max(m, s.id || 0), 0);
   prochainIdSouvenir = donnees.prochainId || maxId + 1;
 
@@ -1707,6 +1817,8 @@ async function reinitialiserCarnet() {
   desarmerAjout();
   effacerSouvenirs();
   etat.stock = [];
+  etat.pictosPerso = [];
+  construirePictos();
   fermerReserve();
   if (etat.coucheTrace) { etat.coucheTrace.remove(); etat.coucheTrace = null; }
   etat.trace = null;
@@ -1855,10 +1967,16 @@ function renderReserve() {
     const vign = document.createElement("div");
     vign.className = "reserve-vignette";
     const couv = photoCouverture(item);
+    const picto = obtenirPictoPerso(item.pictogramme);
     if (couv) {
       const im = document.createElement("img");
       im.src = couv.src;
       vign.appendChild(im);
+    } else if (picto) {
+      const im = document.createElement("img");
+      im.src = picto.src;
+      vign.appendChild(im);
+      vign.classList.add("reserve-vignette-vide");
     } else {
       vign.textContent = PICTO_GLYPH[item.pictogramme] || "📝";
       vign.classList.add("reserve-vignette-vide");
@@ -1920,8 +2038,11 @@ function renderStockPourModal() {
   etat.stock.forEach((item) => {
     const b = document.createElement("button");
     b.className = "modal-stock-item";
-    b.textContent =
-      (PICTO_GLYPH[item.pictogramme] || "📝") + " " + (item.nom || "Sans nom");
+    const perso = obtenirPictoPerso(item.pictogramme);
+    const icone = perso
+      ? `<img class="modal-stock-icone" src="${perso.src}" alt="">`
+      : `<span class="modal-stock-icone-emoji">${PICTO_GLYPH[item.pictogramme] || "📝"}</span>`;
+    b.innerHTML = icone + echapperHtml(item.nom || "Sans nom");
     b.addEventListener("click", () => appliquerStockSurCarte(item));
     liste.appendChild(b);
   });
@@ -2217,6 +2338,12 @@ function init() {
     .addEventListener("click", ouvrirPictoPicker);
   document.getElementById("fermer-picto")
     .addEventListener("click", fermerPictoPicker);
+  document.getElementById("picto-import")
+    .addEventListener("change", (e) => {
+      const fichier = e.target.files[0];
+      e.target.value = ""; // permet de réimporter le même fichier ensuite
+      ajouterPictoPerso(fichier);
+    });
 
   // --- Photos et récit ---
   document.getElementById("ajout-photos")
