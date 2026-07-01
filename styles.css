@@ -1361,16 +1361,24 @@ body.mode-visualisation #panneau {
 }
 
 /* ---------- Export affiche (impression / PDF) ---------- */
-/* Contenu généré pour l'impression : positionné HORS ÉCRAN (pas display:none)
-   pour que les mini-cartes Leaflet de chaque souvenir puissent s'initialiser
-   et charger leurs tuiles avant que l'impression ne démarre. */
-#impression {
+
+/* Zone de mesure hors écran : chaque carte y est construite une première
+   fois, à la largeur réelle d'une colonne (posée en JS), pour mesurer sa
+   hauteur avant de répartir les souvenirs sur les pages. Jamais visible
+   (ni à l'écran, ni à l'impression). */
+#impression-mesure {
   position: absolute;
   top: 0;
   left: -100000px;
-  width: 1200px;
   background: #fff;
 }
+
+/* Aperçu de l'affiche : caché par défaut. Une fois les réglages validés, elle
+   s'affiche à la suite de la carte (déjà agrandie à sa taille d'impression),
+   et toute la page devient défilable pour pouvoir tout parcourir avant
+   d'imprimer (voir la barre flottante Fermer/Imprimer plus bas). */
+#impression { display: none; background: #fff; padding: 24px; }
+body.apercu-pret #impression { display: block; }
 
 .impression-titre-souvenirs {
   margin: 0 0 20px;
@@ -1391,19 +1399,34 @@ body.mode-visualisation #panneau {
   color: var(--impression-couleur-texte, #2f3b34);
 }
 
-/* Disposition en colonnes façon "journal" : chaque carte s'empile dans la
-   colonne la moins remplie, plutôt qu'une grille où une case courte laisse
-   un vide sous elle (column-fill:auto = remplissage séquentiel, pas de
-   grid/flex ici, pour un découpage fiable à l'impression). */
-.impression-souvenirs {
-  column-count: var(--impression-colonnes, 2);
-  column-gap: 16px;
-  column-fill: auto;
+/* Une "page" = les souvenirs mesurés et répartis en JS pour tenir sur une
+   feuille (paginerSouvenirs). Chaque page est bornée (JS ne remplit une
+   colonne que jusqu'à la hauteur d'une feuille), donc le flex ici n'a jamais
+   besoin de "casser" au milieu à l'impression : un simple saut de page entre
+   deux .impression-page suffit. */
+.impression-page {
+  display: flex;
+  align-items: flex-start;
+  gap: 5mm; /* doit correspondre à ECART_COLONNES_MM dans app.js */
+  margin-bottom: 5mm;
+  break-after: page;
+  page-break-after: always;
+}
+.impression-page:last-child {
+  break-after: auto;
+  page-break-after: auto;
+  margin-bottom: 0;
+}
+.impression-colonne {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6mm; /* doit correspondre à ECART_CARTES_MM dans app.js */
 }
 .impression-carte {
   break-inside: avoid;
   page-break-inside: avoid;
-  margin: 0 0 16px;
 }
 .impression-carte-interieur {
   border: 1.5px solid var(--ligne);
@@ -1502,39 +1525,56 @@ body.mode-impression .impression-carte-interieur {
   print-color-adjust: exact;
 }
 
-/* La carte est normalement un élément flexible (flex:1) qui s'étire pour
-   remplir la fenêtre : sa hauteur (largeur/hauteur posées en JS en mm) serait
-   ignorée par le calcul flexbox. On désactive donc le flex le temps de
-   l'export, pour que la taille exacte demandée soit bien appliquée. */
+/* Pendant la préparation ET l'aperçu (donc aussi à l'impression, identique à
+   ce que l'utilisateur a déjà vu à l'écran) : on masque toute l'interface
+   d'édition/navigation, la page devient défilable, et la carte principale
+   (élément flexible normalement, flex:1) se redimensionne réellement à sa
+   taille finale au lieu d'être étirée par le calcul flexbox. */
+body.mode-impression {
+  display: block; /* le flex du body empêcherait le contenu de se répartir sur plusieurs pages */
+  overflow-y: auto;
+  height: auto;
+}
+body.mode-impression .topbar,
+body.mode-impression #welcome,
+body.mode-impression #banniere-ajout,
+body.mode-impression #panneau,
+body.mode-impression #panneau-fond,
+body.mode-impression #panneau-reserve,
+body.mode-impression #panneau-style,
+body.mode-impression .modal-overlay,
+body.mode-impression #toast,
+body.mode-impression #trace-info,
+body.mode-impression .leaflet-control-zoom {
+  display: none !important;
+}
 body.mode-impression main.layout {
   flex: none;
+  break-after: page;
+  page-break-after: always;
 }
 
 @media print {
-  html, body {
-    height: auto;
-    overflow: visible;
-    background: #fff;
-    display: block; /* le flex du body empêcherait le contenu de se répartir sur plusieurs pages */
-  }
-
-  /* On masque toute l'interface d'édition/navigation pour l'impression... */
-  .topbar, #welcome, #banniere-ajout, #panneau, #panneau-fond, #panneau-reserve,
-  #panneau-style, .modal-overlay, #toast, #trace-info,
-  .leaflet-control-zoom { display: none !important; }
-
-  /* La carte principale (déjà redimensionnée en JS à sa taille finale,
-     à sa place normale dans la page — pas de changement de position au
-     moment d'imprimer) occupe une page pleine ; les souvenirs suivent. */
-  body.mode-impression main.layout {
-    break-after: page;
-    page-break-after: always;
-  }
-
-  /* La zone d'impression (souvenirs) reprend sa place normale dans la page. */
-  #impression {
-    position: static;
-    left: auto;
-    width: auto;
-  }
+  html, body { height: auto; overflow: visible; background: #fff; }
+  /* Ni la barre flottante ni son message n'ont leur place sur le papier. */
+  .apercu-barre { display: none !important; }
 }
+
+/* Barre flottante de contrôle de l'aperçu (jamais imprimée). */
+.apercu-barre {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2600;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--carte-bg);
+  border: 1.5px solid var(--ligne);
+  border-radius: 999px;
+  padding: 10px 14px;
+  box-shadow: var(--ombre);
+}
+.apercu-barre[hidden] { display: none; }
+.apercu-info { font-size: 13px; font-weight: 700; color: var(--encre-douce); padding: 0 4px; }

@@ -1160,6 +1160,9 @@ function appliquerFond(cle) {
       attribution:
         '© <a href="https://openfreemap.org">OpenFreeMap</a> · © OpenMapTiles · ' +
         '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      // Sans ça, le tampon WebGL est effacé juste après chaque image affichée :
+      // le fond vectoriel disparaît alors à l'impression (capture d'un tampon vide).
+      preserveDrawingBuffer: true,
     }).addTo(etat.carte);
     etat.glMap = etat.coucheFond.getMaplibreMap();
     // Une fois le style chargé, on applique nos personnalisations enregistrées.
@@ -2010,12 +2013,19 @@ const MARGE_IMPRESSION_MM = 12;
 // (titre, date, numéro de page), ça grignote de la place sur chaque feuille.
 // Cette marge évite que la carte déborde alors sur une 2e page.
 const MARGE_SECURITE_ENTETE_MM = 20;
+// Écarts (mm) entre colonnes et entre cartes empilées ; doivent correspondre
+// aux "gap" posés dans .impression-page / .impression-colonne.
+const ECART_COLONNES_MM = 5;
+const ECART_CARTES_MM = 6;
+// Résolution CSS standard : 96px = 1 pouce = 25,4mm.
+const MM_EN_PX = 96 / 25.4;
 
 /**
  * Applique le format de papier, l'orientation, le nombre de colonnes et le
  * style du texte choisis. Fixe aussi la taille EXACTE (en mm) de la carte
  * principale, À SA PLACE NORMALE (pas de changement de position au moment
  * d'imprimer, pour éviter tout décalage de Leaflet).
+ * @returns {{largeurUtileMm:number, hauteurUtileMm:number, largeurColonneMm:number, nbColonnes:number}}
  */
 function appliquerReglagesImpression(reglages) {
   const [lPortrait, hPortrait] = FORMATS_PAPIER[reglages.format] || FORMATS_PAPIER.A4;
@@ -2033,22 +2043,69 @@ function appliquerReglagesImpression(reglages) {
   }
   style.textContent = `@media print { @page { size: ${largeur}mm ${hauteur}mm; margin: ${MARGE_IMPRESSION_MM}mm; } }`;
 
-  document.documentElement.style.setProperty("--impression-colonnes", String(reglages.colonnes || 2));
   document.documentElement.style.setProperty(
     "--impression-police",
     (POLICES[reglages.police] || POLICES.systeme).css
   );
   document.documentElement.style.setProperty("--impression-couleur-texte", reglages.couleur || "#2f3b34");
 
+  const largeurUtileMm = largeur - MARGE_IMPRESSION_MM * 2;
+  const hauteurUtileMm = hauteur - MARGE_IMPRESSION_MM * 2 - MARGE_SECURITE_ENTETE_MM;
+
   const carteEl = document.querySelector("main.layout");
-  carteEl.style.width = (largeur - MARGE_IMPRESSION_MM * 2) + "mm";
-  carteEl.style.height = (hauteur - MARGE_IMPRESSION_MM * 2 - MARGE_SECURITE_ENTETE_MM) + "mm";
+  carteEl.style.width = largeurUtileMm + "mm";
+  carteEl.style.height = hauteurUtileMm + "mm";
+
+  const nbColonnes = reglages.colonnes || 2;
+  const largeurColonneMm = (largeurUtileMm - (nbColonnes - 1) * ECART_COLONNES_MM) / nbColonnes;
+  return { largeurUtileMm, hauteurUtileMm, largeurColonneMm, nbColonnes };
 }
 
-/** Remet la carte à sa taille normale (après impression, ou en cas d'annulation). */
+/**
+ * Répartit les souvenirs (déjà construits et mesurés) sur des pages de
+ * colonnes : chaque souvenir rejoint la colonne la moins remplie de la page
+ * en cours (empilement façon masonry), et une nouvelle page démarre dès
+ * qu'un souvenir ne tiendrait plus dans la colonne visée. Renvoie un tableau
+ * de pages, chaque page étant un tableau de colonnes (tableaux de cartes).
+ */
+function paginerSouvenirs(cartesInfo, nbColonnes, hauteurPageDisponiblePx) {
+  const pages = [];
+  let page, hauteursColonnes;
+
+  function nouvellePage() {
+    page = Array.from({ length: nbColonnes }, () => []);
+    hauteursColonnes = new Array(nbColonnes).fill(0);
+    pages.push(page);
+  }
+  nouvellePage();
+
+  cartesInfo.forEach((info) => {
+    let colonneMin = 0;
+    for (let c = 1; c < nbColonnes; c++) {
+      if (hauteursColonnes[c] < hauteursColonnes[colonneMin]) colonneMin = c;
+    }
+    // On ne change de page que si la colonne visée contient déjà quelque
+    // chose (sinon un souvenir plus haut qu'une page entière boucleraît
+    // indéfiniment sans jamais pouvoir être placé).
+    const dejaRemplie = hauteursColonnes[colonneMin] > 0;
+    if (dejaRemplie && hauteursColonnes[colonneMin] + info.hauteurPx > hauteurPageDisponiblePx) {
+      nouvellePage();
+      colonneMin = 0;
+    }
+    page[colonneMin].push(info);
+    hauteursColonnes[colonneMin] += info.hauteurPx + ECART_CARTES_MM * MM_EN_PX;
+  });
+
+  return pages;
+}
+
+/** Remet la carte à sa taille normale et ferme l'aperçu (bouton "Fermer",
+ *  fiable même quand les événements d'impression du navigateur ne se
+ *  déclenchent pas correctement). */
 function terminerImpression() {
   if (!document.body.classList.contains("mode-impression")) return;
-  document.body.classList.remove("mode-impression");
+  document.body.classList.remove("mode-impression", "apercu-pret");
+  document.getElementById("apercu-barre").hidden = true;
   const carteEl = document.querySelector("main.layout");
   carteEl.style.width = "";
   carteEl.style.height = "";
@@ -2057,10 +2114,12 @@ function terminerImpression() {
 }
 
 /**
- * Lance l'export "affiche" : agrandit temporairement la carte principale pour
- * occuper une page pleine, prépare la liste des souvenirs (avec leur
- * mini-carte de situation), puis ouvre la fenêtre d'impression du navigateur
- * (l'utilisateur y choisit "Enregistrer en PDF").
+ * Prépare l'aperçu de l'affiche : agrandit la carte principale à sa taille
+ * finale, construit et mesure chaque souvenir (hors écran, à la largeur
+ * réelle d'une colonne) pour les répartir sur des pages complètes, puis
+ * affiche le tout à l'écran (défilable, avec une barre Fermer/Imprimer)
+ * au lieu d'imprimer directement — l'utilisateur voit exactement ce qui
+ * sera imprimé avant de lancer l'impression.
  */
 async function exporterAffiche(reglages) {
   if (!etat.trace) {
@@ -2068,24 +2127,60 @@ async function exporterAffiche(reglages) {
     return;
   }
 
-  toast("Préparation de l'affiche…");
-  appliquerReglagesImpression(reglages);
+  toast("Préparation de l'aperçu…");
+  const { hauteurUtileMm, largeurColonneMm, nbColonnes } = appliquerReglagesImpression(reglages);
 
   document.body.classList.add("mode-impression");
   etat.carte.invalidateSize();
   if (etat.glMap) etat.glMap.resize();
   const attentes = [attendreCarteChargee()];
 
-  const zone = document.getElementById("impression-souvenirs");
-  zone.innerHTML = "";
+  // Construit chaque carte souvenir dans la zone de mesure hors écran, à la
+  // largeur réelle d'une colonne, pour pouvoir mesurer sa hauteur.
+  const zoneMesure = document.getElementById("impression-mesure");
+  zoneMesure.innerHTML = "";
+  zoneMesure.style.width = largeurColonneMm + "mm";
+
+  const cartesInfo = [];
   etat.souvenirs.forEach((s, i) => {
     const { carte, miniMapEl } = construireCarteImpression(s, i + 1);
-    zone.appendChild(carte);
+    zoneMesure.appendChild(carte);
+    cartesInfo.push({ carte });
     attentes.push(creerMiniCarteImpression(miniMapEl, s));
   });
 
   await Promise.all(attentes);
 
+  // Mesure puis répartit sur des pages complètes (une colonne ne dépasse
+  // jamais la hauteur utile d'une page).
+  cartesInfo.forEach((info) => { info.hauteurPx = info.carte.getBoundingClientRect().height; });
+  const hauteurPageDisponiblePx = hauteurUtileMm * MM_EN_PX;
+  const pages = paginerSouvenirs(cartesInfo, nbColonnes, hauteurPageDisponiblePx);
+
+  // Construit la mise en page finale (les cartes, déjà construites et déjà
+  // équipées de leur mini-carte, sont simplement déplacées depuis la zone
+  // de mesure : pas besoin de les reconstruire).
+  const zoneFinale = document.getElementById("impression-souvenirs");
+  zoneFinale.innerHTML = "";
+  pages.forEach((page) => {
+    const pageEl = document.createElement("div");
+    pageEl.className = "impression-page";
+    page.forEach((colonne) => {
+      const colEl = document.createElement("div");
+      colEl.className = "impression-colonne";
+      colonne.forEach((info) => colEl.appendChild(info.carte));
+      pageEl.appendChild(colEl);
+    });
+    zoneFinale.appendChild(pageEl);
+  });
+
+  document.body.classList.add("apercu-pret");
+  document.getElementById("apercu-barre").hidden = false;
+  window.scrollTo(0, 0);
+}
+
+/** Lance l'impression depuis l'aperçu (l'utilisateur y choisit "Enregistrer en PDF"). */
+function lancerImpressionDepuisApercu() {
   window.print();
 }
 
@@ -2803,6 +2898,12 @@ function init() {
   document.getElementById("btn-reinitialiser")
     .addEventListener("click", reinitialiserCarnet);
 
+  // --- Barre flottante de l'aperçu (Fermer/Imprimer) ---
+  document.getElementById("apercu-fermer")
+    .addEventListener("click", terminerImpression);
+  document.getElementById("apercu-imprimer")
+    .addEventListener("click", lancerImpressionDepuisApercu);
+
   // --- Réglages de l'affiche PDF (format, orientation, colonnes) ---
   document.getElementById("affiche-annuler")
     .addEventListener("click", fermerModalAffiche);
@@ -2896,7 +2997,8 @@ function init() {
 
     // 2) Échap : annule l'ajout en cours, sinon ferme ce qui est ouvert.
     if (e.key === "Escape") {
-      if (!document.getElementById("menu-actions").hidden) fermerMenu();
+      if (document.body.classList.contains("apercu-pret")) terminerImpression();
+      else if (!document.getElementById("menu-actions").hidden) fermerMenu();
       else if (!document.getElementById("modal-generer").hidden) fermerGenerer();
       else if (!document.getElementById("modal-affiche").hidden) fermerModalAffiche();
       else if (!document.getElementById("modal-picto").hidden) fermerPictoPicker();
