@@ -1975,11 +1975,20 @@ async function lancerGeneration() {
     });
 
     if (!resp.ok) {
-      let msg = `Erreur (${resp.status}).`;
-      if (resp.status === 401) msg = "Clé refusée : vérifie ta clé Claude.";
-      else if (resp.status === 429) msg = "Trop de requêtes ou crédit épuisé — réessaie plus tard.";
-      else if (resp.status === 400) msg = "Requête refusée (texte trop long ou photo trop lourde ?).";
-      try { const e = await resp.json(); if (e.error && e.error.message) msg += " " + e.error.message; } catch (_) {}
+      let apiMsg = "";
+      try { const e = await resp.json(); apiMsg = (e.error && e.error.message) || ""; } catch (_) {}
+      let msg;
+      if (/credit balance/i.test(apiMsg)) {
+        msg = "Crédit Anthropic insuffisant : ajoute du crédit dans « Plans & Billing » sur console.anthropic.com, puis réessaie.";
+      } else if (resp.status === 401) {
+        msg = "Clé refusée : vérifie ta clé Claude.";
+      } else if (resp.status === 429) {
+        msg = "Trop de requêtes ou limite atteinte — réessaie plus tard.";
+      } else if (resp.status === 400) {
+        msg = "Requête refusée" + (apiMsg ? " : " + apiMsg : ".");
+      } else {
+        msg = `Erreur (${resp.status})` + (apiMsg ? " : " + apiMsg : ".");
+      }
       statutGen(msg, true);
       bouton.disabled = false;
       return;
