@@ -45,6 +45,9 @@
         <span class="btn-ico">📍</span> Ajouter un souvenir
       </button>
 
+      <!-- Ouvre la réserve de souvenirs (préparés à l'avance, sans position) -->
+      <button id="btn-reserve" class="btn btn-ghost-clair edition-seule" hidden>📦 Réserve</button>
+
       <!-- Ouvre le panneau de personnalisation du style -->
       <button id="btn-style" class="btn btn-ghost-clair edition-seule" hidden>🎨 Style</button>
 
@@ -164,6 +167,24 @@
       <footer class="panneau-pied edition-seule">
         <button id="supprimer-souvenir" class="btn btn-danger">Supprimer ce souvenir</button>
       </footer>
+    </aside>
+
+    <!-- Réserve : souvenirs préparés à l'avance (sans position sur la carte) -->
+    <aside id="panneau-reserve" class="panneau" hidden>
+      <header class="panneau-tete">
+        <span class="panneau-titre-fixe">📦 Réserve de souvenirs</span>
+        <button id="fermer-reserve" class="icone-btn" title="Fermer">✕</button>
+      </header>
+      <div class="panneau-nav">
+        <button id="reserve-nouveau" class="btn btn-accent btn-petit" style="width:100%">
+          + Nouveau souvenir en réserve
+        </button>
+      </div>
+      <div class="panneau-corps">
+        <p class="reserve-aide">Prépare des souvenirs à l'avance. Tu pourras en piocher un quand tu poses un point sur la carte.</p>
+        <div id="reserve-liste" class="reserve-liste"></div>
+        <p id="reserve-vide" class="galerie-vide">La réserve est vide.</p>
+      </div>
     </aside>
 
     <!-- Panneau Style : personnalisation de la carte (ouvre à gauche) -->
@@ -295,6 +316,12 @@
       <div class="modal-actions">
         <button class="btn btn-ghost" id="annuler-nom">Annuler</button>
         <button class="btn btn-accent" id="valider-nom">Créer le souvenir</button>
+      </div>
+
+      <!-- Ou piocher un souvenir déjà préparé dans la réserve -->
+      <div id="modal-stock" class="modal-stock" hidden>
+        <div class="modal-stock-titre">…ou choisis-en un dans la réserve :</div>
+        <div id="modal-stock-liste" class="modal-stock-liste"></div>
       </div>
     </div>
   </div>

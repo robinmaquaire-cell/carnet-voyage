@@ -14,6 +14,7 @@ const etat = {
   coucheTrace: null,      // le groupe de calques qui contient la trace dessinée
   trace: null,            // les données de la trace { name, segments, waypoints }
   souvenirs: [],          // la liste des points souvenirs posés par l'utilisateur
+  stock: [],              // souvenirs "en réserve" (sans position), à poser plus tard
   modeAjout: false,       // vrai quand on attend un clic sur la carte pour poser un souvenir
   souvenirActif: null,    // le souvenir dont la fiche est ouverte dans le panneau
   style: null,            // les réglages d'apparence (rempli au démarrage)
@@ -242,6 +243,7 @@ function afficherTrace(trace) {
   // On rend disponibles l'ajout de souvenirs, le style, l'export et la réinit.
   document.getElementById("btn-mode").hidden = false;
   document.getElementById("btn-ajout-souvenir").hidden = false;
+  document.getElementById("btn-reserve").hidden = false;
   document.getElementById("btn-style").hidden = false;
   document.getElementById("btn-exporter").hidden = false;
   document.getElementById("btn-reinitialiser").hidden = false;
@@ -401,6 +403,7 @@ function demanderNomSouvenir(latlng) {
   const modal = document.getElementById("modal-nom");
   const champ = document.getElementById("champ-nom");
   champ.value = "";
+  renderStockPourModal(); // propose aussi de piocher dans la réserve
   modal.hidden = false;
   champ.focus();
 }
@@ -430,16 +433,17 @@ function validerNomSouvenir() {
  * Crée un souvenir : l'enregistre en mémoire et pose son marqueur sur la carte.
  * @returns le souvenir créé.
  */
-function ajouterSouvenir(lat, lng, nom) {
+function ajouterSouvenir(lat, lng, nom, contenu = {}) {
   const souvenir = {
     id: prochainIdSouvenir++,
     nom,
     lat,
     lng,
-    photos: [],       // chaque photo = { src: dataUrl, legende: "" }
-    couverture: null, // index de la photo de couverture (null = aucune)
-    textes: "",
-    pictogramme: "souvenir", // pastille numérotée par défaut
+    // Le contenu peut venir d'un souvenir "en réserve" qu'on pose sur la carte.
+    photos: contenu.photos ? contenu.photos.map((p) => ({ ...p })) : [],
+    couverture: contenu.couverture !== undefined ? contenu.couverture : null,
+    textes: contenu.textes || "",
+    pictogramme: contenu.pictogramme || "souvenir",
     marker: null,
     label: null,             // étiquette de nom permanente (si activée)
   };
@@ -511,16 +515,31 @@ function choisirPictogramme(cle) {
   planifierSauvegarde();
 }
 
-/** Ouvre le panneau latéral sur la fiche d'un souvenir. */
+/** Ouvre le panneau latéral sur la fiche d'un souvenir (posé ou en réserve). */
 function ouvrirPanneau(souvenir) {
   etat.souvenirActif = souvenir;
-  document.getElementById("panneau").hidden = false;
+  const enReserve = etat.stock.includes(souvenir);
+
+  const panneau = document.getElementById("panneau");
+  panneau.hidden = false;
+  panneau.classList.toggle("fiche-stock", enReserve); // masque les parties "position"
+
   document.getElementById("souvenir-titre").value = souvenir.nom;
-  document.getElementById("souvenir-coords").textContent =
-    `📍 ${souvenir.lat.toFixed(5)}, ${souvenir.lng.toFixed(5)}`;
   document.getElementById("souvenir-texte").value = souvenir.textes || "";
+  document.getElementById("supprimer-souvenir").textContent =
+    enReserve ? "Retirer de la réserve" : "Supprimer ce souvenir";
   majPictoActif(souvenir.pictogramme);
   afficherGalerie(souvenir);
+
+  if (enReserve) {
+    // Un souvenir en réserve n'a pas de position : pas de coordonnées,
+    // pas de navigation entre points, pas de mini-carte, pas de pop up.
+    fermerReserve();
+    return;
+  }
+
+  document.getElementById("souvenir-coords").textContent =
+    `📍 ${souvenir.lat.toFixed(5)}, ${souvenir.lng.toFixed(5)}`;
   majNavigation();
   majFondPanneau();
   majMiniCarte(souvenir);
@@ -572,9 +591,13 @@ function naviguerSouvenir(decalage) {
 
 /** Ferme le panneau latéral. */
 function fermerPanneau() {
+  const etaitEnReserve = etat.souvenirActif && etat.stock.includes(etat.souvenirActif);
   document.getElementById("panneau").hidden = true;
+  document.getElementById("panneau").classList.remove("fiche-stock");
   etat.souvenirActif = null;
   majFondPanneau();
+  // Si on éditait un souvenir en réserve, on revient à la liste de la réserve.
+  if (etaitEnReserve) ouvrirReserve();
 }
 
 /**
@@ -663,6 +686,22 @@ function renommerSouvenirActif(nouveauNom) {
 function supprimerSouvenirActif() {
   const s = etat.souvenirActif;
   if (!s) return;
+
+  // Cas d'un souvenir en réserve : on le retire simplement de la réserve.
+  if (etat.stock.includes(s)) {
+    const okStock = window.confirm(
+      `Retirer « ${s.nom || "sans nom"} » de la réserve ?`
+    );
+    if (!okStock) return;
+    etat.stock = etat.stock.filter((x) => x.id !== s.id);
+    document.getElementById("panneau").hidden = true;
+    document.getElementById("panneau").classList.remove("fiche-stock");
+    etat.souvenirActif = null;
+    ouvrirReserve();
+    toast("Retiré de la réserve");
+    planifierSauvegarde();
+    return;
+  }
 
   const ok = window.confirm(
     `Supprimer définitivement le souvenir « ${s.nom || "sans nom"} » ?`
@@ -1170,6 +1209,8 @@ function retirerLabel(souvenir) {
 
 /** Crée / met à jour / retire l'étiquette d'un souvenir selon le réglage. */
 function majLabel(souvenir) {
+  // Un souvenir "en réserve" n'a pas de position : pas d'étiquette sur la carte.
+  if (souvenir.lat === undefined || souvenir.lat === null) return;
   if (!etat.style || !etat.style.labels.afficher) {
     retirerLabel(souvenir);
     return;
@@ -1424,6 +1465,15 @@ function serialiserCarnet() {
     trace: etat.trace,
     style: etat.style,
     prochainId: prochainIdSouvenir,
+    // Souvenirs "en réserve" (sans position).
+    stock: etat.stock.map((s) => ({
+      id: s.id,
+      nom: s.nom,
+      photos: s.photos,
+      couverture: s.couverture,
+      textes: s.textes,
+      pictogramme: s.pictogramme || "souvenir",
+    })),
     souvenirs: etat.souvenirs.map((s) => ({
       id: s.id,
       nom: s.nom,
@@ -1457,6 +1507,16 @@ function restaurerCarnet(donnees) {
   // On reconstitue d'abord le style : afficherTrace l'utilise pour dessiner.
   etat.style = fusionnerStyle(donnees.style);
 
+  // La réserve (souvenirs sans position).
+  etat.stock = (donnees.stock || []).map((s) => ({
+    id: s.id,
+    nom: s.nom || "",
+    photos: Array.isArray(s.photos) ? s.photos : [],
+    couverture: s.couverture === undefined ? null : s.couverture,
+    textes: s.textes || "",
+    pictogramme: s.pictogramme || "souvenir",
+  }));
+
   effacerSouvenirs();
   afficherTrace(donnees.trace);
 
@@ -1479,8 +1539,9 @@ function restaurerCarnet(donnees) {
 
   renumeroterSouvenirs();
 
-  // On reprend le compteur d'identifiants là où il en était.
-  const maxId = etat.souvenirs.reduce((m, s) => Math.max(m, s.id || 0), 0);
+  // On reprend le compteur d'identifiants là où il en était (souvenirs + réserve).
+  const maxId = [...etat.souvenirs, ...etat.stock]
+    .reduce((m, s) => Math.max(m, s.id || 0), 0);
   prochainIdSouvenir = donnees.prochainId || maxId + 1;
 
   // On applique fond, ambiance, titre et style de trace, + les contrôles.
@@ -1556,6 +1617,8 @@ async function reinitialiserCarnet() {
   // On vide l'état et la carte.
   desarmerAjout();
   effacerSouvenirs();
+  etat.stock = [];
+  fermerReserve();
   if (etat.coucheTrace) { etat.coucheTrace.remove(); etat.coucheTrace = null; }
   etat.trace = null;
   prochainIdSouvenir = 1;
@@ -1576,6 +1639,7 @@ async function reinitialiserCarnet() {
   // On masque les boutons liés à une trace et on réaffiche l'accueil.
   document.getElementById("btn-mode").hidden = true;
   document.getElementById("btn-ajout-souvenir").hidden = true;
+  document.getElementById("btn-reserve").hidden = true;
   document.getElementById("btn-style").hidden = true;
   document.getElementById("btn-exporter").hidden = true;
   document.getElementById("btn-reinitialiser").hidden = true;
@@ -1663,6 +1727,124 @@ function definirMode(mode) {
 /** Bascule entre Édition et Visualisation. */
 function basculerMode() {
   definirMode(etat.mode === "visualisation" ? "edition" : "visualisation");
+}
+
+/* =========================================================
+   Réserve de souvenirs (stock, sans position sur la carte)
+   ========================================================= */
+
+/** Ouvre le panneau de la réserve. */
+function ouvrirReserve() {
+  renderReserve();
+  document.getElementById("panneau-reserve").hidden = false;
+}
+
+/** Ferme le panneau de la réserve. */
+function fermerReserve() {
+  document.getElementById("panneau-reserve").hidden = true;
+}
+
+/** (Re)construit la liste des souvenirs en réserve. */
+function renderReserve() {
+  const liste = document.getElementById("reserve-liste");
+  const vide = document.getElementById("reserve-vide");
+  liste.innerHTML = "";
+  vide.hidden = etat.stock.length > 0;
+
+  etat.stock.forEach((item) => {
+    const ligne = document.createElement("button");
+    ligne.className = "reserve-item";
+
+    // Vignette : photo de couverture, ou le pictogramme à défaut.
+    const vign = document.createElement("div");
+    vign.className = "reserve-vignette";
+    const couv = photoCouverture(item);
+    if (couv) {
+      const im = document.createElement("img");
+      im.src = couv.src;
+      vign.appendChild(im);
+    } else {
+      vign.textContent = PICTO_GLYPH[item.pictogramme] || "📝";
+      vign.classList.add("reserve-vignette-vide");
+    }
+
+    const infos = document.createElement("div");
+    infos.className = "reserve-infos";
+    const nom = document.createElement("div");
+    nom.className = "reserve-nom";
+    nom.textContent = item.nom || "Sans nom";
+    const extrait = document.createElement("div");
+    extrait.className = "reserve-extrait";
+    extrait.textContent = item.textes
+      ? item.textes.slice(0, 90)
+      : (item.photos.length ? `${item.photos.length} photo(s)` : "Vide");
+    infos.appendChild(nom);
+    infos.appendChild(extrait);
+
+    ligne.appendChild(vign);
+    ligne.appendChild(infos);
+    ligne.addEventListener("click", () => ouvrirStockEdition(item));
+    liste.appendChild(ligne);
+  });
+}
+
+/** Crée un souvenir en réserve (vide) et l'ouvre pour l'éditer. */
+function creerStock() {
+  const item = {
+    id: prochainIdSouvenir++,
+    nom: "",
+    textes: "",
+    photos: [],
+    couverture: null,
+    pictogramme: "souvenir",
+  };
+  etat.stock.push(item);
+  ouvrirStockEdition(item);
+  planifierSauvegarde();
+}
+
+/** Ouvre un souvenir de la réserve dans la fiche pour l'éditer. */
+function ouvrirStockEdition(item) {
+  fermerReserve();
+  ouvrirPanneau(item); // la fiche détecte qu'il s'agit d'un souvenir en réserve
+}
+
+/* ---------- Piocher dans la réserve au moment de poser un point ---------- */
+
+/** Remplit la liste "depuis la réserve" dans la fenêtre de saisie du nom. */
+function renderStockPourModal() {
+  const bloc = document.getElementById("modal-stock");
+  const liste = document.getElementById("modal-stock-liste");
+  liste.innerHTML = "";
+  if (etat.stock.length === 0) {
+    bloc.hidden = true;
+    return;
+  }
+  bloc.hidden = false;
+  etat.stock.forEach((item) => {
+    const b = document.createElement("button");
+    b.className = "modal-stock-item";
+    b.textContent =
+      (PICTO_GLYPH[item.pictogramme] || "📝") + " " + (item.nom || "Sans nom");
+    b.addEventListener("click", () => appliquerStockSurCarte(item));
+    liste.appendChild(b);
+  });
+}
+
+/** Pose un souvenir de la réserve à l'endroit cliqué, puis le retire de la réserve. */
+function appliquerStockSurCarte(item) {
+  if (!latLngEnAttente) return;
+  ajouterSouvenir(latLngEnAttente.lat, latLngEnAttente.lng, item.nom || "Souvenir", {
+    textes: item.textes,
+    photos: item.photos,
+    couverture: item.couverture,
+    pictogramme: item.pictogramme,
+  });
+  etat.stock = etat.stock.filter((x) => x.id !== item.id);
+  document.getElementById("modal-nom").hidden = true;
+  latLngEnAttente = null;
+  desarmerAjout();
+  planifierSauvegarde();
 }
 
 /* ---------------------------------------------------------
@@ -1777,6 +1959,14 @@ function init() {
     .addEventListener("click", ouvrirPanneauStyle);
   document.getElementById("fermer-style")
     .addEventListener("click", fermerPanneauStyle);
+
+  // --- Réserve de souvenirs ---
+  document.getElementById("btn-reserve")
+    .addEventListener("click", ouvrirReserve);
+  document.getElementById("fermer-reserve")
+    .addEventListener("click", fermerReserve);
+  document.getElementById("reserve-nouveau")
+    .addEventListener("click", creerStock);
 
   // Titre de la carte
   document.getElementById("style-titre")
@@ -1915,6 +2105,7 @@ function init() {
       else if (etat.modeAjout) desarmerAjout();
       else if (!document.getElementById("panneau-style").hidden) fermerPanneauStyle();
       else if (!document.getElementById("panneau").hidden) fermerPanneau();
+      else if (!document.getElementById("panneau-reserve").hidden) fermerReserve();
       return;
     }
 
