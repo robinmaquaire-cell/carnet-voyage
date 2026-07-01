@@ -1959,7 +1959,7 @@ function creerMiniCarteImpression(conteneur, souvenir) {
       fini = true;
       resolve();
     };
-    setTimeout(terminer, 2500);
+    setTimeout(terminer, 5000);
     fond.once("load", terminer);
   });
 }
@@ -1977,7 +1977,7 @@ function attendreCarteChargee() {
       fini = true;
       resolve();
     };
-    setTimeout(terminer, 3000);
+    setTimeout(terminer, 6000);
 
     if (etat.style.fond === "vectoriel" && etat.glMap) {
       if (etat.glMap.isStyleLoaded()) terminer();
@@ -1990,7 +1990,15 @@ function attendreCarteChargee() {
   });
 }
 
-/** Applique le format de papier, l'orientation et le nombre de colonnes choisis. */
+// Marge (mm) de la page imprimée ; doit correspondre à la marge posée dans @page.
+const MARGE_IMPRESSION_MM = 12;
+
+/**
+ * Applique le format de papier, l'orientation et le nombre de colonnes
+ * choisis. Fixe aussi la taille EXACTE (en mm) de la carte principale : elle
+ * sera la même hors écran (pendant la préparation) et à l'impression, pour
+ * que Leaflet n'ait pas à se redimensionner une seconde fois.
+ */
 function appliquerReglagesImpression(reglages) {
   const [lPortrait, hPortrait] = FORMATS_PAPIER[reglages.format] || FORMATS_PAPIER.A4;
   const [largeur, hauteur] = reglages.orientation === "paysage"
@@ -2005,16 +2013,22 @@ function appliquerReglagesImpression(reglages) {
     style.id = "style-impression-dynamique";
     document.head.appendChild(style);
   }
-  style.textContent = `@media print { @page { size: ${largeur}mm ${hauteur}mm; margin: 12mm; } }`;
+  style.textContent = `@media print { @page { size: ${largeur}mm ${hauteur}mm; margin: ${MARGE_IMPRESSION_MM}mm; } }`;
 
-  document.documentElement.style.setProperty("--impression-hauteur-page", hauteur + "mm");
   document.documentElement.style.setProperty("--impression-colonnes", String(reglages.colonnes || 2));
+
+  const carteEl = document.querySelector("main.layout");
+  carteEl.style.width = (largeur - MARGE_IMPRESSION_MM * 2) + "mm";
+  carteEl.style.height = (hauteur - MARGE_IMPRESSION_MM * 2) + "mm";
 }
 
 /** Remet la carte à sa taille normale (après impression, ou en cas d'annulation). */
 function terminerImpression() {
   if (!document.body.classList.contains("mode-impression")) return;
   document.body.classList.remove("mode-impression");
+  const carteEl = document.querySelector("main.layout");
+  carteEl.style.width = "";
+  carteEl.style.height = "";
   etat.carte.invalidateSize();
   if (etat.glMap) etat.glMap.resize();
 }

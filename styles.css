@@ -1380,22 +1380,25 @@ body.mode-visualisation #panneau {
   color: var(--foret-fonce);
 }
 
-.impression-souvenirs { font-size: 0; } /* évite les espaces parasites entre cartes en ligne */
+/* Disposition en colonnes façon "journal" : chaque carte s'empile dans la
+   colonne la moins remplie, plutôt qu'une grille où une case courte laisse
+   un vide sous elle (column-fill:auto = remplissage séquentiel, pas de
+   grid/flex ici, pour un découpage fiable à l'impression). */
+.impression-souvenirs {
+  column-count: var(--impression-colonnes, 2);
+  column-gap: 16px;
+  column-fill: auto;
+}
 .impression-carte {
-  display: inline-block;
-  vertical-align: top;
-  box-sizing: border-box;
-  width: calc(100% / var(--impression-colonnes, 2));
-  padding: 10px;
   break-inside: avoid;
   page-break-inside: avoid;
-  font-size: 14px;
+  margin: 0 0 16px;
 }
 .impression-carte-interieur {
   border: 1.5px solid var(--ligne);
   border-radius: var(--rayon);
   padding: 14px;
-  height: 100%;
+  font-size: 14px;
 }
 
 .impression-carte-entete {
@@ -1440,9 +1443,10 @@ body.mode-visualisation #panneau {
 .impression-photo-couverture {
   display: block;
   width: 100%;
-  height: 55mm;
-  object-fit: cover;
+  max-height: 100mm;
+  object-fit: contain; /* montre la photo en entier, sans la recadrer */
   border-radius: 10px;
+  background: var(--papier); /* comble l'espace si le format ne remplit pas le cadre */
 }
 .impression-legende {
   margin: 6px 0 0;
@@ -1481,6 +1485,19 @@ body.mode-visualisation #panneau {
   border: 1px solid var(--ligne);
 }
 
+/* Pendant la préparation de l'affiche (avant l'ouverture de la boîte
+   d'impression), la carte principale est agrandie à sa taille FINALE
+   d'impression (largeur/hauteur posées en JS, cf. appliquerReglagesImpression)
+   mais positionnée hors écran. Ainsi Leaflet charge ses tuiles à la bonne
+   taille AVANT que l'impression ne démarre : le passage en mode impression
+   ne provoque plus aucun redimensionnement (donc plus aucun décalage). */
+body.mode-impression main.layout {
+  position: fixed;
+  top: 0;
+  left: -100000px;
+  z-index: -1;
+}
+
 @media print {
   html, body {
     height: auto;
@@ -1494,10 +1511,12 @@ body.mode-visualisation #panneau {
   #panneau-style, .modal-overlay, #toast, #trace-info,
   .leaflet-control-zoom { display: none !important; }
 
-  /* ...on agrandit la carte pour occuper une page pleine... */
+  /* ...la carte reprend sa place dans la page, à l'identique de sa taille
+     hors écran (aucun redimensionnement au moment d'imprimer)... */
   body.mode-impression main.layout {
     position: relative;
-    height: calc(var(--impression-hauteur-page, 297mm) - 24mm);
+    top: auto;
+    left: auto;
     break-after: page;
     page-break-after: always;
   }
