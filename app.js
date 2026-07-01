@@ -1925,6 +1925,18 @@ function construireCarteImpression(souvenir, numero) {
 }
 
 /**
+ * Détermine la largeur (en unités de grille) d'un souvenir selon son
+ * contenu : un souvenir bien rempli (photo + récit conséquent) occupe deux
+ * unités, les autres une seule — c'est ce qui fait varier la taille des
+ * rectangles dans la mosaïque, plutôt que des colonnes toutes égales.
+ */
+function classifierTailleSouvenir(souvenir) {
+  const aPhoto = !!(photoCouverture(souvenir) || souvenir.photos[0]);
+  const longueurTexte = (souvenir.textes || "").length;
+  return aPhoto && longueurTexte > 150 ? 2 : 1;
+}
+
+/**
  * Crée une petite carte de situation (non interactive) dans le conteneur
  * donné, centrée sur le souvenir avec le tracé en fond. Renvoie une promesse
  * résolue une fois ses tuiles chargées (ou après 2,5 s au cas où).
@@ -2025,7 +2037,7 @@ const MM_EN_PX = 96 / 25.4;
  * style du texte choisis. Fixe aussi la taille EXACTE (en mm) de la carte
  * principale, À SA PLACE NORMALE (pas de changement de position au moment
  * d'imprimer, pour éviter tout décalage de Leaflet).
- * @returns {{largeurUtileMm:number, hauteurUtileMm:number, largeurColonneMm:number, nbColonnes:number}}
+ * @returns {{largeurUtileMm:number, hauteurUtileMm:number, largeurUniteMm:number, nbUnites:number}}
  */
 function appliquerReglagesImpression(reglages) {
   const [lPortrait, hPortrait] = FORMATS_PAPIER[reglages.format] || FORMATS_PAPIER.A4;
@@ -2056,56 +2068,74 @@ function appliquerReglagesImpression(reglages) {
   carteEl.style.width = largeurUtileMm + "mm";
   carteEl.style.height = hauteurUtileMm + "mm";
 
-  const nbColonnes = reglages.colonnes || 2;
-  const largeurColonneMm = (largeurUtileMm - (nbColonnes - 1) * ECART_COLONNES_MM) / nbColonnes;
-  return { largeurUtileMm, hauteurUtileMm, largeurColonneMm, nbColonnes };
+  const nbUnites = reglages.colonnes || 2;
+  const largeurUniteMm = (largeurUtileMm - (nbUnites - 1) * ECART_COLONNES_MM) / nbUnites;
+  return { largeurUtileMm, hauteurUtileMm, largeurUniteMm, nbUnites };
 }
 
 /**
- * Répartit les souvenirs (déjà construits et mesurés) sur des pages de
- * colonnes : chaque souvenir rejoint la colonne la moins remplie de la page
- * en cours (empilement façon masonry), et une nouvelle page démarre dès
- * qu'un souvenir ne tiendrait plus dans la colonne visée. Renvoie un tableau
- * de pages, chaque page étant un tableau de colonnes (tableaux de cartes).
+ * Répartit les souvenirs (déjà construits, mesurés, avec leur largeur en
+ * unités de grille) en mosaïque façon "collage" : chaque carte occupe 1 ou
+ * plusieurs unités de large selon son contenu, et se glisse à l'endroit le
+ * plus haut disponible (empaquetage "skyline" : on cherche la position qui
+ * minimise la hauteur du dessus de la zone occupée). Une nouvelle page
+ * démarre dès qu'une carte ne tiendrait plus dans la hauteur restante.
+ * Renvoie un tableau de pages ; chaque page = { hauteurPx, cartes:
+ * [{ info, colDepart, largeurUnites, top }] }.
  */
-function paginerSouvenirs(cartesInfo, nbColonnes, hauteurPageDisponiblePx) {
+function paginerSouvenirsMosaique(cartesInfo, nbUnites, hauteurPageDisponiblePx) {
   const pages = [];
-  let page, hauteursColonnes;
+  let page, hauteursUnites;
 
   function nouvellePage() {
-    page = Array.from({ length: nbColonnes }, () => []);
-    hauteursColonnes = new Array(nbColonnes).fill(0);
+    hauteursUnites = new Array(nbUnites).fill(0);
+    page = { cartes: [] };
     pages.push(page);
   }
   nouvellePage();
 
   cartesInfo.forEach((info) => {
-    let colonneMin = 0;
-    for (let c = 1; c < nbColonnes; c++) {
-      if (hauteursColonnes[c] < hauteursColonnes[colonneMin]) colonneMin = c;
+    const largeur = Math.min(info.largeurUnites, nbUnites);
+
+    // Position (unité de départ) qui minimise la hauteur du dessus de la
+    // zone occupée par la carte, sur toute sa largeur.
+    let meilleureCol = 0;
+    let meilleureHauteur = Infinity;
+    for (let c = 0; c <= nbUnites - largeur; c++) {
+      let h = 0;
+      for (let k = c; k < c + largeur; k++) h = Math.max(h, hauteursUnites[k]);
+      if (h < meilleureHauteur) {
+        meilleureHauteur = h;
+        meilleureCol = c;
+      }
     }
-    // On ne change de page que si la colonne visée contient déjà quelque
-    // chose (sinon un souvenir plus haut qu'une page entière boucleraît
-    // indéfiniment sans jamais pouvoir être placé).
-    const dejaRemplie = hauteursColonnes[colonneMin] > 0;
-    if (dejaRemplie && hauteursColonnes[colonneMin] + info.hauteurPx > hauteurPageDisponiblePx) {
+
+    // On ne change de page que si la zone visée contient déjà quelque chose
+    // (sinon un souvenir plus haut qu'une page entière ne pourrait jamais
+    // être placé).
+    const dejaOccupe = meilleureHauteur > 0;
+    if (dejaOccupe && meilleureHauteur + info.hauteurPx > hauteurPageDisponiblePx) {
       nouvellePage();
-      colonneMin = 0;
+      meilleureCol = 0;
+      meilleureHauteur = 0;
     }
-    page[colonneMin].push(info);
-    hauteursColonnes[colonneMin] += info.hauteurPx + ECART_CARTES_MM * MM_EN_PX;
+
+    page.cartes.push({ info, colDepart: meilleureCol, largeurUnites: largeur, top: meilleureHauteur });
+    const nouvelleHauteur = meilleureHauteur + info.hauteurPx + ECART_CARTES_MM * MM_EN_PX;
+    for (let k = meilleureCol; k < meilleureCol + largeur; k++) hauteursUnites[k] = nouvelleHauteur;
   });
 
+  pages.forEach((p) => {
+    p.hauteurPx = p.cartes.reduce((m, c) => Math.max(m, c.top + c.info.hauteurPx), 0);
+  });
   return pages;
 }
 
-/** Remet la carte à sa taille normale et ferme l'aperçu (bouton "Fermer",
- *  fiable même quand les événements d'impression du navigateur ne se
- *  déclenchent pas correctement). */
+/** Remet la carte à sa taille normale (après impression, ou en cas
+ *  d'annulation) — voir aussi les filets de sécurité posés dans init(). */
 function terminerImpression() {
   if (!document.body.classList.contains("mode-impression")) return;
-  document.body.classList.remove("mode-impression", "apercu-pret");
-  document.getElementById("apercu-barre").hidden = true;
+  document.body.classList.remove("mode-impression");
   const carteEl = document.querySelector("main.layout");
   carteEl.style.width = "";
   carteEl.style.height = "";
@@ -2114,12 +2144,11 @@ function terminerImpression() {
 }
 
 /**
- * Prépare l'aperçu de l'affiche : agrandit la carte principale à sa taille
- * finale, construit et mesure chaque souvenir (hors écran, à la largeur
- * réelle d'une colonne) pour les répartir sur des pages complètes, puis
- * affiche le tout à l'écran (défilable, avec une barre Fermer/Imprimer)
- * au lieu d'imprimer directement — l'utilisateur voit exactement ce qui
- * sera imprimé avant de lancer l'impression.
+ * Prépare puis lance l'impression de l'affiche : agrandit la carte
+ * principale à sa taille finale, construit et mesure chaque souvenir (hors
+ * écran, à sa largeur réelle) pour les répartir en mosaïque sur des pages
+ * complètes, puis ouvre la fenêtre d'impression du navigateur (l'utilisateur
+ * y choisit "Enregistrer en PDF").
  */
 async function exporterAffiche(reglages) {
   if (!etat.trace) {
@@ -2127,61 +2156,65 @@ async function exporterAffiche(reglages) {
     return;
   }
 
-  toast("Préparation de l'aperçu…");
-  const { hauteurUtileMm, largeurColonneMm, nbColonnes } = appliquerReglagesImpression(reglages);
+  toast("Préparation de l'affiche…");
+  const { hauteurUtileMm, largeurUniteMm, nbUnites } = appliquerReglagesImpression(reglages);
 
   document.body.classList.add("mode-impression");
   etat.carte.invalidateSize();
   if (etat.glMap) etat.glMap.resize();
   const attentes = [attendreCarteChargee()];
 
-  // Construit chaque carte souvenir dans la zone de mesure hors écran, à la
-  // largeur réelle d'une colonne, pour pouvoir mesurer sa hauteur.
+  // Construit chaque carte souvenir dans la zone de mesure hors écran, à sa
+  // largeur réelle (1 ou 2 unités selon son contenu), pour pouvoir mesurer
+  // sa hauteur avant de composer la mosaïque.
   const zoneMesure = document.getElementById("impression-mesure");
   zoneMesure.innerHTML = "";
-  zoneMesure.style.width = largeurColonneMm + "mm";
 
   const cartesInfo = [];
   etat.souvenirs.forEach((s, i) => {
     const { carte, miniMapEl } = construireCarteImpression(s, i + 1);
+    const largeurUnites = classifierTailleSouvenir(s);
+    const largeurMm = largeurUnites * largeurUniteMm + (largeurUnites - 1) * ECART_COLONNES_MM;
+    carte.style.width = largeurMm + "mm";
     zoneMesure.appendChild(carte);
-    cartesInfo.push({ carte });
+    cartesInfo.push({ carte, largeurUnites });
     attentes.push(creerMiniCarteImpression(miniMapEl, s));
   });
 
   await Promise.all(attentes);
 
-  // Mesure puis répartit sur des pages complètes (une colonne ne dépasse
-  // jamais la hauteur utile d'une page).
+  // Mesure puis compose la mosaïque (une page ne dépasse jamais la hauteur
+  // utile d'une feuille).
   cartesInfo.forEach((info) => { info.hauteurPx = info.carte.getBoundingClientRect().height; });
   const hauteurPageDisponiblePx = hauteurUtileMm * MM_EN_PX;
-  const pages = paginerSouvenirs(cartesInfo, nbColonnes, hauteurPageDisponiblePx);
+  const pages = paginerSouvenirsMosaique(cartesInfo, nbUnites, hauteurPageDisponiblePx);
 
   // Construit la mise en page finale (les cartes, déjà construites et déjà
-  // équipées de leur mini-carte, sont simplement déplacées depuis la zone
-  // de mesure : pas besoin de les reconstruire).
+  // équipées de leur mini-carte, sont simplement déplacées et positionnées
+  // depuis la zone de mesure : pas besoin de les reconstruire).
   const zoneFinale = document.getElementById("impression-souvenirs");
   zoneFinale.innerHTML = "";
   pages.forEach((page) => {
     const pageEl = document.createElement("div");
     pageEl.className = "impression-page";
-    page.forEach((colonne) => {
-      const colEl = document.createElement("div");
-      colEl.className = "impression-colonne";
-      colonne.forEach((info) => colEl.appendChild(info.carte));
-      pageEl.appendChild(colEl);
+    pageEl.style.height = (page.hauteurPx / MM_EN_PX) + "mm";
+    page.cartes.forEach((c) => {
+      const gauche = c.colDepart * (largeurUniteMm + ECART_COLONNES_MM);
+      const largeur = c.largeurUnites * largeurUniteMm + (c.largeurUnites - 1) * ECART_COLONNES_MM;
+      c.info.carte.style.left = gauche + "mm";
+      c.info.carte.style.top = (c.top / MM_EN_PX) + "mm";
+      c.info.carte.style.width = largeur + "mm";
+      pageEl.appendChild(c.info.carte);
     });
     zoneFinale.appendChild(pageEl);
   });
 
-  document.body.classList.add("apercu-pret");
-  document.getElementById("apercu-barre").hidden = false;
-  window.scrollTo(0, 0);
-}
-
-/** Lance l'impression depuis l'aperçu (l'utilisateur y choisit "Enregistrer en PDF"). */
-function lancerImpressionDepuisApercu() {
   window.print();
+
+  // Filet de sécurité "dur" : si aucun signal de fin d'impression ne se
+  // déclenche (afterprint, matchMedia, clic de l'utilisateur...), l'appli
+  // se remet quand même à la normale au bout de 3 minutes.
+  setTimeout(terminerImpression, 180000);
 }
 
 /**
@@ -2895,14 +2928,16 @@ function init() {
     if (mqPrint.addEventListener) mqPrint.addEventListener("change", surChangementPrint);
     else if (mqPrint.addListener) mqPrint.addListener(surChangementPrint); // anciens navigateurs
   }
+  // Filet de sécurité final : si aucun des signaux ci-dessus ne s'est
+  // déclenché (ça arrive, notamment via "Annuler" dans certains
+  // navigateurs), le tout premier clic ailleurs dans l'appli remet la carte
+  // à la normale — on ne reste jamais bloqué avec une carte agrandie.
+  document.addEventListener("click", () => {
+    if (document.body.classList.contains("mode-impression")) terminerImpression();
+  }, true);
   document.getElementById("btn-reinitialiser")
     .addEventListener("click", reinitialiserCarnet);
 
-  // --- Barre flottante de l'aperçu (Fermer/Imprimer) ---
-  document.getElementById("apercu-fermer")
-    .addEventListener("click", terminerImpression);
-  document.getElementById("apercu-imprimer")
-    .addEventListener("click", lancerImpressionDepuisApercu);
 
   // --- Réglages de l'affiche PDF (format, orientation, colonnes) ---
   document.getElementById("affiche-annuler")
@@ -2997,7 +3032,7 @@ function init() {
 
     // 2) Échap : annule l'ajout en cours, sinon ferme ce qui est ouvert.
     if (e.key === "Escape") {
-      if (document.body.classList.contains("apercu-pret")) terminerImpression();
+      if (document.body.classList.contains("mode-impression")) terminerImpression();
       else if (!document.getElementById("menu-actions").hidden) fermerMenu();
       else if (!document.getElementById("modal-generer").hidden) fermerGenerer();
       else if (!document.getElementById("modal-affiche").hidden) fermerModalAffiche();

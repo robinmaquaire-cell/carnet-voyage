@@ -425,7 +425,7 @@
 
       <div class="modal-actions">
         <button class="btn btn-ghost" id="affiche-annuler">Annuler</button>
-        <button class="btn btn-accent" id="affiche-generer">Voir l'aperçu</button>
+        <button class="btn btn-accent" id="affiche-generer">Imprimer</button>
       </div>
     </div>
   </div>
@@ -465,23 +465,17 @@
   <div id="toast" class="toast" hidden></div>
 
   <!-- Zone de mesure hors écran : chaque carte souvenir y est construite une
-       première fois (à la largeur réelle d'une colonne) pour mesurer sa
-       hauteur avant de répartir les souvenirs sur les pages. Pas display:none
-       pour que les mini-cartes Leaflet puissent s'y initialiser normalement. -->
+       première fois (à la largeur d'une unité de grille) pour mesurer sa
+       hauteur avant de répartir les souvenirs en mosaïque sur les pages.
+       Pas display:none pour que les mini-cartes Leaflet puissent s'y
+       initialiser normalement. -->
   <div id="impression-mesure"></div>
 
-  <!-- Aperçu de l'affiche (carte + souvenirs) : caché normalement, affiché en
-       plein écran et imprimable une fois les réglages validés. -->
+  <!-- Contenu généré pour l'impression (carte + souvenirs en mosaïque) :
+       jamais affiché à l'écran, seulement au moment d'imprimer. -->
   <div id="impression">
     <h2 id="impression-titre-souvenirs" class="impression-titre-souvenirs">Souvenirs du voyage</h2>
     <div id="impression-souvenirs" class="impression-souvenirs"></div>
-  </div>
-
-  <!-- Barre flottante de l'aperçu : jamais imprimée (masquée en @media print) -->
-  <div id="apercu-barre" class="apercu-barre" hidden>
-    <span class="apercu-info">Aperçu de l'affiche — fais défiler pour tout voir</span>
-    <button id="apercu-fermer" class="btn btn-ghost">✕ Fermer l'aperçu</button>
-    <button id="apercu-imprimer" class="btn btn-accent">🖨️ Imprimer</button>
   </div>
 
   <!-- Leaflet (le moteur de la carte) -->
