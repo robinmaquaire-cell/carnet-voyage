@@ -1800,60 +1800,174 @@ function exporterCarnet() {
   toast("Carnet exporté");
 }
 
-/* ---------- Export "affiche" (PDF au format A1, via l'impression) ---------- */
+/* ---------- Export "affiche" (PDF, via l'impression du navigateur) ---------- */
 
-/** Construit la liste des souvenirs (photo + titre + récit) pour l'affiche. */
-function construireImpressionSouvenirs() {
-  const conteneur = document.createElement("div");
-  conteneur.className = "impression-souvenirs";
+// Dimensions (mm, portrait) des formats de papier proposés.
+const FORMATS_PAPIER = {
+  A0: [841, 1189],
+  A1: [594, 841],
+  A2: [420, 594],
+  A3: [297, 420],
+  A4: [210, 297],
+};
 
-  etat.souvenirs.forEach((s, i) => {
-    const carte = document.createElement("article");
-    carte.className = "impression-carte";
+// Nombre de colonnes de souvenirs suggéré par défaut selon le format choisi.
+const COLONNES_PAR_DEFAUT = { A4: 2, A3: 2, A2: 3, A1: 3, A0: 4 };
 
-    const couv = photoCouverture(s) || s.photos[0];
-    if (couv) {
-      const img = document.createElement("img");
-      img.className = "impression-photo";
-      img.src = couv.src;
-      carte.appendChild(img);
-    }
+// Réglages courants de l'affiche (mémorisés le temps de la session).
+const reglagesAffiche = { format: "A4", orientation: "portrait", colonnes: 2 };
 
-    const titre = document.createElement("h3");
-    titre.className = "impression-carte-titre";
-    titre.textContent = `${i + 1}. ${s.nom || "Souvenir"}`;
-    carte.appendChild(titre);
-
-    if (s.textes) {
-      const texte = document.createElement("p");
-      texte.className = "impression-carte-texte";
-      texte.textContent = s.textes;
-      carte.appendChild(texte);
-    }
-
-    conteneur.appendChild(carte);
-  });
-
-  return conteneur;
+/** Ouvre la fenêtre de réglages de l'affiche PDF. */
+function ouvrirModalAffiche() {
+  if (!etat.trace) {
+    toast("Charge d'abord une trace avant d'exporter une affiche.", true);
+    return;
+  }
+  majSegment("affiche-format", "format", reglagesAffiche.format);
+  majSegment("affiche-orientation", "orientation", reglagesAffiche.orientation);
+  majSegment("affiche-colonnes", "colonnes", String(reglagesAffiche.colonnes));
+  document.getElementById("modal-affiche").hidden = false;
 }
 
-/** Remplit la zone d'impression : titre de l'affiche + souvenirs. */
-function preparerImpression() {
-  const zone = document.getElementById("impression");
-  zone.innerHTML = "";
-
-  const titre = document.createElement("h1");
-  titre.className = "impression-titre-principal";
-  titre.textContent = (etat.style.titre || "").trim() || (etat.trace && etat.trace.name) || "Carnet de voyage";
-  zone.appendChild(titre);
-
-  zone.appendChild(construireImpressionSouvenirs());
+/** Ferme la fenêtre de réglages de l'affiche PDF. */
+function fermerModalAffiche() {
+  document.getElementById("modal-affiche").hidden = true;
 }
 
 /**
- * Attend que le fond de carte ait fini de (re)charger ses tuiles après
- * l'agrandissement de la carte pour l'impression (sinon l'affiche imprimée
- * peut garder des zones vides). Se résout de toute façon après 3 s au cas où.
+ * Construit la carte imprimée d'un souvenir : pin numéroté + mini-carte de
+ * situation, grande photo de couverture + légende, récit, puis les autres
+ * photos en petit. Renvoie l'élément carte et le conteneur de la mini-carte
+ * (pas encore initialisée : c'est l'appelant qui la crée, une fois la carte
+ * insérée dans le document).
+ */
+function construireCarteImpression(souvenir, numero) {
+  const carte = document.createElement("article");
+  carte.className = "impression-carte";
+  const interieur = document.createElement("div");
+  interieur.className = "impression-carte-interieur";
+  carte.appendChild(interieur);
+
+  // En-tête : numéro, titre, mini-carte de situation.
+  const entete = document.createElement("div");
+  entete.className = "impression-carte-entete";
+
+  const pin = document.createElement("span");
+  pin.className = "impression-carte-pin";
+  pin.textContent = numero;
+  entete.appendChild(pin);
+
+  const titre = document.createElement("h3");
+  titre.className = "impression-carte-titre";
+  titre.textContent = souvenir.nom || "Souvenir";
+  entete.appendChild(titre);
+
+  const miniMapEl = document.createElement("div");
+  miniMapEl.className = "impression-mini-map";
+  entete.appendChild(miniMapEl);
+
+  interieur.appendChild(entete);
+
+  // Grande photo de couverture (ou 1re photo à défaut) + sa légende.
+  const couv = photoCouverture(souvenir) || souvenir.photos[0] || null;
+  if (couv) {
+    const img = document.createElement("img");
+    img.className = "impression-photo-couverture";
+    img.src = couv.src;
+    interieur.appendChild(img);
+    if (couv.legende) {
+      const legende = document.createElement("p");
+      legende.className = "impression-legende";
+      legende.textContent = couv.legende;
+      interieur.appendChild(legende);
+    }
+  }
+
+  // Récit.
+  if (souvenir.textes) {
+    const h4 = document.createElement("h4");
+    h4.className = "impression-recit-titre";
+    h4.textContent = "Récit";
+    interieur.appendChild(h4);
+
+    const texte = document.createElement("p");
+    texte.className = "impression-carte-texte";
+    texte.textContent = souvenir.textes;
+    interieur.appendChild(texte);
+  }
+
+  // Photos additionnelles (toutes sauf celle déjà affichée en grand), en petit.
+  const autres = souvenir.photos.filter((p) => p !== couv);
+  if (autres.length) {
+    const galerie = document.createElement("div");
+    galerie.className = "impression-galerie";
+    autres.forEach((p) => {
+      const mini = document.createElement("img");
+      mini.className = "impression-photo-mini";
+      mini.src = p.src;
+      galerie.appendChild(mini);
+    });
+    interieur.appendChild(galerie);
+  }
+
+  return { carte, miniMapEl };
+}
+
+/**
+ * Crée une petite carte de situation (non interactive) dans le conteneur
+ * donné, centrée sur le souvenir avec le tracé en fond. Renvoie une promesse
+ * résolue une fois ses tuiles chargées (ou après 2,5 s au cas où).
+ */
+function creerMiniCarteImpression(conteneur, souvenir) {
+  const carte = L.map(conteneur, {
+    zoomControl: false,
+    attributionControl: false,
+    dragging: false,
+    scrollWheelZoom: false,
+    doubleClickZoom: false,
+    boxZoom: false,
+    keyboard: false,
+    touchZoom: false,
+    tap: false,
+  });
+  const fond = L.tileLayer(
+    "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+    { subdomains: "abcd", maxZoom: 20 }
+  ).addTo(carte);
+
+  const couche = L.layerGroup().addTo(carte);
+  etat.trace.segments.forEach((seg) => {
+    L.polyline(seg, { color: "#c8893d", weight: 2, opacity: 0.85 }).addTo(couche);
+  });
+  const numero = etat.souvenirs.indexOf(souvenir) + 1;
+  L.marker([souvenir.lat, souvenir.lng], {
+    icon: creerIconeSouvenir(numero, souvenir.pictogramme),
+  }).addTo(couche);
+
+  carte.invalidateSize();
+  const points = [];
+  etat.trace.segments.forEach((seg) => seg.forEach((p) => points.push(p)));
+  points.push([souvenir.lat, souvenir.lng]);
+  if (points.length) {
+    carte.fitBounds(points, { paddingTopLeft: [8, 24], paddingBottomRight: [8, 8] });
+  }
+
+  return new Promise((resolve) => {
+    let fini = false;
+    const terminer = () => {
+      if (fini) return;
+      fini = true;
+      resolve();
+    };
+    setTimeout(terminer, 2500);
+    fond.once("load", terminer);
+  });
+}
+
+/**
+ * Attend que le fond de la carte principale ait fini de (re)charger ses
+ * tuiles après son agrandissement pour l'impression (sinon l'affiche
+ * imprimée peut garder des zones vides). Se résout après 3 s au cas où.
  */
 function attendreCarteChargee() {
   return new Promise((resolve) => {
@@ -1876,6 +1990,27 @@ function attendreCarteChargee() {
   });
 }
 
+/** Applique le format de papier, l'orientation et le nombre de colonnes choisis. */
+function appliquerReglagesImpression(reglages) {
+  const [lPortrait, hPortrait] = FORMATS_PAPIER[reglages.format] || FORMATS_PAPIER.A4;
+  const [largeur, hauteur] = reglages.orientation === "paysage"
+    ? [hPortrait, lPortrait]
+    : [lPortrait, hPortrait];
+
+  // La taille de page (@page) n'accepte pas les variables CSS dans la plupart
+  // des navigateurs : on l'injecte donc dynamiquement dans une feuille dédiée.
+  let style = document.getElementById("style-impression-dynamique");
+  if (!style) {
+    style = document.createElement("style");
+    style.id = "style-impression-dynamique";
+    document.head.appendChild(style);
+  }
+  style.textContent = `@media print { @page { size: ${largeur}mm ${hauteur}mm; margin: 12mm; } }`;
+
+  document.documentElement.style.setProperty("--impression-hauteur-page", hauteur + "mm");
+  document.documentElement.style.setProperty("--impression-colonnes", String(reglages.colonnes || 2));
+}
+
 /** Remet la carte à sa taille normale (après impression, ou en cas d'annulation). */
 function terminerImpression() {
   if (!document.body.classList.contains("mode-impression")) return;
@@ -1885,22 +2020,34 @@ function terminerImpression() {
 }
 
 /**
- * Lance l'export "affiche" : agrandit temporairement la carte au format A1,
- * prépare la liste des souvenirs, puis ouvre la fenêtre d'impression du
- * navigateur (l'utilisateur y choisit "Enregistrer en PDF").
+ * Lance l'export "affiche" : agrandit temporairement la carte principale pour
+ * occuper une page pleine, prépare la liste des souvenirs (avec leur
+ * mini-carte de situation), puis ouvre la fenêtre d'impression du navigateur
+ * (l'utilisateur y choisit "Enregistrer en PDF").
  */
-async function exporterAffiche() {
+async function exporterAffiche(reglages) {
   if (!etat.trace) {
     toast("Charge d'abord une trace avant d'exporter une affiche.", true);
     return;
   }
 
-  preparerImpression();
+  toast("Préparation de l'affiche…");
+  appliquerReglagesImpression(reglages);
+
   document.body.classList.add("mode-impression");
   etat.carte.invalidateSize();
   if (etat.glMap) etat.glMap.resize();
+  const attentes = [attendreCarteChargee()];
 
-  await attendreCarteChargee();
+  const zone = document.getElementById("impression-souvenirs");
+  zone.innerHTML = "";
+  etat.souvenirs.forEach((s, i) => {
+    const { carte, miniMapEl } = construireCarteImpression(s, i + 1);
+    zone.appendChild(carte);
+    attentes.push(creerMiniCarteImpression(miniMapEl, s));
+  });
+
+  await Promise.all(attentes);
 
   window.print();
 }
@@ -2603,12 +2750,35 @@ function init() {
   document.getElementById("btn-exporter")
     .addEventListener("click", exporterCarnet);
   document.getElementById("btn-export-affiche")
-    .addEventListener("click", exporterAffiche);
+    .addEventListener("click", ouvrirModalAffiche);
   // Une fois la fenêtre d'impression fermée (ou annulée), on remet la carte
   // à sa taille normale.
   window.addEventListener("afterprint", terminerImpression);
   document.getElementById("btn-reinitialiser")
     .addEventListener("click", reinitialiserCarnet);
+
+  // --- Réglages de l'affiche PDF (format, orientation, colonnes) ---
+  document.getElementById("affiche-annuler")
+    .addEventListener("click", fermerModalAffiche);
+  document.getElementById("affiche-generer")
+    .addEventListener("click", () => {
+      fermerModalAffiche();
+      exporterAffiche(reglagesAffiche);
+    });
+  brancherSegment("affiche-format", "format", (v) => {
+    reglagesAffiche.format = v;
+    reglagesAffiche.colonnes = COLONNES_PAR_DEFAUT[v] || 2;
+    majSegment("affiche-format", "format", v);
+    majSegment("affiche-colonnes", "colonnes", String(reglagesAffiche.colonnes));
+  });
+  brancherSegment("affiche-orientation", "orientation", (v) => {
+    reglagesAffiche.orientation = v;
+    majSegment("affiche-orientation", "orientation", v);
+  });
+  brancherSegment("affiche-colonnes", "colonnes", (v) => {
+    reglagesAffiche.colonnes = Number(v);
+    majSegment("affiche-colonnes", "colonnes", v);
+  });
   document.getElementById("btn-mode")
     .addEventListener("click", basculerMode);
 
@@ -2676,6 +2846,7 @@ function init() {
     if (e.key === "Escape") {
       if (!document.getElementById("menu-actions").hidden) fermerMenu();
       else if (!document.getElementById("modal-generer").hidden) fermerGenerer();
+      else if (!document.getElementById("modal-affiche").hidden) fermerModalAffiche();
       else if (!document.getElementById("modal-picto").hidden) fermerPictoPicker();
       else if (!document.getElementById("modal-nom").hidden) fermerModalNom();
       else if (etat.modeAjout) desarmerAjout();

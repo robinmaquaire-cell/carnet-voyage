@@ -1360,68 +1360,152 @@ body.mode-visualisation #panneau {
   .trace-info { max-width: calc(100% - 32px); }
 }
 
-/* ---------- Export affiche (impression / PDF au format A1) ---------- */
-/* Contenu des souvenirs, généré au moment de l'impression ; invisible à l'écran. */
-#impression { display: none; }
+/* ---------- Export affiche (impression / PDF) ---------- */
+/* Contenu généré pour l'impression : positionné HORS ÉCRAN (pas display:none)
+   pour que les mini-cartes Leaflet de chaque souvenir puissent s'initialiser
+   et charger leurs tuiles avant que l'impression ne démarre. */
+#impression {
+  position: absolute;
+  top: 0;
+  left: -100000px;
+  width: 1200px;
+  background: #fff;
+}
 
-.impression-titre-principal {
-  margin: 0 0 22px;
+.impression-titre-souvenirs {
+  margin: 0 0 20px;
   font-family: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
   font-weight: 800;
-  font-size: 44px;
+  font-size: 28px;
   color: var(--foret-fonce);
 }
-.impression-souvenirs {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 22px;
-}
+
+.impression-souvenirs { font-size: 0; } /* évite les espaces parasites entre cartes en ligne */
 .impression-carte {
+  display: inline-block;
+  vertical-align: top;
+  box-sizing: border-box;
+  width: calc(100% / var(--impression-colonnes, 2));
+  padding: 10px;
   break-inside: avoid;
+  page-break-inside: avoid;
+  font-size: 14px;
+}
+.impression-carte-interieur {
   border: 1.5px solid var(--ligne);
   border-radius: var(--rayon);
   padding: 14px;
+  height: 100%;
 }
-.impression-photo {
-  display: block;
-  width: 100%;
-  height: 200px;
-  object-fit: cover;
-  border-radius: 10px;
+
+.impression-carte-entete {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 10px;
 }
+.impression-carte-pin {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--foret-fonce);
+  color: #fff;
+  font-weight: 800;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 .impression-carte-titre {
-  margin: 0 0 8px;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
   font-family: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
   font-weight: 800;
-  font-size: 17px;
+  font-size: 15px;
   color: var(--foret-fonce);
+  overflow-wrap: break-word;
+}
+.impression-mini-map {
+  flex: none;
+  width: 26mm;
+  height: 18mm;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--ligne);
+  background: var(--papier);
+}
+
+.impression-photo-couverture {
+  display: block;
+  width: 100%;
+  height: 55mm;
+  object-fit: cover;
+  border-radius: 10px;
+}
+.impression-legende {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--encre-douce);
+}
+
+.impression-recit-titre {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--encre-douce);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
 }
 .impression-carte-texte {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--encre);
   white-space: pre-wrap;
 }
 
-@media print {
-  /* Format affiche : A1 portrait, avec une marge raisonnable. */
-  @page { size: 594mm 841mm; margin: 12mm; }
+.impression-galerie {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.impression-photo-mini {
+  width: 26mm;
+  height: 20mm;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--ligne);
+}
 
-  html, body { height: auto; overflow: visible; background: #fff; }
+@media print {
+  html, body {
+    height: auto;
+    overflow: visible;
+    background: #fff;
+    display: block; /* le flex du body empêcherait le contenu de se répartir sur plusieurs pages */
+  }
 
   /* On masque toute l'interface d'édition/navigation pour l'impression... */
   .topbar, #welcome, #banniere-ajout, #panneau, #panneau-fond, #panneau-reserve,
   #panneau-style, .modal-overlay, #toast, #trace-info,
   .leaflet-control-zoom { display: none !important; }
 
-  /* ...et on agrandit la carte pour occuper le haut de l'affiche. */
+  /* ...on agrandit la carte pour occuper une page pleine... */
   body.mode-impression main.layout {
     position: relative;
-    height: 400mm;
-    margin-bottom: 16mm;
+    height: calc(var(--impression-hauteur-page, 297mm) - 24mm);
+    break-after: page;
+    page-break-after: always;
   }
 
-  #impression { display: block; }
+  /* ...et la zone d'impression reprend sa place normale dans la page. */
+  #impression {
+    position: static;
+    left: auto;
+    width: auto;
+  }
 }

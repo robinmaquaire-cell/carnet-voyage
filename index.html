@@ -60,8 +60,8 @@
       <!-- Exporter le carnet en un fichier .json : apparaît avec une trace -->
       <button id="btn-exporter" class="btn btn-ghost" hidden>Exporter</button>
 
-      <!-- Exporte une affiche (format A1) : carte + souvenirs, via l'impression du navigateur -->
-      <button id="btn-export-affiche" class="btn btn-ghost" hidden>🖨️ Affiche PDF (A1)</button>
+      <!-- Exporte une affiche (carte + souvenirs) via l'impression du navigateur -->
+      <button id="btn-export-affiche" class="btn btn-ghost" hidden>🖨️ Affiche PDF</button>
 
       <!-- Réinitialiser : efface la trace et les souvenirs (avec confirmation) -->
       <button id="btn-reinitialiser" class="btn btn-ghost edition-seule" hidden>Réinitialiser</button>
@@ -381,6 +381,42 @@
     </div>
   </div>
 
+  <!-- Fenêtre : réglages de l'affiche PDF (format, orientation, colonnes) -->
+  <div id="modal-affiche" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <h2>🖨️ Affiche PDF</h2>
+      <p class="modal-sous-titre">Une page pleine pour la carte, puis les souvenirs sur les pages suivantes.</p>
+
+      <label class="style-label">Format de papier</label>
+      <div id="affiche-format" class="segment segment-grille" role="group">
+        <button class="segment-btn" data-format="A4">A4</button>
+        <button class="segment-btn" data-format="A3">A3</button>
+        <button class="segment-btn" data-format="A2">A2</button>
+        <button class="segment-btn" data-format="A1">A1</button>
+        <button class="segment-btn" data-format="A0">A0</button>
+      </div>
+
+      <label class="style-label">Orientation</label>
+      <div id="affiche-orientation" class="segment" role="group">
+        <button class="segment-btn" data-orientation="portrait">Portrait</button>
+        <button class="segment-btn" data-orientation="paysage">Paysage</button>
+      </div>
+
+      <label class="style-label">Colonnes de souvenirs</label>
+      <div id="affiche-colonnes" class="segment" role="group">
+        <button class="segment-btn" data-colonnes="1">1</button>
+        <button class="segment-btn" data-colonnes="2">2</button>
+        <button class="segment-btn" data-colonnes="3">3</button>
+        <button class="segment-btn" data-colonnes="4">4</button>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="affiche-annuler">Annuler</button>
+        <button class="btn btn-accent" id="affiche-generer">Générer l'affiche</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Fenêtre : choisir le pictogramme de l'épingle -->
   <div id="modal-picto" class="modal-overlay" hidden>
     <div class="modal-card">
@@ -415,8 +451,13 @@
   <!-- Petit message temporaire (succès / erreur) -->
   <div id="toast" class="toast" hidden></div>
 
-  <!-- Contenu généré uniquement pour l'impression / export PDF (affiche A1) -->
-  <div id="impression"></div>
+  <!-- Contenu généré uniquement pour l'impression / export PDF (affiche).
+       Positionné hors écran (pas display:none) pour que les mini-cartes
+       Leaflet puissent s'initialiser et charger leurs tuiles avant impression. -->
+  <div id="impression">
+    <h2 id="impression-titre-souvenirs" class="impression-titre-souvenirs">Souvenirs du voyage</h2>
+    <div id="impression-souvenirs" class="impression-souvenirs"></div>
+  </div>
 
   <!-- Leaflet (le moteur de la carte) -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
