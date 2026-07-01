@@ -7,7 +7,7 @@
    images de carte, elles, viennent d'Internet à la demande.
    ========================================================= */
 
-const CACHE = "carnet-voyage-v8";
+const CACHE = "carnet-voyage-v9";
 
 // Les fichiers locaux de l'application à garder en cache.
 const ASSETS = [

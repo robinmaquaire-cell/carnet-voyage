@@ -1847,6 +1847,179 @@ function appliquerStockSurCarte(item) {
   planifierSauvegarde();
 }
 
+/* ---------- Génération de souvenirs par IA (Claude) ---------- */
+
+const IA_MODELE = "claude-opus-4-8";
+const IA_CLE_STOCKAGE = "carnet-cle-ia";
+
+function lireCleIA() {
+  try { return localStorage.getItem(IA_CLE_STOCKAGE) || ""; } catch (e) { return ""; }
+}
+function enregistrerCleIA(cle) {
+  try { localStorage.setItem(IA_CLE_STOCKAGE, (cle || "").trim()); } catch (e) {}
+}
+
+/** Ouvre la fenêtre de génération et prépare son état. */
+function ouvrirGenerer() {
+  etat.genPhotos = [];
+  document.getElementById("gen-texte").value = "";
+  document.getElementById("gen-photos-info").textContent = "";
+  document.getElementById("gen-statut").hidden = true;
+  const cle = lireCleIA();
+  document.getElementById("gen-cle-input").value = cle;
+  document.getElementById("gen-cle-bloc").open = !cle; // ouvert si aucune clé
+  document.getElementById("gen-cle-etat").textContent =
+    cle ? "✓ Clé enregistrée." : "Aucune clé enregistrée.";
+  document.getElementById("modal-generer").hidden = false;
+}
+function fermerGenerer() { document.getElementById("modal-generer").hidden = true; }
+
+/** Ajoute des photos (dont l'IA lira le texte) à la génération en cours. */
+async function ajouterPhotosGen(fichiers) {
+  etat.genPhotos = etat.genPhotos || [];
+  for (const f of fichiers) {
+    if (!f.type.startsWith("image/")) continue;
+    try { etat.genPhotos.push(await importerImage(f)); } catch (e) {}
+  }
+  const n = etat.genPhotos.length;
+  document.getElementById("gen-photos-info").textContent =
+    n ? `${n} photo(s) ajoutée(s)` : "";
+}
+
+/** Affiche un message d'état dans la fenêtre de génération. */
+function statutGen(message, erreur) {
+  const el = document.getElementById("gen-statut");
+  el.textContent = message;
+  el.className = "gen-statut " + (erreur ? "erreur" : "info");
+  el.hidden = false;
+}
+
+/** Envoie le texte + photos à Claude et range les souvenirs obtenus en réserve. */
+async function lancerGeneration() {
+  const cle = document.getElementById("gen-cle-input").value.trim();
+  if (!cle) {
+    statutGen("Ajoute d'abord ta clé Claude (section « Clé IA »).", true);
+    document.getElementById("gen-cle-bloc").open = true;
+    return;
+  }
+  enregistrerCleIA(cle);
+  document.getElementById("gen-cle-etat").textContent = "✓ Clé enregistrée.";
+
+  const texte = document.getElementById("gen-texte").value.trim();
+  const photos = etat.genPhotos || [];
+  if (!texte && photos.length === 0) {
+    statutGen("Ajoute un texte ou des photos à transformer.", true);
+    return;
+  }
+
+  const bouton = document.getElementById("gen-lancer");
+  bouton.disabled = true;
+  statutGen("Génération en cours… (quelques secondes)", false);
+
+  // Contenu du message : les photos, puis la consigne + le texte.
+  const contenu = [];
+  photos.forEach((dataUrl) => {
+    contenu.push({
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: "image/jpeg",
+        data: dataUrl.replace(/^data:image\/jpeg;base64,/, ""),
+      },
+    });
+  });
+  const consigne =
+    "Tu transformes des notes de voyage en vrac en une liste de souvenirs pour " +
+    "un carnet de voyage. À partir du texte ci-dessous et des éventuelles photos " +
+    "(notes manuscrites ou imprimées à lire), découpe le récit en plusieurs " +
+    "souvenirs distincts, dans l'ordre chronologique du voyage. Pour chaque " +
+    "souvenir : un « nom » court et évocateur (max ~50 caractères) et un « textes » " +
+    "qui raconte ce moment en 1 à 3 courts paragraphes, en français. Reste fidèle " +
+    "aux informations fournies, n'invente pas de faits. Si le contenu est vide ou " +
+    "inexploitable, renvoie une liste vide.\n\nTEXTE :\n" + (texte || "(voir photos)");
+  contenu.push({ type: "text", text: consigne });
+
+  // Format de sortie imposé : une liste de { nom, textes }.
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["souvenirs"],
+    properties: {
+      souvenirs: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["nom", "textes"],
+          properties: { nom: { type: "string" }, textes: { type: "string" } },
+        },
+      },
+    },
+  };
+
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": cle,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model: IA_MODELE,
+        max_tokens: 8000,
+        output_config: { format: { type: "json_schema", schema } },
+        messages: [{ role: "user", content: contenu }],
+      }),
+    });
+
+    if (!resp.ok) {
+      let msg = `Erreur (${resp.status}).`;
+      if (resp.status === 401) msg = "Clé refusée : vérifie ta clé Claude.";
+      else if (resp.status === 429) msg = "Trop de requêtes ou crédit épuisé — réessaie plus tard.";
+      else if (resp.status === 400) msg = "Requête refusée (texte trop long ou photo trop lourde ?).";
+      try { const e = await resp.json(); if (e.error && e.error.message) msg += " " + e.error.message; } catch (_) {}
+      statutGen(msg, true);
+      bouton.disabled = false;
+      return;
+    }
+
+    const data = await resp.json();
+    if (data.stop_reason === "refusal") {
+      statutGen("L'IA a refusé de traiter ce contenu.", true);
+      bouton.disabled = false;
+      return;
+    }
+    const bloc = (data.content || []).find((b) => b.type === "text");
+    const parsed = JSON.parse(bloc.text);
+    const liste = (parsed.souvenirs || []).filter((s) => s && (s.nom || s.textes));
+    if (liste.length === 0) {
+      statutGen("Aucun souvenir n'a pu être dégagé de ce contenu.", true);
+      bouton.disabled = false;
+      return;
+    }
+    liste.forEach((s) => {
+      etat.stock.push({
+        id: prochainIdSouvenir++,
+        nom: (s.nom || "").slice(0, 80),
+        textes: s.textes || "",
+        photos: [],
+        couverture: null,
+        pictogramme: "souvenir",
+      });
+    });
+    planifierSauvegarde();
+    fermerGenerer();
+    ouvrirReserve();
+    toast(`${liste.length} souvenir(s) ajouté(s) à la réserve`);
+  } catch (e) {
+    statutGen("Échec de la génération (connexion ou réponse invalide).", true);
+  } finally {
+    bouton.disabled = false;
+  }
+}
+
 /* ---------------------------------------------------------
    4. Petit message temporaire en bas d'écran (toast)
    --------------------------------------------------------- */
@@ -1967,6 +2140,19 @@ function init() {
     .addEventListener("click", fermerReserve);
   document.getElementById("reserve-nouveau")
     .addEventListener("click", creerStock);
+  document.getElementById("reserve-generer")
+    .addEventListener("click", ouvrirGenerer);
+  document.getElementById("gen-annuler")
+    .addEventListener("click", fermerGenerer);
+  document.getElementById("gen-lancer")
+    .addEventListener("click", lancerGeneration);
+  document.getElementById("gen-photos")
+    .addEventListener("change", (e) => {
+      ajouterPhotosGen(e.target.files);
+      e.target.value = "";
+    });
+  document.getElementById("gen-cle-input")
+    .addEventListener("change", (e) => enregistrerCleIA(e.target.value));
 
   // Titre de la carte
   document.getElementById("style-titre")
@@ -2101,7 +2287,8 @@ function init() {
 
     // 2) Échap : annule l'ajout en cours, sinon ferme ce qui est ouvert.
     if (e.key === "Escape") {
-      if (!document.getElementById("modal-nom").hidden) fermerModalNom();
+      if (!document.getElementById("modal-generer").hidden) fermerGenerer();
+      else if (!document.getElementById("modal-nom").hidden) fermerModalNom();
       else if (etat.modeAjout) desarmerAjout();
       else if (!document.getElementById("panneau-style").hidden) fermerPanneauStyle();
       else if (!document.getElementById("panneau").hidden) fermerPanneau();

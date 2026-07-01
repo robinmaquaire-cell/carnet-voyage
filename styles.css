@@ -1085,6 +1085,36 @@ body {
   text-overflow: ellipsis;
 }
 
+/* Fenêtre de génération IA */
+.modal-large { max-width: 560px; }
+#gen-texte { min-height: 160px; margin-bottom: 12px; }
+.gen-ligne {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.gen-cle {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background: var(--papier);
+  border: 1.5px solid var(--ligne);
+  border-radius: var(--rayon);
+}
+.gen-cle summary { cursor: pointer; font-weight: 700; font-size: 13px; color: var(--encre-douce); }
+.gen-cle .style-input { margin-top: 8px; }
+.gen-statut {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.gen-statut.info { background: #eef4f1; color: var(--foret-fonce); }
+.gen-statut.erreur { background: #fbeeea; color: #b4452f; }
+.gen-statut[hidden] { display: none; }
+
 /* Sélecteur "depuis la réserve" dans la fenêtre de nom */
 .modal-stock {
   margin-top: 16px;

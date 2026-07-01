@@ -175,9 +175,12 @@
         <span class="panneau-titre-fixe">📦 Réserve de souvenirs</span>
         <button id="fermer-reserve" class="icone-btn" title="Fermer">✕</button>
       </header>
-      <div class="panneau-nav">
+      <div class="panneau-nav" style="flex-direction:column; gap:8px;">
         <button id="reserve-nouveau" class="btn btn-accent btn-petit" style="width:100%">
           + Nouveau souvenir en réserve
+        </button>
+        <button id="reserve-generer" class="btn btn-ghost btn-petit" style="width:100%">
+          ✨ Générer depuis un texte / des photos
         </button>
       </div>
       <div class="panneau-corps">
@@ -322,6 +325,40 @@
       <div id="modal-stock" class="modal-stock" hidden>
         <div class="modal-stock-titre">…ou choisis-en un dans la réserve :</div>
         <div id="modal-stock-liste" class="modal-stock-liste"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fenêtre : générer des souvenirs depuis un texte / des photos (IA) -->
+  <div id="modal-generer" class="modal-overlay" hidden>
+    <div class="modal-card modal-large">
+      <h2>✨ Générer des souvenirs</h2>
+      <p class="modal-sous-titre">Colle ou dicte un texte en vrac. L'IA le découpe en plusieurs souvenirs (titre + récit) rangés dans la réserve. Tu peux aussi ajouter des photos de notes ; l'IA en lira le texte.</p>
+
+      <label class="style-label">Ton texte</label>
+      <textarea id="gen-texte" class="fiche-texte" placeholder="Raconte ton voyage en vrac : lieux, moments, anecdotes… (le micro du clavier fonctionne ici)"></textarea>
+
+      <div class="gen-ligne">
+        <label class="btn btn-ghost btn-petit">
+          🖼️ Ajouter des photos de notes
+          <input id="gen-photos" type="file" accept="image/*" multiple hidden />
+        </label>
+        <span id="gen-photos-info" class="style-aide"></span>
+      </div>
+
+      <!-- Réglage de la clé IA (première utilisation) -->
+      <details id="gen-cle-bloc" class="gen-cle">
+        <summary>Clé IA (à configurer une fois)</summary>
+        <label class="style-label">Clé Claude (commence par <code>sk-ant-</code>)</label>
+        <input id="gen-cle-input" class="style-input" type="password" placeholder="sk-ant-…" autocomplete="off" />
+        <p class="style-aide">Stockée uniquement sur cet appareil (jamais envoyée ailleurs que chez Claude). <span id="gen-cle-etat"></span></p>
+      </details>
+
+      <p id="gen-statut" class="gen-statut" hidden></p>
+
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="gen-annuler">Fermer</button>
+        <button class="btn btn-accent" id="gen-lancer">Générer</button>
       </div>
     </div>
   </div>
