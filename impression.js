@@ -27,7 +27,10 @@
   const souvenirs = etatParent.souvenirs;
   const style = etatParent.style || {};
   const pictosPerso = etatParent.pictosPerso || [];
-  const reglages = parent.reglagesAffiche || { format: "A4", orientation: "portrait", colonnes: 2, police: "systeme", couleur: "#2f3b34" };
+  const reglages = parent.reglagesAffiche || {
+    format: "A4", orientation: "portrait", disposition: "mosaique",
+    colonnes: 2, police: "systeme", couleur: "#2f3b34",
+  };
 
   /* ---------- Constantes (reprises de app.js) ---------- */
 
@@ -126,6 +129,10 @@
   }
 
   function classifierTailleSouvenir(souvenir) {
+    // En disposition "colonnes", tous les souvenirs font la même largeur.
+    if (reglages.disposition === "colonnes") return 1;
+    // En "mosaïque", un souvenir riche (photo + long récit) prend deux
+    // unités de large : les rectangles varient selon le contenu.
     const aPhoto = !!(photoCouverture(souvenir) || souvenir.photos[0]);
     const longueurTexte = (souvenir.textes || "").length;
     return aPhoto && longueurTexte > 150 ? 2 : 1;
@@ -446,6 +453,15 @@
 
     const nbUnites = reglages.colonnes || 2;
     const largeurUniteMm = (largeurUtileMm - (nbUnites - 1) * ECART_MM) / nbUnites;
+
+    // Sans souvenir, pas de section "Souvenirs du voyage" : la carte seule
+    // (et pas de saut de page après elle, qui laisserait une feuille blanche).
+    if (souvenirs.length === 0) {
+      document.getElementById("impression").hidden = true;
+      const zoneCarte = document.getElementById("zone-carte");
+      zoneCarte.style.breakAfter = "auto";
+      zoneCarte.style.pageBreakAfter = "auto";
+    }
 
     const zoneMesure = document.getElementById("impression-mesure");
     const cartesInfo = [];

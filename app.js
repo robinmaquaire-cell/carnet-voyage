@@ -24,6 +24,12 @@ const etat = {
   miniCouche: null,       // calque (trace + épingle) de la mini-carte
 };
 
+// IMPORTANT : la fenêtre d'impression (impression.html) lit les données du
+// carnet via window.opener.etat. Or une variable déclarée avec "const" n'est
+// PAS une propriété de window : sans cette ligne, la fenêtre d'impression ne
+// trouverait jamais le carnet.
+window.etat = etat;
+
 // Compteur pour donner un identifiant unique à chaque souvenir.
 let prochainIdSouvenir = 1;
 
@@ -1812,10 +1818,14 @@ const COLONNES_PAR_DEFAUT = { A4: 2, A3: 2, A2: 3, A1: 3, A0: 4 };
 const reglagesAffiche = {
   format: "A4",
   orientation: "portrait",
+  disposition: "mosaique", // "mosaique" (rectangles de tailles variables) ou "colonnes"
   colonnes: 2,
   police: "systeme",
   couleur: "#2f3b34",
 };
+// Comme pour etat ci-dessus : la fenêtre d'impression lit ces réglages via
+// window.opener.reglagesAffiche, ce qui exige une vraie propriété de window.
+window.reglagesAffiche = reglagesAffiche;
 
 /** Ouvre la fenêtre de réglages de l'affiche PDF. */
 function ouvrirModalAffiche() {
@@ -1825,6 +1835,7 @@ function ouvrirModalAffiche() {
   }
   majSegment("affiche-format", "format", reglagesAffiche.format);
   majSegment("affiche-orientation", "orientation", reglagesAffiche.orientation);
+  majSegment("affiche-disposition", "disposition", reglagesAffiche.disposition);
   majSegment("affiche-colonnes", "colonnes", String(reglagesAffiche.colonnes));
   majSegment("affiche-police", "police", reglagesAffiche.police);
   document.getElementById("affiche-couleur").value = reglagesAffiche.couleur;
@@ -2576,6 +2587,10 @@ function init() {
   brancherSegment("affiche-orientation", "orientation", (v) => {
     reglagesAffiche.orientation = v;
     majSegment("affiche-orientation", "orientation", v);
+  });
+  brancherSegment("affiche-disposition", "disposition", (v) => {
+    reglagesAffiche.disposition = v;
+    majSegment("affiche-disposition", "disposition", v);
   });
   brancherSegment("affiche-colonnes", "colonnes", (v) => {
     reglagesAffiche.colonnes = Number(v);
