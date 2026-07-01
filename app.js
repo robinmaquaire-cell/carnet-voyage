@@ -265,6 +265,7 @@ function afficherTrace(trace) {
   document.getElementById("btn-reserve").hidden = false;
   document.getElementById("btn-style").hidden = false;
   document.getElementById("btn-exporter").hidden = false;
+  document.getElementById("btn-export-affiche").hidden = false;
   document.getElementById("btn-reinitialiser").hidden = false;
 }
 
@@ -1799,6 +1800,111 @@ function exporterCarnet() {
   toast("Carnet exporté");
 }
 
+/* ---------- Export "affiche" (PDF au format A1, via l'impression) ---------- */
+
+/** Construit la liste des souvenirs (photo + titre + récit) pour l'affiche. */
+function construireImpressionSouvenirs() {
+  const conteneur = document.createElement("div");
+  conteneur.className = "impression-souvenirs";
+
+  etat.souvenirs.forEach((s, i) => {
+    const carte = document.createElement("article");
+    carte.className = "impression-carte";
+
+    const couv = photoCouverture(s) || s.photos[0];
+    if (couv) {
+      const img = document.createElement("img");
+      img.className = "impression-photo";
+      img.src = couv.src;
+      carte.appendChild(img);
+    }
+
+    const titre = document.createElement("h3");
+    titre.className = "impression-carte-titre";
+    titre.textContent = `${i + 1}. ${s.nom || "Souvenir"}`;
+    carte.appendChild(titre);
+
+    if (s.textes) {
+      const texte = document.createElement("p");
+      texte.className = "impression-carte-texte";
+      texte.textContent = s.textes;
+      carte.appendChild(texte);
+    }
+
+    conteneur.appendChild(carte);
+  });
+
+  return conteneur;
+}
+
+/** Remplit la zone d'impression : titre de l'affiche + souvenirs. */
+function preparerImpression() {
+  const zone = document.getElementById("impression");
+  zone.innerHTML = "";
+
+  const titre = document.createElement("h1");
+  titre.className = "impression-titre-principal";
+  titre.textContent = (etat.style.titre || "").trim() || (etat.trace && etat.trace.name) || "Carnet de voyage";
+  zone.appendChild(titre);
+
+  zone.appendChild(construireImpressionSouvenirs());
+}
+
+/**
+ * Attend que le fond de carte ait fini de (re)charger ses tuiles après
+ * l'agrandissement de la carte pour l'impression (sinon l'affiche imprimée
+ * peut garder des zones vides). Se résout de toute façon après 3 s au cas où.
+ */
+function attendreCarteChargee() {
+  return new Promise((resolve) => {
+    let fini = false;
+    const terminer = () => {
+      if (fini) return;
+      fini = true;
+      resolve();
+    };
+    setTimeout(terminer, 3000);
+
+    if (etat.style.fond === "vectoriel" && etat.glMap) {
+      if (etat.glMap.isStyleLoaded()) terminer();
+      else etat.glMap.once("idle", terminer);
+    } else if (etat.coucheFond && etat.coucheFond.once) {
+      etat.coucheFond.once("load", terminer);
+    } else {
+      terminer();
+    }
+  });
+}
+
+/** Remet la carte à sa taille normale (après impression, ou en cas d'annulation). */
+function terminerImpression() {
+  if (!document.body.classList.contains("mode-impression")) return;
+  document.body.classList.remove("mode-impression");
+  etat.carte.invalidateSize();
+  if (etat.glMap) etat.glMap.resize();
+}
+
+/**
+ * Lance l'export "affiche" : agrandit temporairement la carte au format A1,
+ * prépare la liste des souvenirs, puis ouvre la fenêtre d'impression du
+ * navigateur (l'utilisateur y choisit "Enregistrer en PDF").
+ */
+async function exporterAffiche() {
+  if (!etat.trace) {
+    toast("Charge d'abord une trace avant d'exporter une affiche.", true);
+    return;
+  }
+
+  preparerImpression();
+  document.body.classList.add("mode-impression");
+  etat.carte.invalidateSize();
+  if (etat.glMap) etat.glMap.resize();
+
+  await attendreCarteChargee();
+
+  window.print();
+}
+
 /**
  * Réinitialise le carnet : efface la trace et tous les souvenirs, vide la
  * sauvegarde locale et revient à l'écran d'accueil. Action irréversible,
@@ -1843,6 +1949,7 @@ async function reinitialiserCarnet() {
   document.getElementById("btn-reserve").hidden = true;
   document.getElementById("btn-style").hidden = true;
   document.getElementById("btn-exporter").hidden = true;
+  document.getElementById("btn-export-affiche").hidden = true;
   document.getElementById("btn-reinitialiser").hidden = true;
   document.getElementById("trace-info").hidden = true;
   document.getElementById("welcome").hidden = false;
@@ -2495,6 +2602,11 @@ function init() {
   // --- Export / Import du carnet ---
   document.getElementById("btn-exporter")
     .addEventListener("click", exporterCarnet);
+  document.getElementById("btn-export-affiche")
+    .addEventListener("click", exporterAffiche);
+  // Une fois la fenêtre d'impression fermée (ou annulée), on remet la carte
+  // à sa taille normale.
+  window.addEventListener("afterprint", terminerImpression);
   document.getElementById("btn-reinitialiser")
     .addEventListener("click", reinitialiserCarnet);
   document.getElementById("btn-mode")

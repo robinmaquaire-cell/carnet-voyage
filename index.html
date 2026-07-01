@@ -60,6 +60,9 @@
       <!-- Exporter le carnet en un fichier .json : apparaît avec une trace -->
       <button id="btn-exporter" class="btn btn-ghost" hidden>Exporter</button>
 
+      <!-- Exporte une affiche (format A1) : carte + souvenirs, via l'impression du navigateur -->
+      <button id="btn-export-affiche" class="btn btn-ghost" hidden>🖨️ Affiche PDF (A1)</button>
+
       <!-- Réinitialiser : efface la trace et les souvenirs (avec confirmation) -->
       <button id="btn-reinitialiser" class="btn btn-ghost edition-seule" hidden>Réinitialiser</button>
 
@@ -411,6 +414,9 @@
 
   <!-- Petit message temporaire (succès / erreur) -->
   <div id="toast" class="toast" hidden></div>
+
+  <!-- Contenu généré uniquement pour l'impression / export PDF (affiche A1) -->
+  <div id="impression"></div>
 
   <!-- Leaflet (le moteur de la carte) -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"

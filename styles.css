@@ -1359,3 +1359,69 @@ body.mode-visualisation #panneau {
   .welcome-card h1 { font-size: 20px; }
   .trace-info { max-width: calc(100% - 32px); }
 }
+
+/* ---------- Export affiche (impression / PDF au format A1) ---------- */
+/* Contenu des souvenirs, généré au moment de l'impression ; invisible à l'écran. */
+#impression { display: none; }
+
+.impression-titre-principal {
+  margin: 0 0 22px;
+  font-family: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  font-weight: 800;
+  font-size: 44px;
+  color: var(--foret-fonce);
+}
+.impression-souvenirs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 22px;
+}
+.impression-carte {
+  break-inside: avoid;
+  border: 1.5px solid var(--ligne);
+  border-radius: var(--rayon);
+  padding: 14px;
+}
+.impression-photo {
+  display: block;
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+.impression-carte-titre {
+  margin: 0 0 8px;
+  font-family: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  font-weight: 800;
+  font-size: 17px;
+  color: var(--foret-fonce);
+}
+.impression-carte-texte {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--encre);
+  white-space: pre-wrap;
+}
+
+@media print {
+  /* Format affiche : A1 portrait, avec une marge raisonnable. */
+  @page { size: 594mm 841mm; margin: 12mm; }
+
+  html, body { height: auto; overflow: visible; background: #fff; }
+
+  /* On masque toute l'interface d'édition/navigation pour l'impression... */
+  .topbar, #welcome, #banniere-ajout, #panneau, #panneau-fond, #panneau-reserve,
+  #panneau-style, .modal-overlay, #toast, #trace-info,
+  .leaflet-control-zoom { display: none !important; }
+
+  /* ...et on agrandit la carte pour occuper le haut de l'affiche. */
+  body.mode-impression main.layout {
+    position: relative;
+    height: 400mm;
+    margin-bottom: 16mm;
+  }
+
+  #impression { display: block; }
+}
