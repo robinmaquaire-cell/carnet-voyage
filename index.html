@@ -26,39 +26,45 @@
 </head>
 <body>
 
-  <!-- Barre du haut : titre de l'app + actions principales -->
+  <!-- Barre du haut : titre de l'app + menu des actions -->
   <header class="topbar">
     <div class="brand">
       <span class="brand-mark">▲</span>
       <span class="brand-name">Carnet&nbsp;de&nbsp;voyage</span>
     </div>
 
-    <!-- Indicateur discret de sauvegarde automatique -->
-    <span id="statut-sauvegarde" class="statut-sauvegarde" hidden>✓ Enregistré</span>
+    <div class="topbar-right">
+      <!-- Indicateur discret de sauvegarde automatique -->
+      <span id="statut-sauvegarde" class="statut-sauvegarde" hidden>✓ Enregistré</span>
 
-    <div class="topbar-actions">
+      <!-- Ouvre/ferme le menu déroulant des actions -->
+      <button id="btn-menu" class="hamburger-btn" title="Menu" aria-haspopup="true" aria-expanded="false">☰</button>
+    </div>
+
+    <!-- Menu déroulant : toutes les actions principales -->
+    <nav id="menu-actions" class="menu-actions" hidden>
       <!-- Bascule Édition / Visualisation : apparaît une fois une trace chargée -->
-      <button id="btn-mode" class="btn btn-ghost-clair" hidden>👁 Mode visualisation</button>
+      <button id="btn-mode" class="btn btn-ghost" hidden>👁 Mode visualisation</button>
 
-      <!-- Bouton "ajouter un souvenir" : apparaît une fois une trace chargée -->
+      <!-- Bouton "ajouter des souvenirs" : apparaît une fois une trace chargée -->
       <button id="btn-ajout-souvenir" class="btn btn-accent edition-seule" hidden>
-        <span class="btn-ico">📍</span> Ajouter un souvenir
+        <span class="btn-ico">📍</span> Ajouter des souvenirs
       </button>
 
       <!-- Ouvre la réserve de souvenirs (préparés à l'avance, sans position) -->
-      <button id="btn-reserve" class="btn btn-ghost-clair edition-seule" hidden>📦 Réserve</button>
+      <button id="btn-reserve" class="btn btn-ghost edition-seule" hidden>📦 Réserve</button>
 
       <!-- Ouvre le panneau de personnalisation du style -->
-      <button id="btn-style" class="btn btn-ghost-clair edition-seule" hidden>🎨 Style</button>
+      <button id="btn-style" class="btn btn-ghost edition-seule" hidden>🎨 Style</button>
 
       <!-- Exporter le carnet en un fichier .json : apparaît avec une trace -->
-      <button id="btn-exporter" class="btn btn-ghost-clair" hidden>Exporter</button>
+      <button id="btn-exporter" class="btn btn-ghost" hidden>Exporter</button>
 
       <!-- Réinitialiser : efface la trace et les souvenirs (avec confirmation) -->
-      <button id="btn-reinitialiser" class="btn btn-ghost-clair edition-seule" hidden>Réinitialiser</button>
+      <button id="btn-reinitialiser" class="btn btn-ghost edition-seule" hidden>Réinitialiser</button>
 
       <!-- Importer un carnet .json déjà sauvegardé -->
-      <label id="label-importer" class="btn btn-ghost-clair edition-seule">
+      <label id="label-importer" class="btn btn-ghost edition-seule">
         Importer
         <input id="import-input" type="file" accept=".json,application/json" hidden />
       </label>
@@ -68,7 +74,7 @@
         Charger un GPX
         <input id="gpx-input" type="file" accept=".gpx,application/gpx+xml" hidden />
       </label>
-    </div>
+    </nav>
   </header>
 
   <!-- Zone principale : la carte occupe tout l'espace -->
@@ -100,10 +106,10 @@
       </div>
     </div>
 
-    <!-- Bandeau d'aide affiché pendant qu'on attend un clic pour poser un souvenir -->
+    <!-- Bandeau d'aide affiché seulement la toute première fois qu'on active le mode ajout -->
     <div id="banniere-ajout" class="banniere-ajout" hidden>
-      <span>📍 Clique sur la carte à l'endroit de ton souvenir</span>
-      <button id="annuler-ajout" class="banniere-annuler">Annuler</button>
+      <span>📍 Clique sur la carte pour poser un souvenir. Tu peux en poser plusieurs à la suite.</span>
+      <button id="annuler-ajout" class="banniere-annuler">Arrêter</button>
     </div>
 
     <!-- Fond assombri derrière la fiche en mode visualisation (pop up) -->
@@ -124,24 +130,28 @@
       </nav>
 
       <div class="panneau-corps">
-        <!-- Mini-carte de situation (visible uniquement en mode visualisation) -->
-        <div id="mini-map" class="mini-map visu-seule"></div>
+        <!-- Mini-carte de situation (position du souvenir sur le parcours) -->
+        <div id="mini-map" class="mini-map"></div>
 
         <!-- Réorganiser ce souvenir dans l'ordre du carnet -->
         <div class="souvenir-ordre edition-seule">
           <span class="souvenir-ordre-label">Ordre dans le carnet</span>
           <div class="souvenir-ordre-btns">
-            <button id="souvenir-avancer" class="btn-ordre" title="Le placer plus tôt">↑ Avancer</button>
-            <button id="souvenir-reculer" class="btn-ordre" title="Le placer plus tard">↓ Reculer</button>
+            <button id="souvenir-avancer" class="btn-ordre" title="Le placer plus loin dans le carnet">↓ Avancer</button>
+            <button id="souvenir-reculer" class="btn-ordre" title="Le placer plus tôt (vers le n°1)">↑ Reculer</button>
           </div>
         </div>
 
         <p class="panneau-coords" id="souvenir-coords">—</p>
+        <p class="panneau-aide-deplacer edition-seule">Astuce : glisse l'épingle sur la carte pour la déplacer.</p>
 
         <!-- Pictogramme de l'épingle -->
         <section class="fiche-section edition-seule">
           <h3>Pictogramme</h3>
-          <div id="souvenir-pictos" class="picto-grille"></div>
+          <button id="btn-choisir-picto" class="btn btn-ghost picto-actuel-btn" type="button">
+            <span id="picto-actuel-glyph" class="picto-actuel-glyph">①</span>
+            <span>Choisir un pictogramme</span>
+          </button>
         </section>
 
         <!-- Récit du souvenir (affiché avant les photos) -->
@@ -165,7 +175,10 @@
         </section>
       </div>
       <footer class="panneau-pied edition-seule">
-        <button id="supprimer-souvenir" class="btn btn-danger">Supprimer ce souvenir</button>
+        <div class="panneau-pied-actions">
+          <button id="revenir-carte" class="btn btn-ghost">↩ Revenir à la carte</button>
+          <button id="supprimer-souvenir" class="btn btn-danger">Supprimer ce souvenir</button>
+        </div>
       </footer>
     </aside>
 
@@ -260,6 +273,7 @@
               <label class="zone-rangee">Forêt <input type="color" data-zone="foret" /></label>
               <label class="zone-rangee">Prairie <input type="color" data-zone="prairie" /></label>
               <label class="zone-rangee">Bâti <input type="color" data-zone="bati" /></label>
+              <label class="zone-rangee">Routes & chemins <input type="color" data-zone="route" /></label>
               <label class="zone-rangee">Fond <input type="color" data-zone="fond" /></label>
             </div>
             <button id="zones-reset" class="btn btn-ghost btn-petit">Couleurs d'origine</button>
@@ -318,7 +332,8 @@
       <input id="champ-nom" type="text" placeholder="Ex : Pique-nique au bord du lac" maxlength="80" />
       <div class="modal-actions">
         <button class="btn btn-ghost" id="annuler-nom">Annuler</button>
-        <button class="btn btn-accent" id="valider-nom">Créer le souvenir</button>
+        <button class="btn btn-ghost" id="creer-retour-nom">Créer et revenir à la carte</button>
+        <button class="btn btn-accent" id="valider-nom">Créer et éditer</button>
       </div>
 
       <!-- Ou piocher un souvenir déjà préparé dans la réserve -->
@@ -359,6 +374,17 @@
       <div class="modal-actions">
         <button class="btn btn-ghost" id="gen-annuler">Fermer</button>
         <button class="btn btn-accent" id="gen-lancer">Générer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fenêtre : choisir le pictogramme de l'épingle -->
+  <div id="modal-picto" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <h2>Choisir un pictogramme</h2>
+      <div id="souvenir-pictos" class="picto-grille"></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="fermer-picto">Fermer</button>
       </div>
     </div>
   </div>

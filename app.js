@@ -41,7 +41,7 @@ const STYLE_DEFAUT = {
   // Personnalisation du fond VECTORIEL (couleur des zones, police des lieux).
   // null = on garde la couleur d'origine du fond vectoriel.
   vecteur: {
-    zones: { eau: null, foret: null, prairie: null, bati: null, fond: null },
+    zones: { eau: null, foret: null, prairie: null, bati: null, route: null, fond: null },
     police: null,
     preset: null, // null = fond vectoriel standard ; "ancienne" = look parchemin
   },
@@ -50,6 +50,7 @@ const STYLE_DEFAUT = {
 // Palette du préréglage "Carte ancienne".
 const PALETTE_ANCIENNE = {
   fond: "#e9e0c4", eau: "#a7c0c4", foret: "#9fb083", prairie: "#dcd3ab", bati: "#cdb89a",
+  route: "#8a6b45",
 };
 
 // Couleurs suggérées par défaut dans les sélecteurs de zones (non appliquées
@@ -59,6 +60,7 @@ const SUGGESTIONS_ZONE = {
   foret: "#3f7d52",
   prairie: "#cfe3b5",
   bati: "#d9c9b0",
+  route: "#9c8262",
   fond: "#f3eee2",
 };
 
@@ -177,8 +179,10 @@ function initCarte() {
 
   // Clic sur la carte : si on est en "mode ajout", on récupère les
   // coordonnées du point cliqué et on demande un nom pour le souvenir.
+  // Le mode reste actif après : on peut poser plusieurs souvenirs à la suite.
   etat.carte.on("click", (e) => {
     if (!etat.modeAjout) return;
+    masquerAideAjout(); // l'utilisateur a compris, plus besoin de la bannière
     demanderNomSouvenir(e.latlng);
   });
 }
@@ -378,18 +382,57 @@ function renumeroterSouvenirs() {
   });
 }
 
-/** Active le "mode ajout" : le prochain clic sur la carte posera un souvenir. */
+/** Active le "mode ajout" : chaque clic sur la carte pose un nouveau souvenir. */
 function armerAjout() {
   if (etat.mode === "visualisation") return; // pas d'ajout en lecture seule
   etat.modeAjout = true;
   document.getElementById("map").classList.add("mode-ajout");
-  document.getElementById("banniere-ajout").hidden = false;
+  majBoutonAjout();
+  afficherAideAjoutSiPremiereFois();
 }
 
 /** Quitte le "mode ajout". */
 function desarmerAjout() {
   etat.modeAjout = false;
   document.getElementById("map").classList.remove("mode-ajout");
+  masquerAideAjout();
+  majBoutonAjout();
+}
+
+/** Active ou désactive le mode ajout (bouton du menu). */
+function basculerAjout() {
+  if (etat.modeAjout) desarmerAjout();
+  else armerAjout();
+}
+
+/** Met à jour l'apparence du bouton "Ajouter des souvenirs" selon le mode. */
+function majBoutonAjout() {
+  const btn = document.getElementById("btn-ajout-souvenir");
+  if (!btn) return;
+  btn.classList.toggle("actif", etat.modeAjout);
+  btn.innerHTML = etat.modeAjout
+    ? '<span class="btn-ico">✕</span> Arrêter l’ajout'
+    : '<span class="btn-ico">📍</span> Ajouter des souvenirs';
+}
+
+// Clé localStorage : la bannière d'aide n'est montrée qu'une seule fois.
+const CLE_AIDE_AJOUT_VUE = "carnet-aide-ajout-vue";
+let timerAideAjout = null;
+
+/** Affiche la bannière d'aide, seulement la toute première fois. */
+function afficherAideAjoutSiPremiereFois() {
+  let vue = false;
+  try { vue = localStorage.getItem(CLE_AIDE_AJOUT_VUE) === "1"; } catch (e) {}
+  if (vue) return;
+  document.getElementById("banniere-ajout").hidden = false;
+  try { localStorage.setItem(CLE_AIDE_AJOUT_VUE, "1"); } catch (e) {}
+  clearTimeout(timerAideAjout);
+  timerAideAjout = setTimeout(masquerAideAjout, 5000);
+}
+
+/** Masque la bannière d'aide. */
+function masquerAideAjout() {
+  clearTimeout(timerAideAjout);
   document.getElementById("banniere-ajout").hidden = true;
 }
 
@@ -414,8 +457,12 @@ function fermerModalNom() {
   latLngEnAttente = null;
 }
 
-/** Valide la saisie du nom et crée le souvenir à l'endroit mémorisé. */
-function validerNomSouvenir() {
+/**
+ * Valide la saisie du nom et crée le souvenir à l'endroit mémorisé.
+ * @param {boolean} ouvrirFiche  true = ouvre la fiche pour l'éditer,
+ *   false = revient directement à la carte (le mode ajout reste actif).
+ */
+function validerNomSouvenir(ouvrirFiche) {
   const nom = document.getElementById("champ-nom").value.trim();
   if (!nom) {
     toast("Donne un nom à ton souvenir.", true);
@@ -423,17 +470,17 @@ function validerNomSouvenir() {
   }
   if (!latLngEnAttente) return;
 
-  ajouterSouvenir(latLngEnAttente.lat, latLngEnAttente.lng, nom);
+  ajouterSouvenir(latLngEnAttente.lat, latLngEnAttente.lng, nom, {}, ouvrirFiche);
   document.getElementById("modal-nom").hidden = true;
   latLngEnAttente = null;
-  desarmerAjout();
 }
 
 /**
  * Crée un souvenir : l'enregistre en mémoire et pose son marqueur sur la carte.
+ * @param {boolean} ouvrirFiche  true (par défaut) = ouvre la fiche du souvenir créé.
  * @returns le souvenir créé.
  */
-function ajouterSouvenir(lat, lng, nom, contenu = {}) {
+function ajouterSouvenir(lat, lng, nom, contenu = {}, ouvrirFiche = true) {
   const souvenir = {
     id: prochainIdSouvenir++,
     nom,
@@ -453,7 +500,7 @@ function ajouterSouvenir(lat, lng, nom, contenu = {}) {
   majLabel(souvenir); // crée l'étiquette de nom si l'affichage est activé
 
   toast(`Souvenir « ${nom} » ajouté`);
-  ouvrirPanneau(souvenir);
+  if (ouvrirFiche) ouvrirPanneau(souvenir);
   planifierSauvegarde();
   return souvenir;
 }
@@ -467,6 +514,7 @@ function attacherMarqueur(souvenir) {
   const numero = etat.souvenirs.indexOf(souvenir) + 1;
   const marker = L.marker([souvenir.lat, souvenir.lng], {
     icon: creerIconeSouvenir(numero, souvenir.pictogramme),
+    draggable: true, // permet de déplacer le souvenir en le glissant sur la carte
   })
     .addTo(etat.carte)
     .bindTooltip(libelleTooltip(souvenir), {
@@ -474,10 +522,27 @@ function attacherMarqueur(souvenir) {
       offset: [0, -38],
       className: "tt-souvenir",
     })
-    .on("click", () => ouvrirPanneau(souvenir));
+    .on("click", () => ouvrirPanneau(souvenir))
+    .on("dragend", (e) => deplacerSouvenirVersPoint(souvenir, e.target.getLatLng()));
+
+  if (etat.mode === "visualisation") marker.dragging.disable();
 
   souvenir.marker = marker;
   return marker;
+}
+
+/** Déplace un souvenir à un nouvel endroit (après avoir glissé son épingle). */
+function deplacerSouvenirVersPoint(souvenir, latlng) {
+  souvenir.lat = latlng.lat;
+  souvenir.lng = latlng.lng;
+  if (souvenir.label) souvenir.label.setLatLng(latlng);
+  if (etat.souvenirActif === souvenir) {
+    document.getElementById("souvenir-coords").textContent =
+      `📍 ${souvenir.lat.toFixed(5)}, ${souvenir.lng.toFixed(5)}`;
+    majMiniCarte(souvenir);
+  }
+  toast("Souvenir déplacé");
+  planifierSauvegarde();
 }
 
 /* ---------- Pictogramme d'un souvenir ---------- */
@@ -504,6 +569,12 @@ function majPictoActif(cle) {
   });
 }
 
+/** Met à jour le glyphe affiché sur le bouton "Choisir un pictogramme". */
+function majPictoBoutonActuel(cle) {
+  const p = PICTOS.find((x) => x.cle === (cle || "souvenir"));
+  document.getElementById("picto-actuel-glyph").textContent = (p && p.glyph) || "①";
+}
+
 /** Change le pictogramme du souvenir affiché et met à jour son épingle. */
 function choisirPictogramme(cle) {
   const s = etat.souvenirActif;
@@ -512,7 +583,21 @@ function choisirPictogramme(cle) {
   const numero = etat.souvenirs.indexOf(s) + 1;
   if (s.marker) s.marker.setIcon(creerIconeSouvenir(numero, cle));
   majPictoActif(cle);
+  majPictoBoutonActuel(cle);
+  fermerPictoPicker();
   planifierSauvegarde();
+}
+
+/** Ouvre la fenêtre de choix du pictogramme. */
+function ouvrirPictoPicker() {
+  if (!etat.souvenirActif) return;
+  majPictoActif(etat.souvenirActif.pictogramme);
+  document.getElementById("modal-picto").hidden = false;
+}
+
+/** Ferme la fenêtre de choix du pictogramme. */
+function fermerPictoPicker() {
+  document.getElementById("modal-picto").hidden = true;
 }
 
 /** Ouvre le panneau latéral sur la fiche d'un souvenir (posé ou en réserve). */
@@ -529,6 +614,7 @@ function ouvrirPanneau(souvenir) {
   document.getElementById("supprimer-souvenir").textContent =
     enReserve ? "Retirer de la réserve" : "Supprimer ce souvenir";
   majPictoActif(souvenir.pictogramme);
+  majPictoBoutonActuel(souvenir.pictogramme);
   afficherGalerie(souvenir);
 
   if (enReserve) {
@@ -554,14 +640,15 @@ function majNavigation() {
   // On grise la flèche "précédent" sur le premier, "suivant" sur le dernier.
   document.getElementById("souvenir-precedent").disabled = index <= 0;
   document.getElementById("souvenir-suivant").disabled = index >= total - 1;
-  // Mêmes bornes pour les boutons de réorganisation.
-  document.getElementById("souvenir-avancer").disabled = index <= 0;
-  document.getElementById("souvenir-reculer").disabled = index >= total - 1;
+  // "Avancer" = plus loin dans le carnet (grisé sur le dernier).
+  // "Reculer" = plus tôt, vers le n°1 (grisé sur le premier).
+  document.getElementById("souvenir-avancer").disabled = index >= total - 1;
+  document.getElementById("souvenir-reculer").disabled = index <= 0;
 }
 
 /**
  * Déplace le souvenir actif dans l'ordre du carnet en l'échangeant avec
- * son voisin. décalage -1 = "Avancer" (vers le début), +1 = "Reculer".
+ * son voisin. décalage +1 = "Avancer" (plus loin), -1 = "Reculer" (vers le n°1).
  */
 function deplacerSouvenir(decalage) {
   const s = etat.souvenirActif;
@@ -635,8 +722,7 @@ function creerMiniCarte() {
 
 /** Met à jour la mini-carte pour situer le souvenir donné sur le parcours. */
 function majMiniCarte(souvenir) {
-  // Uniquement en visualisation, avec une trace et un souvenir.
-  if (etat.mode !== "visualisation" || !etat.trace || !souvenir) return;
+  if (!etat.trace || !souvenir) return;
   if (!etat.miniCarte) creerMiniCarte();
 
   etat.miniCouche.clearLayers();
@@ -1026,6 +1112,8 @@ function classeZone(couche) {
   if (/wood|forest|park|golf|cemetery|orchard|vineyard/.test(id)) return "foret";
   if (/grass|meadow|scrub|heath|wetland|farmland|landcover|landuse/.test(id)) return "prairie";
   if (sl === "building" || /building/.test(id)) return "bati";
+  if (sl === "transportation" || sl === "transportation_name" ||
+      /road|highway|street|path|track|bridge|tunnel|rail|ferry/.test(id)) return "route";
   return null;
 }
 
@@ -1275,6 +1363,7 @@ function fusionnerStyle(s) {
         foret:   lireCouleurOuNull(s.vecteur, "foret"),
         prairie: lireCouleurOuNull(s.vecteur, "prairie"),
         bati:    lireCouleurOuNull(s.vecteur, "bati"),
+        route:   lireCouleurOuNull(s.vecteur, "route"),
         fond:    lireCouleurOuNull(s.vecteur, "fond"),
       },
       police: (s.vecteur && typeof s.vecteur.police === "string") ? s.vecteur.police : base.vecteur.police,
@@ -1714,6 +1803,13 @@ function definirMode(mode) {
     fermerPanneauStyle();
   }
 
+  // Les épingles ne se déplacent qu'en édition.
+  etat.souvenirs.forEach((s) => {
+    if (!s.marker || !s.marker.dragging) return;
+    if (vue) s.marker.dragging.disable();
+    else s.marker.dragging.enable();
+  });
+
   // Le fond assombri (pop up) ne concerne que la visualisation.
   majFondPanneau();
 
@@ -1831,7 +1927,10 @@ function renderStockPourModal() {
   });
 }
 
-/** Pose un souvenir de la réserve à l'endroit cliqué, puis le retire de la réserve. */
+/**
+ * Pose un souvenir de la réserve à l'endroit cliqué, puis le retire de la
+ * réserve. On revient directement à la carte, sans ouvrir sa fiche.
+ */
 function appliquerStockSurCarte(item) {
   if (!latLngEnAttente) return;
   ajouterSouvenir(latLngEnAttente.lat, latLngEnAttente.lng, item.nom || "Souvenir", {
@@ -1839,11 +1938,10 @@ function appliquerStockSurCarte(item) {
     photos: item.photos,
     couverture: item.couverture,
     pictogramme: item.pictogramme,
-  });
+  }, false);
   etat.stock = etat.stock.filter((x) => x.id !== item.id);
   document.getElementById("modal-nom").hidden = true;
   latLngEnAttente = null;
-  desarmerAjout();
   planifierSauvegarde();
 }
 
@@ -2045,6 +2143,20 @@ function toast(message, estErreur = false) {
   }, 3200);
 }
 
+/* ---------- Menu des actions (bouton hamburger) ---------- */
+function ouvrirMenu() {
+  document.getElementById("menu-actions").hidden = false;
+  document.getElementById("btn-menu").setAttribute("aria-expanded", "true");
+}
+function fermerMenu() {
+  document.getElementById("menu-actions").hidden = true;
+  document.getElementById("btn-menu").setAttribute("aria-expanded", "false");
+}
+function basculerMenu() {
+  if (document.getElementById("menu-actions").hidden) ouvrirMenu();
+  else fermerMenu();
+}
+
 /* ---------------------------------------------------------
    5. Démarrage : on branche les boutons et on crée la carte
    --------------------------------------------------------- */
@@ -2064,22 +2176,26 @@ function init() {
 
   // --- Ajout de souvenirs ---
   document.getElementById("btn-ajout-souvenir")
-    .addEventListener("click", armerAjout);
+    .addEventListener("click", basculerAjout);
   document.getElementById("annuler-ajout")
     .addEventListener("click", desarmerAjout);
 
   // --- Fenêtre de saisie du nom ---
   document.getElementById("valider-nom")
-    .addEventListener("click", validerNomSouvenir);
+    .addEventListener("click", () => validerNomSouvenir(true));
+  document.getElementById("creer-retour-nom")
+    .addEventListener("click", () => validerNomSouvenir(false));
   document.getElementById("annuler-nom")
     .addEventListener("click", fermerModalNom);
   document.getElementById("champ-nom")
     .addEventListener("keydown", (e) => {
-      if (e.key === "Enter") validerNomSouvenir();
+      if (e.key === "Enter") validerNomSouvenir(true);
     });
 
   // --- Panneau latéral (fiche du souvenir) ---
   document.getElementById("fermer-panneau")
+    .addEventListener("click", fermerPanneau);
+  document.getElementById("revenir-carte")
     .addEventListener("click", fermerPanneau);
   document.getElementById("panneau-fond")
     .addEventListener("click", fermerPanneau);
@@ -2092,9 +2208,15 @@ function init() {
   document.getElementById("souvenir-suivant")
     .addEventListener("click", () => naviguerSouvenir(1));
   document.getElementById("souvenir-avancer")
-    .addEventListener("click", () => deplacerSouvenir(-1));
-  document.getElementById("souvenir-reculer")
     .addEventListener("click", () => deplacerSouvenir(1));
+  document.getElementById("souvenir-reculer")
+    .addEventListener("click", () => deplacerSouvenir(-1));
+
+  // --- Sélecteur de pictogramme (fenêtre à part) ---
+  document.getElementById("btn-choisir-picto")
+    .addEventListener("click", ouvrirPictoPicker);
+  document.getElementById("fermer-picto")
+    .addEventListener("click", fermerPictoPicker);
 
   // --- Photos et récit ---
   document.getElementById("ajout-photos")
@@ -2279,6 +2401,23 @@ function init() {
     });
   }
 
+  // --- Menu des actions (hamburger) ---
+  document.getElementById("btn-menu")
+    .addEventListener("click", (e) => {
+      e.stopPropagation();
+      basculerMenu();
+    });
+  // On referme le menu après avoir choisi une action.
+  document.getElementById("menu-actions")
+    .addEventListener("click", fermerMenu);
+  // ...ou en cliquant n'importe où ailleurs.
+  document.addEventListener("click", (e) => {
+    const menu = document.getElementById("menu-actions");
+    if (menu.hidden) return;
+    if (menu.contains(e.target) || document.getElementById("btn-menu").contains(e.target)) return;
+    fermerMenu();
+  });
+
   // Raccourcis clavier.
   document.addEventListener("keydown", (e) => {
     const lightboxOuverte = !document.getElementById("lightbox").hidden;
@@ -2296,7 +2435,9 @@ function init() {
 
     // 2) Échap : annule l'ajout en cours, sinon ferme ce qui est ouvert.
     if (e.key === "Escape") {
-      if (!document.getElementById("modal-generer").hidden) fermerGenerer();
+      if (!document.getElementById("menu-actions").hidden) fermerMenu();
+      else if (!document.getElementById("modal-generer").hidden) fermerGenerer();
+      else if (!document.getElementById("modal-picto").hidden) fermerPictoPicker();
       else if (!document.getElementById("modal-nom").hidden) fermerModalNom();
       else if (etat.modeAjout) desarmerAjout();
       else if (!document.getElementById("panneau-style").hidden) fermerPanneauStyle();

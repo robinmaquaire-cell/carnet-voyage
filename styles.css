@@ -63,11 +63,11 @@ body {
   font-size: 18px;
 }
 
-.topbar-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.topbar { position: relative; }
+.topbar-right { display: flex; align-items: center; gap: 10px; }
 
 /* Indicateur "Enregistré" qui apparaît brièvement après chaque sauvegarde */
 .statut-sauvegarde {
-  margin-right: 4px;
   font-size: 13px;
   font-weight: 700;
   color: #cfe9d8;
@@ -76,13 +76,40 @@ body {
 }
 .statut-sauvegarde.visible { opacity: 1; }
 
-/* Bouton clair pour la barre verte (Exporter / Importer) */
-.btn-ghost-clair {
+/* Bouton "menu" (hamburger) qui ouvre les actions principales */
+.hamburger-btn {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border: 1.5px solid rgba(255,255,255,0.25);
+  border-radius: 50%;
   background: rgba(255,255,255,0.12);
   color: #fff;
-  border-color: rgba(255,255,255,0.25);
+  font-size: 19px;
+  line-height: 1;
+  cursor: pointer;
 }
-.btn-ghost-clair:hover { background: rgba(255,255,255,0.22); }
+.hamburger-btn:hover { background: rgba(255,255,255,0.22); }
+
+/* Menu déroulant des actions, ouvert via le bouton hamburger */
+.menu-actions {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 12px;
+  z-index: 1250;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--carte-bg);
+  border: 1.5px solid var(--ligne);
+  border-radius: var(--rayon);
+  box-shadow: var(--ombre);
+  padding: 12px;
+  min-width: 230px;
+  animation: panneau-in .15s ease;
+}
+.menu-actions[hidden] { display: none; }
+.menu-actions .btn { width: 100%; justify-content: flex-start; }
 
 /* ---------- Boutons ---------- */
 .btn {
@@ -213,6 +240,21 @@ body {
   background: #fff5ea;
 }
 
+/* Bouton qui ouvre le sélecteur de pictogramme (affiche le choix actuel) */
+.picto-actuel-btn { width: 100%; justify-content: flex-start; }
+.picto-actuel-glyph {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  background: var(--papier);
+  border: 1.5px solid var(--ligne);
+  border-radius: 8px;
+}
+
 /* ---------- Bandeau d'aide pendant l'ajout ---------- */
 .banniere-ajout {
   position: absolute;
@@ -231,6 +273,7 @@ body {
   font-size: 14px;
   font-weight: 600;
 }
+.banniere-ajout[hidden] { display: none; }
 .banniere-annuler {
   background: rgba(255,255,255,0.15);
   color: #fff;
@@ -246,6 +289,12 @@ body {
 /* Curseur en croix sur la carte quand on est en mode "ajout" */
 .map.mode-ajout { cursor: crosshair; }
 .map.mode-ajout .leaflet-grab { cursor: crosshair; }
+
+/* Bouton "Ajouter des souvenirs" : mis en évidence quand le mode est actif */
+#btn-ajout-souvenir.actif {
+  background: var(--encre);
+  color: #fff;
+}
 
 /* ---------- Panneau latéral (fiche du souvenir) ---------- */
 .panneau {
@@ -402,8 +451,14 @@ body {
 .btn-ordre:disabled { opacity: 0.35; cursor: default; }
 
 .panneau-coords {
-  margin: 0 0 14px;
+  margin: 0 0 4px;
   font-size: 13px;
+  color: var(--encre-douce);
+}
+.panneau-aide-deplacer {
+  margin: 0 0 14px;
+  font-size: 12px;
+  font-style: italic;
   color: var(--encre-douce);
 }
 /* Sections de la fiche (Photos, Récit) */
@@ -629,7 +684,14 @@ body {
   padding: 12px 14px;
   border-top: 1.5px solid var(--ligne);
 }
-.panneau-pied .btn { width: 100%; justify-content: center; }
+.panneau-pied-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.panneau-pied-actions .btn { width: auto; justify-content: center; }
+/* Un souvenir en réserve n'est pas sur la carte : pas de bouton "y revenir". */
+.panneau.fiche-stock #revenir-carte { display: none; }
 
 /* ---------- Panneau Style (ouvre à gauche) ---------- */
 .panneau-gauche {
@@ -1037,7 +1099,9 @@ body {
    coordonnées, navigation et réordonnancement. */
 .panneau.fiche-stock .panneau-nav,
 .panneau.fiche-stock .souvenir-ordre,
-.panneau.fiche-stock .panneau-coords { display: none !important; }
+.panneau.fiche-stock .panneau-coords,
+.panneau.fiche-stock .panneau-aide-deplacer,
+.panneau.fiche-stock .mini-map { display: none !important; }
 
 .reserve-aide { font-size: 13px; color: var(--encre-douce); margin: 0 0 12px; }
 .reserve-liste { display: flex; flex-direction: column; gap: 8px; }
@@ -1153,11 +1217,7 @@ body {
 /* Tout ce qui sert à éditer disparaît. */
 body.mode-visualisation .edition-seule { display: none !important; }
 
-/* Éléments réservés au mode visualisation (ex. mini-carte de situation). */
-.visu-seule { display: none; }
-body.mode-visualisation .visu-seule { display: block; }
-
-/* Mini-carte de situation en haut de la pop up. */
+/* Mini-carte de situation en haut de la fiche (édition ou pop up visualisation). */
 .mini-map {
   height: 160px;
   margin-bottom: 14px;
@@ -1230,20 +1290,7 @@ body.mode-visualisation #panneau {
   }
   .brand-name { font-size: 15px; }
   .statut-sauvegarde { display: none; } /* le petit "toast" suffit sur mobile */
-  .topbar-actions {
-    width: 100%;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    justify-content: flex-start;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: 2px;
-  }
-  .topbar-actions::-webkit-scrollbar { height: 0; }
-  .topbar-actions .btn {
-    flex: 0 0 auto;
-    padding: 8px 13px;
-    font-size: 13px;
-  }
+  .menu-actions { right: 8px; left: 8px; min-width: 0; }
 
   /* Panneaux (fiche souvenir, style) en plein écran */
   .panneau { width: 100%; max-width: 100%; }
