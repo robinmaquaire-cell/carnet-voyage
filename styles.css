@@ -1373,14 +1373,11 @@ body.mode-visualisation #panneau {
   background: #fff;
 }
 
-/* Contenu de l'impression : hors écran (pas display:none) le temps de la
-   préparation, remis à sa place normale seulement au moment d'imprimer. */
+/* Contenu final (mosaïque des souvenirs) : normalement visible, dans la
+   page dédiée impression.html. */
 #impression {
-  position: absolute;
-  top: 0;
-  left: -100000px;
-  width: 1200px;
   background: #fff;
+  padding: 24px;
 }
 
 .impression-titre-souvenirs {
@@ -1518,52 +1515,45 @@ body.mode-visualisation #panneau {
 
 /* Préserve les couleurs/fonds à l'impression (certains navigateurs les
    suppriment par défaut si "Graphiques d'arrière-plan" n'est pas coché). */
-body.mode-impression,
-body.mode-impression .leaflet-container,
-body.mode-impression .impression-carte-interieur {
+body.page-impression,
+body.page-impression .leaflet-container,
+body.page-impression .impression-carte-interieur {
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
 
-/* Pendant la préparation (donc aussi à l'impression) : on masque toute
-   l'interface d'édition/navigation, et la carte principale (élément
-   flexible normalement, flex:1) se redimensionne réellement à sa taille
-   finale au lieu d'être étirée par le calcul flexbox. */
-body.mode-impression {
-  display: block; /* le flex du body empêcherait le contenu de se répartir sur plusieurs pages */
-  overflow: hidden;
-  height: 100vh;
+/* ---------- Page dédiée impression.html (fenêtre à part) ---------- */
+/* Cette page est indépendante de l'application principale : pas de topbar,
+   pas de panneaux, juste la carte puis les souvenirs. */
+body.page-impression {
+  display: block;
+  height: auto;
+  overflow: auto;
+  background: var(--papier);
 }
-body.mode-impression .topbar,
-body.mode-impression #welcome,
-body.mode-impression #banniere-ajout,
-body.mode-impression #panneau,
-body.mode-impression #panneau-fond,
-body.mode-impression #panneau-reserve,
-body.mode-impression #panneau-style,
-body.mode-impression .modal-overlay,
-body.mode-impression #toast,
-body.mode-impression #trace-info,
-body.mode-impression .leaflet-control-zoom {
-  display: none !important;
+.zone-carte-impression {
+  position: relative;
+  break-after: page;
+  page-break-after: always;
 }
-body.mode-impression main.layout {
-  flex: none;
+
+/* Petit bandeau "génération en cours", jamais imprimé. */
+.barre-impression {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2000;
+  background: var(--encre);
+  color: #fff;
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+  box-shadow: var(--ombre);
 }
+.barre-impression[hidden] { display: none; }
 
 @media print {
   html, body { height: auto; overflow: visible; background: #fff; }
-
-  body.mode-impression main.layout {
-    break-after: page;
-    page-break-after: always;
-  }
-
-  /* La zone d'impression (hors écran le reste du temps) reprend sa place
-     normale dans la page, seulement au moment d'imprimer. */
-  #impression {
-    position: static;
-    left: auto;
-    width: auto;
-  }
 }

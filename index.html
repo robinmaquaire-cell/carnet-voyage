@@ -464,20 +464,6 @@
   <!-- Petit message temporaire (succès / erreur) -->
   <div id="toast" class="toast" hidden></div>
 
-  <!-- Zone de mesure hors écran : chaque carte souvenir y est construite une
-       première fois (à la largeur d'une unité de grille) pour mesurer sa
-       hauteur avant de répartir les souvenirs en mosaïque sur les pages.
-       Pas display:none pour que les mini-cartes Leaflet puissent s'y
-       initialiser normalement. -->
-  <div id="impression-mesure"></div>
-
-  <!-- Contenu généré pour l'impression (carte + souvenirs en mosaïque) :
-       jamais affiché à l'écran, seulement au moment d'imprimer. -->
-  <div id="impression">
-    <h2 id="impression-titre-souvenirs" class="impression-titre-souvenirs">Souvenirs du voyage</h2>
-    <div id="impression-souvenirs" class="impression-souvenirs"></div>
-  </div>
-
   <!-- Leaflet (le moteur de la carte) -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>

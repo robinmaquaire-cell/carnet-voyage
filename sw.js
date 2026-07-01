@@ -7,7 +7,7 @@
    images de carte, elles, viennent d'Internet à la demande.
    ========================================================= */
 
-const CACHE = "carnet-voyage-v19";
+const CACHE = "carnet-voyage-v20";
 
 // Les fichiers locaux de l'application à garder en cache.
 const ASSETS = [
@@ -17,6 +17,8 @@ const ASSETS = [
   "app.js",
   "gpx.js",
   "db.js",
+  "impression.html",
+  "impression.js",
   "manifest.webmanifest",
   "icon.svg",
   "exemple-rando.gpx",

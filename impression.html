@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Affiche — Carnet de voyage</title>
+
+  <!-- Leaflet : la librairie qui affiche la carte interactive -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+
+  <!-- MapLibre GL : moteur de carte "vectorielle" (fond personnalisable) -->
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+
+  <!-- Nos styles à nous (partagés avec l'application principale) -->
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="page-impression">
+
+  <!-- Petit bandeau "génération en cours", jamais imprimé -->
+  <div id="barre-impression" class="barre-impression">Préparation de l'affiche…</div>
+
+  <!-- Carte principale (occupe la première page) -->
+  <div id="zone-carte" class="zone-carte-impression">
+    <div id="map" class="map"></div>
+    <div id="parchemin" class="parchemin"></div>
+    <div id="carte-titre" class="carte-titre" hidden></div>
+  </div>
+
+  <!-- Zone de mesure hors écran : chaque carte souvenir y est construite une
+       première fois (à la largeur d'une unité de grille) pour mesurer sa
+       hauteur avant de répartir les souvenirs en mosaïque sur les pages.
+       Pas display:none pour que les mini-cartes Leaflet puissent s'y
+       initialiser normalement. -->
+  <div id="impression-mesure"></div>
+
+  <!-- Souvenirs, en mosaïque, sur les pages suivantes -->
+  <div id="impression">
+    <h2 id="impression-titre-souvenirs" class="impression-titre-souvenirs">Souvenirs du voyage</h2>
+    <div id="impression-souvenirs" class="impression-souvenirs"></div>
+  </div>
+
+  <!-- Leaflet (le moteur de la carte) -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <!-- MapLibre GL + le pont qui l'intègre dans Leaflet (fond vectoriel) -->
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
+
+  <!-- Notre code : construit tout, seul, à partir des données lues dans window.opener -->
+  <script src="impression.js"></script>
+</body>
+</html>
