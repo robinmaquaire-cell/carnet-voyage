@@ -1543,8 +1543,19 @@ body.page-impression {
 }
 .zone-carte-impression {
   position: relative;
+  overflow: hidden;
   break-after: page;
   page-break-after: always;
+}
+/* La carte remplit sa zone en positionnement RELATIF (et non absolu comme
+   dans l'application) : les éléments absolus dans un flux paginé sont mal
+   gérés par certains navigateurs à l'impression (vue décalée, bandes vides). */
+body.page-impression .map {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  height: 100%;
+  background: #fff;
 }
 
 /* Barre de contrôle (préparation, puis cadrage + Imprimer), jamais imprimée. */
@@ -1580,12 +1591,19 @@ body.page-impression {
 .barre-btn-imprimer:hover { filter: brightness(1.08); }
 .barre-btn-imprimer[hidden] { display: none; }
 
-/* Crédit des données cartographiques : minuscule et discret, mais présent
-   (la licence OpenStreetMap demande de créditer la source). */
+/* Crédit des données cartographiques : minuscule et discret, posé en bas de
+   la carte principale (la licence OpenStreetMap demande de créditer la source). */
 .impression-credit {
-  margin: 4px 0 0;
-  font-size: 8px;
-  color: #9aa5a0;
+  position: absolute;
+  bottom: 2mm;
+  left: 2mm;
+  z-index: 1000;
+  margin: 0;
+  padding: 1px 5px;
+  background: rgba(255, 255, 255, 0.75);
+  border-radius: 3px;
+  font-size: 7px;
+  color: #444;
 }
 
 @media print {

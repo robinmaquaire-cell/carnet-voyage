@@ -75,11 +75,13 @@
   const PICTO_GLYPH = Object.fromEntries(PICTOS.map((p) => [p.cle, p.glyph]));
   const STYLE_VECTORIEL_URL = "https://tiles.openfreemap.org/styles/liberty";
 
-  const MARGE_MM = 12;
-  // Marge de sécurité (mm) retirée de la hauteur de la carte : si le
-  // navigateur affiche ses propres en-tête/pied de page à l'impression, ça
-  // grignote de la place sur chaque feuille sans qu'on puisse le mesurer.
-  const MARGE_SECURITE_ENTETE_MM = 20;
+  // Marge de page réduite au minimum : la carte doit occuper la feuille
+  // presque bord à bord (rendu poster). Les en-têtes/pieds de page du
+  // navigateur doivent être désactivés pour un résultat vraiment propre.
+  const MARGE_MM = 5;
+  // Petite réserve (mm) sur la hauteur des pages de SOUVENIRS uniquement,
+  // pour absorber les arrondis d'impression sans déborder sur 2 pages.
+  const MARGE_SECURITE_MM = 6;
   const ECART_MM = 5;
   const ECART_CARTES_MM = 6;
   const MM_EN_PX = 96 / 25.4; // résolution CSS standard : 96px = 1 pouce = 25,4mm
@@ -187,14 +189,19 @@
     fort: "blur(2.4px)",
   };
 
+  // La carte principale, gardée accessible pour recaler ses tuiles juste
+  // avant l'impression (sinon Firefox peut imprimer une vue décalée).
+  let cartePrincipale = null;
+
   function construireCartePrincipale(largeurMm, hauteurMm) {
     document.getElementById("zone-carte").style.width = largeurMm + "mm";
     document.getElementById("zone-carte").style.height = hauteurMm + "mm";
 
     // Carte INTERACTIVE : l'utilisateur ajuste le cadrage (zoom, déplacement)
     // avant de lancer l'impression. Pas d'attribution à l'écran ni sur le
-    // papier (un crédit discret est ajouté en bas de l'affiche à la place).
+    // papier (un crédit discret est posé sur la carte à la place).
     const carte = L.map("map", { zoomControl: true, attributionControl: false });
+    cartePrincipale = carte;
     const attentes = [];
 
     if (style.fond === "vectoriel" && L.maplibreGL) {
@@ -511,9 +518,12 @@
     document.documentElement.style.setProperty("--impression-couleur-texte", reglages.couleur || "#2f3b34");
 
     const largeurUtileMm = largeur - MARGE_MM * 2;
-    const hauteurUtileMm = hauteur - MARGE_MM * 2 - MARGE_SECURITE_ENTETE_MM;
+    // La carte occupe TOUTE la hauteur imprimable (rendu poster, sans bande) ;
+    // seules les pages de souvenirs gardent une petite réserve de sécurité.
+    const hauteurPageMm = hauteur - MARGE_MM * 2;
+    const hauteurUtileMm = hauteurPageMm - MARGE_SECURITE_MM;
 
-    const attenteCarte = construireCartePrincipale(largeurUtileMm, hauteurUtileMm);
+    const attenteCarte = construireCartePrincipale(largeurUtileMm, hauteurPageMm);
 
     // Sans souvenir, pas de section "Souvenirs du voyage" : la carte seule
     // (et pas de saut de page après elle, qui laisserait une feuille blanche).
@@ -597,20 +607,27 @@
       zoneFinale.appendChild(pageEl);
     });
 
-    // Crédit discret en bas de l'affiche : la licence OpenStreetMap demande
-    // de créditer les données, même sur un poster — on le fait tout petit.
+    // Crédit discret POSÉ SUR LA CARTE, en bas : la licence OpenStreetMap
+    // demande de créditer les données, même sur un poster.
     const credit = document.createElement("p");
     credit.className = "impression-credit";
     credit.textContent = "Fond de carte © OpenStreetMap";
-    document.body.appendChild(credit);
+    document.getElementById("zone-carte").appendChild(credit);
 
     // Tout est prêt : l'utilisateur ajuste le cadrage de la carte (zoom,
-    // déplacement) puis lance lui-même l'impression.
+    // déplacement) puis lance lui-même l'impression. On recale les tuiles
+    // juste avant, pour que le papier corresponde exactement à l'écran.
     document.getElementById("barre-texte").textContent =
       "Ajuste le cadrage de la carte (zoom, déplacement), puis :";
     const btn = document.getElementById("btn-imprimer");
     btn.hidden = false;
-    btn.addEventListener("click", () => window.print());
+    btn.addEventListener("click", () => {
+      if (cartePrincipale) cartePrincipale.invalidateSize();
+      setTimeout(() => window.print(), 250);
+    });
+    window.addEventListener("beforeprint", () => {
+      if (cartePrincipale) cartePrincipale.invalidateSize();
+    });
   }
 
   preparer().catch((e) => {
