@@ -1513,6 +1513,16 @@ body.mode-visualisation #panneau {
   border: 1px solid var(--ligne);
 }
 
+/* Mode "carte étroite" (unités de grille resserrées, posé en JS) : la
+   mini-carte et les photos se compactent pour laisser le titre et le récit
+   lisibles malgré la faible largeur. */
+.impression-carte-etroite .impression-carte-interieur { padding: 10px; }
+.impression-carte-etroite .impression-mini-map { width: 20mm; height: 14mm; }
+.impression-carte-etroite .impression-carte-titre { font-size: 13px; }
+.impression-carte-etroite .impression-photo-couverture { max-height: 60mm; }
+.impression-carte-etroite .impression-photo-mini { width: 20mm; height: 15mm; }
+.impression-carte-etroite .impression-carte-texte { font-size: 11px; }
+
 /* Préserve les couleurs/fonds à l'impression (certains navigateurs les
    suppriment par défaut si "Graphiques d'arrière-plan" n'est pas coché). */
 body.page-impression,

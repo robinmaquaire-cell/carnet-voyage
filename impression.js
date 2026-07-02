@@ -400,40 +400,59 @@
     });
   }
 
-  /** Empaquetage "skyline" en mosaïque — voir app.js pour le détail du principe. */
+  /**
+   * Empaquetage "skyline" en mosaïque, optimisé pour l'espace : les grands
+   * rectangles se placent d'abord, puis les plus petits viennent boucher
+   * les trous — y compris sur les pages déjà entamées (chaque souvenir garde
+   * son numéro visible, la lecture ne dépend donc pas de sa position).
+   * Renvoie un tableau de pages ; chaque page = { hauteurPx, cartes:
+   * [{ info, colDepart, largeurUnites, top }] }.
+   */
   function paginerSouvenirsMosaique(cartesInfo, nbUnites, hauteurPageDisponiblePx) {
     const pages = [];
-    let page, hauteursUnites;
-
-    function nouvellePage() {
-      hauteursUnites = new Array(nbUnites).fill(0);
-      page = { cartes: [] };
-      pages.push(page);
+    function creerPage() {
+      const p = { cartes: [], hauteursUnites: new Array(nbUnites).fill(0) };
+      pages.push(p);
+      return p;
     }
-    nouvellePage();
 
-    cartesInfo.forEach((info) => {
+    // Larges puis hauts d'abord : les petits combleront les trous restants.
+    const ordonnees = [...cartesInfo].sort(
+      (a, b) => (b.largeurUnites - a.largeurUnites) || (b.hauteurPx - a.hauteurPx)
+    );
+
+    ordonnees.forEach((info) => {
       const largeur = Math.min(info.largeurUnites, nbUnites);
-      let meilleureCol = 0;
-      let meilleureHauteur = Infinity;
-      for (let c = 0; c <= nbUnites - largeur; c++) {
-        let h = 0;
-        for (let k = c; k < c + largeur; k++) h = Math.max(h, hauteursUnites[k]);
-        if (h < meilleureHauteur) { meilleureHauteur = h; meilleureCol = c; }
+
+      // Première page où la carte tient, à la position la plus haute possible.
+      let place = null;
+      for (const page of pages) {
+        let meilleureCol = 0;
+        let meilleureHauteur = Infinity;
+        for (let c = 0; c <= nbUnites - largeur; c++) {
+          let h = 0;
+          for (let k = c; k < c + largeur; k++) h = Math.max(h, page.hauteursUnites[k]);
+          if (h < meilleureHauteur) { meilleureHauteur = h; meilleureCol = c; }
+        }
+        if (meilleureHauteur + info.hauteurPx <= hauteurPageDisponiblePx) {
+          place = { page, col: meilleureCol, top: meilleureHauteur };
+          break;
+        }
       }
-      const dejaOccupe = meilleureHauteur > 0;
-      if (dejaOccupe && meilleureHauteur + info.hauteurPx > hauteurPageDisponiblePx) {
-        nouvellePage();
-        meilleureCol = 0;
-        meilleureHauteur = 0;
+      // Aucune page ne peut l'accueillir : nouvelle page (même si la carte
+      // est plus haute qu'une page entière, il faut bien la poser quelque part).
+      if (!place) place = { page: creerPage(), col: 0, top: 0 };
+
+      place.page.cartes.push({ info, colDepart: place.col, largeurUnites: largeur, top: place.top });
+      const nouvelleHauteur = place.top + info.hauteurPx + ECART_CARTES_MM * MM_EN_PX;
+      for (let k = place.col; k < place.col + largeur; k++) {
+        place.page.hauteursUnites[k] = nouvelleHauteur;
       }
-      page.cartes.push({ info, colDepart: meilleureCol, largeurUnites: largeur, top: meilleureHauteur });
-      const nouvelleHauteur = meilleureHauteur + info.hauteurPx + ECART_CARTES_MM * MM_EN_PX;
-      for (let k = meilleureCol; k < meilleureCol + largeur; k++) hauteursUnites[k] = nouvelleHauteur;
     });
 
     pages.forEach((p) => {
       p.hauteurPx = p.cartes.reduce((m, c) => Math.max(m, c.top + c.info.hauteurPx), 0);
+      delete p.hauteursUnites;
     });
     return pages;
   }
@@ -456,13 +475,6 @@
 
     const attenteCarte = construireCartePrincipale(largeurUtileMm, hauteurUtileMm);
 
-    // Nombre d'unités de la grille calculé automatiquement : on vise des
-    // unités d'environ 90 mm de large — assez pour que titre, mini-carte et
-    // récit restent lisibles (en dessous, le texte finit une lettre par
-    // ligne). Un A4 portrait donne 2 unités, un A2 en donne 4, etc.
-    const nbUnites = Math.max(2, Math.round(largeurUtileMm / 90));
-    const largeurUniteMm = (largeurUtileMm - (nbUnites - 1) * ECART_MM) / nbUnites;
-
     // Sans souvenir, pas de section "Souvenirs du voyage" : la carte seule
     // (et pas de saut de page après elle, qui laisserait une feuille blanche).
     if (souvenirs.length === 0) {
@@ -477,18 +489,56 @@
     const attentesMini = [];
     souvenirs.forEach((s, i) => {
       const { carte, miniMapEl } = construireCarteImpression(s, i + 1);
-      const largeurUnites = classifierTailleSouvenir(s);
-      const largeurMm = largeurUnites * largeurUniteMm + (largeurUnites - 1) * ECART_MM;
-      carte.style.width = largeurMm + "mm";
       zoneMesure.appendChild(carte);
-      cartesInfo.push({ carte, largeurUnites });
+      cartesInfo.push({ carte, largeurUnites: classifierTailleSouvenir(s) });
       attentesMini.push(creerMiniCarteImpression(miniMapEl, s));
     });
 
     await Promise.all([attenteCarte, ...attentesMini]);
 
-    cartesInfo.forEach((info) => { info.hauteurPx = info.carte.getBoundingClientRect().height; });
     const hauteurPageDisponiblePx = hauteurUtileMm * MM_EN_PX;
+
+    /**
+     * Pose les largeurs (et le mode "étroit" pour les petites unités) sur
+     * chaque carte pour une grille de nbUnites, puis mesure leurs hauteurs
+     * réelles. Renvoie la largeur d'unité correspondante.
+     */
+    function appliquerEtMesurer(nbUnites) {
+      const largeurUniteMm = (largeurUtileMm - (nbUnites - 1) * ECART_MM) / nbUnites;
+      cartesInfo.forEach((info) => {
+        const unites = Math.min(info.largeurUnites, nbUnites);
+        const largeurMm = unites * largeurUniteMm + (unites - 1) * ECART_MM;
+        info.carte.style.width = largeurMm + "mm";
+        // Sur une unité étroite, la mini-carte et les photos se compactent
+        // (sinon le titre n'aurait plus de place à côté de la mini-carte).
+        info.carte.classList.toggle("impression-carte-etroite", largeurMm < 75);
+      });
+      cartesInfo.forEach((info) => { info.hauteurPx = info.carte.getBoundingClientRect().height; });
+      return largeurUniteMm;
+    }
+
+    // Choix de la grille PAR LE CONTENU : on essaie plusieurs tailles de
+    // grille (des unités de ~58 mm minimum pour rester lisible), on mesure
+    // l'encombrement réel des souvenirs dans chacune, et on garde celle qui
+    // remplit le moins de pages — à pages égales, la plus compacte, et à
+    // compacité égale, les cartes les plus larges (plus confortables à lire).
+    const MIN_UNITE_MM = 58;
+    const maxUnites = Math.max(2, Math.floor((largeurUtileMm + ECART_MM) / (MIN_UNITE_MM + ECART_MM)));
+    let meilleur = null;
+    for (let u = 2; u <= maxUnites; u++) {
+      const largeurUniteMm = appliquerEtMesurer(u);
+      const pages = paginerSouvenirsMosaique(cartesInfo, u, hauteurPageDisponiblePx);
+      const hauteurTotale = pages.reduce((somme, p) => somme + p.hauteurPx, 0);
+      const score = pages.length * 1000000 + hauteurTotale / 100 + u; // pages >> compacité >> largeur
+      if (!meilleur || score < meilleur.score) {
+        meilleur = { nbUnites: u, largeurUniteMm, score };
+      }
+    }
+
+    // Ré-applique la meilleure grille (les mesures/pages doivent correspondre
+    // aux largeurs réellement posées sur les cartes).
+    const { nbUnites, largeurUniteMm } = meilleur;
+    appliquerEtMesurer(nbUnites);
     const pages = paginerSouvenirsMosaique(cartesInfo, nbUnites, hauteurPageDisponiblePx);
 
     const zoneFinale = document.getElementById("impression-souvenirs");
