@@ -28,8 +28,7 @@
   const style = etatParent.style || {};
   const pictosPerso = etatParent.pictosPerso || [];
   const reglages = parent.reglagesAffiche || {
-    format: "A4", orientation: "portrait", disposition: "mosaique",
-    colonnes: 2, police: "systeme", couleur: "#2f3b34",
+    format: "A4", orientation: "portrait", police: "systeme", couleur: "#2f3b34",
   };
 
   /* ---------- Constantes (reprises de app.js) ---------- */
@@ -128,14 +127,20 @@
     return souvenir.photos[i] || null;
   }
 
+  /**
+   * Largeur d'un souvenir dans la mosaïque, en unités de grille, selon la
+   * richesse de son contenu : un souvenir bien rempli occupe un grand
+   * rectangle, un souvenir léger un petit — c'est ce qui fait varier la
+   * taille des cases.
+   */
   function classifierTailleSouvenir(souvenir) {
-    // En disposition "colonnes", tous les souvenirs font la même largeur.
-    if (reglages.disposition === "colonnes") return 1;
-    // En "mosaïque", un souvenir riche (photo + long récit) prend deux
-    // unités de large : les rectangles varient selon le contenu.
     const aPhoto = !!(photoCouverture(souvenir) || souvenir.photos[0]);
     const longueurTexte = (souvenir.textes || "").length;
-    return aPhoto && longueurTexte > 150 ? 2 : 1;
+    const nbAutresPhotos = Math.max(0, souvenir.photos.length - 1);
+    if (aPhoto && longueurTexte > 150) return 2;   // photo + long récit
+    if (longueurTexte > 400) return 2;             // très long récit seul
+    if (nbAutresPhotos >= 3) return 2;             // beaucoup de photos
+    return 1;
   }
 
   function classeZone(couche) {
@@ -451,7 +456,11 @@
 
     const attenteCarte = construireCartePrincipale(largeurUtileMm, hauteurUtileMm);
 
-    const nbUnites = reglages.colonnes || 2;
+    // Nombre d'unités de la grille calculé automatiquement : on vise des
+    // unités d'environ 90 mm de large — assez pour que titre, mini-carte et
+    // récit restent lisibles (en dessous, le texte finit une lettre par
+    // ligne). Un A4 portrait donne 2 unités, un A2 en donne 4, etc.
+    const nbUnites = Math.max(2, Math.round(largeurUtileMm / 90));
     const largeurUniteMm = (largeurUtileMm - (nbUnites - 1) * ECART_MM) / nbUnites;
 
     // Sans souvenir, pas de section "Souvenirs du voyage" : la carte seule

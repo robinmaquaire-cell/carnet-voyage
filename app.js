@@ -1811,15 +1811,12 @@ function exporterCarnet() {
 
 /* ---------- Export "affiche" (PDF, via une fenêtre d'impression à part) ---------- */
 
-// Nombre de colonnes de souvenirs suggéré par défaut selon le format choisi.
-const COLONNES_PAR_DEFAUT = { A4: 2, A3: 2, A2: 3, A1: 3, A0: 4 };
-
 // Réglages courants de l'affiche (mémorisés le temps de la session).
+// La disposition est toujours en mosaïque : le nombre d'unités de la grille
+// est calculé automatiquement selon le format de papier (voir impression.js).
 const reglagesAffiche = {
   format: "A4",
   orientation: "portrait",
-  disposition: "mosaique", // "mosaique" (rectangles de tailles variables) ou "colonnes"
-  colonnes: 2,
   police: "systeme",
   couleur: "#2f3b34",
 };
@@ -1835,8 +1832,6 @@ function ouvrirModalAffiche() {
   }
   majSegment("affiche-format", "format", reglagesAffiche.format);
   majSegment("affiche-orientation", "orientation", reglagesAffiche.orientation);
-  majSegment("affiche-disposition", "disposition", reglagesAffiche.disposition);
-  majSegment("affiche-colonnes", "colonnes", String(reglagesAffiche.colonnes));
   majSegment("affiche-police", "police", reglagesAffiche.police);
   document.getElementById("affiche-couleur").value = reglagesAffiche.couleur;
   document.getElementById("modal-affiche").hidden = false;
@@ -2570,7 +2565,7 @@ function init() {
     .addEventListener("click", reinitialiserCarnet);
 
 
-  // --- Réglages de l'affiche PDF (format, orientation, colonnes) ---
+  // --- Réglages de l'affiche PDF (format, orientation, police, couleur) ---
   document.getElementById("affiche-annuler")
     .addEventListener("click", fermerModalAffiche);
   document.getElementById("affiche-generer")
@@ -2580,21 +2575,11 @@ function init() {
     });
   brancherSegment("affiche-format", "format", (v) => {
     reglagesAffiche.format = v;
-    reglagesAffiche.colonnes = COLONNES_PAR_DEFAUT[v] || 2;
     majSegment("affiche-format", "format", v);
-    majSegment("affiche-colonnes", "colonnes", String(reglagesAffiche.colonnes));
   });
   brancherSegment("affiche-orientation", "orientation", (v) => {
     reglagesAffiche.orientation = v;
     majSegment("affiche-orientation", "orientation", v);
-  });
-  brancherSegment("affiche-disposition", "disposition", (v) => {
-    reglagesAffiche.disposition = v;
-    majSegment("affiche-disposition", "disposition", v);
-  });
-  brancherSegment("affiche-colonnes", "colonnes", (v) => {
-    reglagesAffiche.colonnes = Number(v);
-    majSegment("affiche-colonnes", "colonnes", v);
   });
   brancherSegment("affiche-police", "police", (v) => {
     reglagesAffiche.police = v;
