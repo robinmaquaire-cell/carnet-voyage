@@ -45,13 +45,34 @@ const STYLE_DEFAUT = {
   fondPerso: { url: "", maxZoom: 19, attribution: "", subdomains: "abc" },
   // Affichage des noms des souvenirs sur la carte.
   labels: { afficher: false, police: "systeme", couleur: "#2f3b34", taille: "moyen" },
+  // Lissage des contours du fond (forêts, lacs, côtes) : "aucun" | "leger" | "moyen" | "fort".
+  lissage: "aucun",
   // Personnalisation du fond VECTORIEL (couleur des zones, police des lieux).
   // null = on garde la couleur d'origine du fond vectoriel.
   vecteur: {
-    zones: { eau: null, foret: null, prairie: null, bati: null, route: null, fond: null },
+    zones: {
+      eau: null, riviere: null, foret: null, prairie: null, glacier: null,
+      bati: null, route: null, frontiere: null, noms: null, fond: null,
+    },
+    detail: "complet", // "complet" | "epure" (masque petites routes, bâtiments, POI)
     police: null,
     preset: null, // null = fond vectoriel standard ; "ancienne" = look parchemin
   },
+};
+
+// Teinte d'ambiance et lissage : filtres CSS combinés en une seule variable
+// (--filtre-fond) posée sur la carte, pour que les deux réglages coexistent.
+const AMBIANCE_FILTRES = {
+  naturel: "",
+  ancien: "sepia(0.35) saturate(0.8) brightness(1.03)",
+  doux: "saturate(0.55) brightness(1.06)",
+  medieval: "sepia(0.78) saturate(0.6) contrast(1.08) brightness(1.07)",
+};
+const LISSAGE_FILTRES = {
+  aucun: "",
+  leger: "blur(0.6px)",
+  moyen: "blur(1.3px)",
+  fort: "blur(2.4px)",
 };
 
 // Palette du préréglage "Carte ancienne".
@@ -64,10 +85,14 @@ const PALETTE_ANCIENNE = {
 // tant que l'utilisateur n'y touche pas).
 const SUGGESTIONS_ZONE = {
   eau: "#3a7ca5",
+  riviere: "#5f93b8",
   foret: "#3f7d52",
   prairie: "#cfe3b5",
+  glacier: "#eef6f9",
   bati: "#d9c9b0",
   route: "#9c8262",
+  frontiere: "#b56576",
+  noms: "#4a4a4a",
   fond: "#f3eee2",
 };
 
@@ -1220,10 +1245,15 @@ function classeZone(couche) {
   const id = (couche.id || "").toLowerCase();
   const sl = (couche["source-layer"] || "").toLowerCase();
   if (id === "background") return "fond";
-  if (sl === "water" || sl === "waterway" || /water|ocean|sea|lake|river|bay/.test(id)) return "eau";
+  // Les lignes d'eau (rivières, canaux) avant les surfaces d'eau : le
+  // source-layer "waterway" est plus spécifique que "water".
+  if (sl === "waterway" || /waterway|stream|canal/.test(id)) return "riviere";
+  if (/ice|glacier|snow/.test(id)) return "glacier";
+  if (sl === "water" || /water|ocean|sea|lake|river|bay/.test(id)) return "eau";
   if (/wood|forest|park|golf|cemetery|orchard|vineyard/.test(id)) return "foret";
   if (/grass|meadow|scrub|heath|wetland|farmland|landcover|landuse/.test(id)) return "prairie";
   if (sl === "building" || /building/.test(id)) return "bati";
+  if (sl === "boundary" || /boundary|admin/.test(id)) return "frontiere";
   if (sl === "transportation" || sl === "transportation_name" ||
       /road|highway|street|path|track|bridge|tunnel|rail|ferry/.test(id)) return "route";
   return null;
@@ -1233,6 +1263,14 @@ function classeZone(couche) {
 function appliquerCouleurZone(categorie, couleur) {
   const m = etat.glMap;
   if (!m) return;
+  // Catégorie spéciale "noms" : la couleur du texte des noms de lieux.
+  if (categorie === "noms") {
+    m.getStyle().layers.forEach((couche) => {
+      if (couche.type !== "symbol") return;
+      try { m.setPaintProperty(couche.id, "text-color", couleur); } catch (e) {}
+    });
+    return;
+  }
   m.getStyle().layers.forEach((couche) => {
     if (classeZone(couche) !== categorie) return;
     try {
@@ -1241,6 +1279,20 @@ function appliquerCouleurZone(categorie, couleur) {
       else if (couche.type === "background") m.setPaintProperty(couche.id, "background-color", couleur);
       else if (couche.type === "fill-extrusion") m.setPaintProperty(couche.id, "fill-extrusion-color", couleur);
     } catch (e) { /* couche non colorable : on ignore */ }
+  });
+}
+
+/**
+ * Applique le niveau de détail du fond vectoriel : "épuré" masque les
+ * petites routes, bâtiments et points d'intérêt (les mêmes couches que le
+ * préréglage "ancienne") ; "complet" les réaffiche.
+ */
+function appliquerNiveauDetail(epure) {
+  const m = etat.glMap;
+  if (!m) return;
+  m.getStyle().layers.forEach((l) => {
+    if (!masquerDetail(l)) return;
+    try { m.setLayoutProperty(l.id, "visibility", epure ? "none" : "visible"); } catch (e) {}
   });
 }
 
@@ -1253,6 +1305,7 @@ function appliquerStyleVecteur() {
   Object.keys(z).forEach((cat) => {
     if (z[cat]) appliquerCouleurZone(cat, z[cat]);
   });
+  appliquerNiveauDetail(etat.style.vecteur.detail === "epure" || ancienne);
   if (ancienne) appliquerPresetAncienneAuStyle();
 }
 
@@ -1351,13 +1404,22 @@ function basculerBlocVecteur(visible) {
   document.getElementById("vecteur-bloc").hidden = !visible;
 }
 
-/** Applique l'ambiance (teinte générale) en changeant la classe du conteneur. */
+/** Compose le filtre du fond (ambiance + lissage) et le pose sur la carte. */
+function appliquerFiltreFond() {
+  const fa = AMBIANCE_FILTRES[etat.style.ambiance] || "";
+  const fl = LISSAGE_FILTRES[etat.style.lissage] || "";
+  const combine = [fa, fl].filter(Boolean).join(" ") || "none";
+  document.getElementById("map").style.setProperty("--filtre-fond", combine);
+}
+
+/** Applique l'ambiance (teinte générale) : classe (pour le parchemin) + filtre. */
 function appliquerAmbiance(cle) {
   const map = document.getElementById("map");
   map.classList.remove(
     "ambiance-naturel", "ambiance-ancien", "ambiance-doux", "ambiance-medieval"
   );
   map.classList.add("ambiance-" + (cle || "naturel"));
+  appliquerFiltreFond();
 }
 
 /** Affiche (ou masque) le cartouche de titre sur la carte. */
@@ -1469,15 +1531,12 @@ function fusionnerStyle(s) {
       couleur: (s.labels && s.labels.couleur) || base.labels.couleur,
       taille: (s.labels && TAILLES[s.labels.taille]) ? s.labels.taille : base.labels.taille,
     },
+    lissage: LISSAGE_FILTRES[s.lissage] !== undefined ? s.lissage : base.lissage,
     vecteur: {
-      zones: {
-        eau:     lireCouleurOuNull(s.vecteur, "eau"),
-        foret:   lireCouleurOuNull(s.vecteur, "foret"),
-        prairie: lireCouleurOuNull(s.vecteur, "prairie"),
-        bati:    lireCouleurOuNull(s.vecteur, "bati"),
-        route:   lireCouleurOuNull(s.vecteur, "route"),
-        fond:    lireCouleurOuNull(s.vecteur, "fond"),
-      },
+      zones: Object.fromEntries(
+        Object.keys(base.vecteur.zones).map((cle) => [cle, lireCouleurOuNull(s.vecteur, cle)])
+      ),
+      detail: (s.vecteur && s.vecteur.detail === "epure") ? "epure" : "complet",
       police: (s.vecteur && typeof s.vecteur.police === "string") ? s.vecteur.police : base.vecteur.police,
       preset: (s.vecteur && s.vecteur.preset === "ancienne") ? "ancienne" : null,
     },
@@ -1541,6 +1600,7 @@ function synchroniserControlesStyle() {
   majSegment("trace-type", "type", s.trace.type);
   majSegment("fond-carte", "fond", s.fond);
   majSegment("ambiance-carte", "ambiance", s.ambiance);
+  majSegment("lissage-carte", "lissage", s.lissage);
 
   // Bloc du fond personnalisé : visible et rempli si "perso" est choisi.
   basculerBlocPerso(s.fond === "perso");
@@ -1551,6 +1611,7 @@ function synchroniserControlesStyle() {
   // Bloc du fond vectoriel : visible si "vectoriel" est choisi ; sélecteurs
   // remplis avec la couleur choisie ou la suggestion par défaut.
   basculerBlocVecteur(s.fond === "vectoriel");
+  majSegment("vecteur-detail", "detail", s.vecteur.detail);
   document.querySelectorAll("#vecteur-bloc input[data-zone]").forEach((inp) => {
     const cat = inp.dataset.zone;
     inp.value = s.vecteur.zones[cat] || SUGGESTIONS_ZONE[cat] || "#888888";
@@ -2553,6 +2614,18 @@ function init() {
     etat.style.ambiance = v;
     majSegment("ambiance-carte", "ambiance", v);
     appliquerAmbiance(v);
+    planifierSauvegarde();
+  });
+  brancherSegment("lissage-carte", "lissage", (v) => {
+    etat.style.lissage = v;
+    majSegment("lissage-carte", "lissage", v);
+    appliquerFiltreFond();
+    planifierSauvegarde();
+  });
+  brancherSegment("vecteur-detail", "detail", (v) => {
+    etat.style.vecteur.detail = v;
+    majSegment("vecteur-detail", "detail", v);
+    appliquerNiveauDetail(v === "epure" || etat.style.vecteur.preset === "ancienne");
     planifierSauvegarde();
   });
 

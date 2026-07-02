@@ -1031,10 +1031,10 @@ body {
 }
 
 /* Ambiances : reteinte l'ensemble du fond de carte d'un seul coup. */
-.map.ambiance-naturel  .leaflet-tile-pane { filter: none; }
-.map.ambiance-ancien   .leaflet-tile-pane { filter: sepia(0.35) saturate(0.8) brightness(1.03); }
-.map.ambiance-doux     .leaflet-tile-pane { filter: saturate(0.55) brightness(1.06); }
-.map.ambiance-medieval .leaflet-tile-pane { filter: sepia(0.78) saturate(0.6) contrast(1.08) brightness(1.07); }
+/* Le filtre du fond (teinte d'ambiance + lissage des contours) est composé
+   en JS et posé dans cette variable : les deux réglages se combinent ainsi
+   sans s'écraser l'un l'autre. */
+.map .leaflet-tile-pane { filter: var(--filtre-fond, none); }
 
 /* Calque "parchemin" : papier vieilli granuleux + coins assombris (vignette).
    Masqué par défaut, affiché seulement en ambiance médiévale. */
@@ -1547,13 +1547,16 @@ body.page-impression {
   page-break-after: always;
 }
 
-/* Petit bandeau "génération en cours", jamais imprimé. */
+/* Barre de contrôle (préparation, puis cadrage + Imprimer), jamais imprimée. */
 .barre-impression {
   position: fixed;
   top: 12px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 2000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
   background: var(--encre);
   color: #fff;
   padding: 10px 18px;
@@ -1561,9 +1564,34 @@ body.page-impression {
   font-size: 14px;
   font-weight: 700;
   box-shadow: var(--ombre);
+  white-space: nowrap;
 }
 .barre-impression[hidden] { display: none; }
+.barre-btn-imprimer {
+  border: none;
+  border-radius: 999px;
+  background: #d35438;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+.barre-btn-imprimer:hover { filter: brightness(1.08); }
+.barre-btn-imprimer[hidden] { display: none; }
+
+/* Crédit des données cartographiques : minuscule et discret, mais présent
+   (la licence OpenStreetMap demande de créditer la source). */
+.impression-credit {
+  margin: 4px 0 0;
+  font-size: 8px;
+  color: #9aa5a0;
+}
 
 @media print {
   html, body { height: auto; overflow: visible; background: #fff; }
+  /* Rien de tout ça ne doit finir sur le papier : barre de contrôle,
+     boutons de zoom et autres contrôles de la carte. */
+  .barre-impression { display: none !important; }
+  body.page-impression .leaflet-control-container { display: none !important; }
 }

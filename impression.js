@@ -147,10 +147,13 @@
     const id = (couche.id || "").toLowerCase();
     const sl = (couche["source-layer"] || "").toLowerCase();
     if (id === "background") return "fond";
-    if (sl === "water" || sl === "waterway" || /water|ocean|sea|lake|river|bay/.test(id)) return "eau";
+    if (sl === "waterway" || /waterway|stream|canal/.test(id)) return "riviere";
+    if (/ice|glacier|snow/.test(id)) return "glacier";
+    if (sl === "water" || /water|ocean|sea|lake|river|bay/.test(id)) return "eau";
     if (/wood|forest|park|golf|cemetery|orchard|vineyard/.test(id)) return "foret";
     if (/grass|meadow|scrub|heath|wetland|farmland|landcover|landuse/.test(id)) return "prairie";
     if (sl === "building" || /building/.test(id)) return "bati";
+    if (sl === "boundary" || /boundary|admin/.test(id)) return "frontiere";
     if (sl === "transportation" || sl === "transportation_name" ||
         /road|highway|street|path|track|bridge|tunnel|rail|ferry/.test(id)) return "route";
     return null;
@@ -169,11 +172,29 @@
 
   /* ---------- Carte principale ---------- */
 
+  // Teinte d'ambiance + lissage : mêmes filtres que dans app.js, composés en
+  // une seule variable CSS posée sur la carte.
+  const AMBIANCE_FILTRES = {
+    naturel: "",
+    ancien: "sepia(0.35) saturate(0.8) brightness(1.03)",
+    doux: "saturate(0.55) brightness(1.06)",
+    medieval: "sepia(0.78) saturate(0.6) contrast(1.08) brightness(1.07)",
+  };
+  const LISSAGE_FILTRES = {
+    aucun: "",
+    leger: "blur(0.6px)",
+    moyen: "blur(1.3px)",
+    fort: "blur(2.4px)",
+  };
+
   function construireCartePrincipale(largeurMm, hauteurMm) {
     document.getElementById("zone-carte").style.width = largeurMm + "mm";
     document.getElementById("zone-carte").style.height = hauteurMm + "mm";
 
-    const carte = L.map("map", { zoomControl: false, attributionControl: true });
+    // Carte INTERACTIVE : l'utilisateur ajuste le cadrage (zoom, déplacement)
+    // avant de lancer l'impression. Pas d'attribution à l'écran ni sur le
+    // papier (un crédit discret est ajouté en bas de l'affiche à la place).
+    const carte = L.map("map", { zoomControl: true, attributionControl: false });
     const attentes = [];
 
     if (style.fond === "vectoriel" && L.maplibreGL) {
@@ -204,6 +225,14 @@
               Object.keys(zones).forEach((cat) => {
                 const couleur = zones[cat];
                 if (!couleur) return;
+                // Catégorie spéciale "noms" : couleur du texte des lieux.
+                if (cat === "noms") {
+                  glMap.getStyle().layers.forEach((c) => {
+                    if (c.type !== "symbol") return;
+                    try { glMap.setPaintProperty(c.id, "text-color", couleur); } catch (e) {}
+                  });
+                  return;
+                }
                 glMap.getStyle().layers.forEach((c) => {
                   if (classeZone(c) !== cat) return;
                   try {
@@ -214,6 +243,12 @@
                   } catch (e) { /* couche non colorable */ }
                 });
               });
+              // Niveau de détail "épuré" : masque petites routes, bâtiments, POI.
+              if (style.vecteur && style.vecteur.detail === "epure") {
+                glMap.getStyle().layers.forEach((l) => {
+                  if (masquerDetail(l)) { try { glMap.setLayoutProperty(l.id, "visibility", "none"); } catch (e) {} }
+                });
+              }
               if (style.vecteur && style.vecteur.preset === "ancienne") {
                 glMap.getStyle().layers.forEach((l) => {
                   if (masquerDetail(l)) { try { glMap.setLayoutProperty(l.id, "visibility", "none"); } catch (e) {} }
@@ -262,7 +297,12 @@
       }));
     }
 
-    document.getElementById("map").classList.add("ambiance-" + (style.ambiance || "naturel"));
+    // Ambiance (classe pour le parchemin) + filtre combiné ambiance/lissage.
+    const mapEl = document.getElementById("map");
+    mapEl.classList.add("ambiance-" + (style.ambiance || "naturel"));
+    const fa = AMBIANCE_FILTRES[style.ambiance] || "";
+    const fl = LISSAGE_FILTRES[style.lissage] || "";
+    mapEl.style.setProperty("--filtre-fond", [fa, fl].filter(Boolean).join(" ") || "none");
 
     const t = style.trace || { couleur: "#c8893d", epaisseur: 4, type: "plein" };
     trace.segments.forEach((seg) => {
@@ -557,8 +597,20 @@
       zoneFinale.appendChild(pageEl);
     });
 
-    document.getElementById("barre-impression").hidden = true;
-    window.print();
+    // Crédit discret en bas de l'affiche : la licence OpenStreetMap demande
+    // de créditer les données, même sur un poster — on le fait tout petit.
+    const credit = document.createElement("p");
+    credit.className = "impression-credit";
+    credit.textContent = "Fond de carte © OpenStreetMap";
+    document.body.appendChild(credit);
+
+    // Tout est prêt : l'utilisateur ajuste le cadrage de la carte (zoom,
+    // déplacement) puis lance lui-même l'impression.
+    document.getElementById("barre-texte").textContent =
+      "Ajuste le cadrage de la carte (zoom, déplacement), puis :";
+    const btn = document.getElementById("btn-imprimer");
+    btn.hidden = false;
+    btn.addEventListener("click", () => window.print());
   }
 
   preparer().catch((e) => {

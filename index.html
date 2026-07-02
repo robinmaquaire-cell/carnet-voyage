@@ -273,13 +273,24 @@
             <label class="style-label">Couleurs des zones</label>
             <div class="zone-rangees">
               <label class="zone-rangee">Eau <input type="color" data-zone="eau" /></label>
+              <label class="zone-rangee">Rivières <input type="color" data-zone="riviere" /></label>
               <label class="zone-rangee">Forêt <input type="color" data-zone="foret" /></label>
               <label class="zone-rangee">Prairie <input type="color" data-zone="prairie" /></label>
+              <label class="zone-rangee">Glaciers <input type="color" data-zone="glacier" /></label>
               <label class="zone-rangee">Bâti <input type="color" data-zone="bati" /></label>
               <label class="zone-rangee">Routes & chemins <input type="color" data-zone="route" /></label>
+              <label class="zone-rangee">Frontières <input type="color" data-zone="frontiere" /></label>
+              <label class="zone-rangee">Noms de lieux <input type="color" data-zone="noms" /></label>
               <label class="zone-rangee">Fond <input type="color" data-zone="fond" /></label>
             </div>
             <button id="zones-reset" class="btn btn-ghost btn-petit">Couleurs d'origine</button>
+
+            <label class="style-label">Niveau de détail</label>
+            <div id="vecteur-detail" class="segment" role="group">
+              <button class="segment-btn" data-detail="complet">Complet</button>
+              <button class="segment-btn" data-detail="epure">Épuré</button>
+            </div>
+            <p class="style-aide">Épuré : masque les petites routes, les bâtiments et les points d'intérêt.</p>
           </div>
         </section>
 
@@ -292,6 +303,18 @@
             <button class="segment-btn" data-ambiance="doux">Doux</button>
             <button class="segment-btn" data-ambiance="medieval">Médiéval</button>
           </div>
+        </section>
+
+        <!-- Lissage des contours (forêts, lacs, côtes…) -->
+        <section class="style-section">
+          <h3>Lissage des contours</h3>
+          <div id="lissage-carte" class="segment segment-grille" role="group">
+            <button class="segment-btn" data-lissage="aucun">Aucun</button>
+            <button class="segment-btn" data-lissage="leger">Léger</button>
+            <button class="segment-btn" data-lissage="moyen">Moyen</button>
+            <button class="segment-btn" data-lissage="fort">Fort</button>
+          </div>
+          <p class="style-aide">Adoucit les contours des forêts, des lacs et des côtes pour une carte plus simple à lire.</p>
         </section>
 
         <!-- Noms des souvenirs affichés sur la carte -->

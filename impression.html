@@ -17,8 +17,12 @@
 </head>
 <body class="page-impression">
 
-  <!-- Petit bandeau "génération en cours", jamais imprimé -->
-  <div id="barre-impression" class="barre-impression">Préparation de l'affiche…</div>
+  <!-- Barre de contrôle : préparation, puis cadrage + bouton Imprimer.
+       Jamais imprimée (masquée en @media print). -->
+  <div id="barre-impression" class="barre-impression">
+    <span id="barre-texte">Préparation de l'affiche…</span>
+    <button id="btn-imprimer" class="barre-btn-imprimer" hidden>🖨️ Imprimer</button>
+  </div>
 
   <!-- Carte principale (occupe la première page) -->
   <div id="zone-carte" class="zone-carte-impression">
