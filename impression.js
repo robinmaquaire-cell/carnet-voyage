@@ -197,10 +197,16 @@
     document.getElementById("zone-carte").style.width = largeurMm + "mm";
     document.getElementById("zone-carte").style.height = hauteurMm + "mm";
 
-    // Carte INTERACTIVE : l'utilisateur ajuste le cadrage (zoom, déplacement)
-    // avant de lancer l'impression. Pas d'attribution à l'écran ni sur le
-    // papier (un crédit discret est posé sur la carte à la place).
-    const carte = L.map("map", { zoomControl: true, attributionControl: false });
+    // Carte INTERACTIVE : l'utilisateur ajuste le cadrage (déplacement à la
+    // souris, zoom précis via le champ de la barre ou la molette — zoomSnap:0
+    // autorise les niveaux de zoom intermédiaires). Pas de boutons +/- ni
+    // d'attribution : rien qui puisse finir sur le papier.
+    const carte = L.map("map", {
+      zoomControl: false,
+      attributionControl: false,
+      zoomSnap: 0,
+      zoomDelta: 0.25,
+    });
     cartePrincipale = carte;
     const attentes = [];
 
@@ -324,7 +330,7 @@
     });
 
     carte.invalidateSize();
-    if (points.length) carte.fitBounds(points, { padding: [20, 20] });
+    if (points.length) carte.fitBounds(points, { padding: [20, 20], animate: false });
 
     const titre = (style.titre || "").trim();
     if (titre) {
@@ -614,11 +620,66 @@
     credit.textContent = "Fond de carte © OpenStreetMap";
     document.getElementById("zone-carte").appendChild(credit);
 
-    // Tout est prêt : l'utilisateur ajuste le cadrage de la carte (zoom,
-    // déplacement) puis lance lui-même l'impression. On recale les tuiles
-    // juste avant, pour que le papier corresponde exactement à l'écran.
-    document.getElementById("barre-texte").textContent =
-      "Ajuste le cadrage de la carte (zoom, déplacement), puis :";
+    // Tout est prêt : l'utilisateur ajuste le cadrage (déplacement à la
+    // souris, zoom précis en %, rotation en degrés) puis lance lui-même
+    // l'impression. On recale les tuiles juste avant, pour que le papier
+    // corresponde exactement à l'écran.
+    document.getElementById("barre-texte").textContent = "Cadrage :";
+    document.getElementById("barre-reglages").hidden = false;
+
+    const champZoom = document.getElementById("champ-zoom");
+    const champRotation = document.getElementById("champ-rotation");
+    const rose = document.getElementById("rose-vents");
+
+    // Le zoom au moment du cadrage automatique initial vaut 100 %.
+    const zoomReference = cartePrincipale.getZoom();
+
+    champZoom.addEventListener("change", () => {
+      const pct = parseFloat(String(champZoom.value).replace(",", "."));
+      if (!isFinite(pct) || pct <= 0) return;
+      // 100 % = zoom initial ; doubler le pourcentage double l'échelle.
+      cartePrincipale.setZoom(zoomReference + Math.log2(pct / 100), { animate: false });
+    });
+    // La molette et le champ restent synchronisés (au centième de %).
+    cartePrincipale.on("zoomend", () => {
+      champZoom.value = (Math.pow(2, cartePrincipale.getZoom() - zoomReference) * 100).toFixed(2);
+    });
+
+    function appliquerRotation() {
+      const deg = parseFloat(String(champRotation.value).replace(",", ".")) || 0;
+      const mapEl = document.getElementById("map");
+      const centre = cartePrincipale.getCenter();
+      const zoom = cartePrincipale.getZoom();
+
+      if (deg === 0) {
+        mapEl.style.width = "";
+        mapEl.style.height = "";
+        mapEl.style.marginLeft = "";
+        mapEl.style.marginTop = "";
+        mapEl.style.transform = "";
+        mapEl.style.setProperty("--contre-rotation", "0deg");
+        rose.hidden = true;
+      } else {
+        // Pour tourner sans coins vides : la carte devient un carré plus
+        // grand que la page (sa diagonale), centré puis tourné — la page
+        // (overflow hidden) n'en montre que la découpe.
+        const diagMm = Math.ceil(Math.hypot(largeurUtileMm, hauteurPageMm));
+        mapEl.style.width = diagMm + "mm";
+        mapEl.style.height = diagMm + "mm";
+        mapEl.style.marginLeft = ((largeurUtileMm - diagMm) / 2) + "mm";
+        mapEl.style.marginTop = ((hauteurPageMm - diagMm) / 2) + "mm";
+        mapEl.style.transform = "rotate(" + deg + "deg)";
+        // Les épingles restent droites (contre-rotation autour de leur pointe).
+        mapEl.style.setProperty("--contre-rotation", (-deg) + "deg");
+        // La rose des vents tourne avec la carte : elle pointe le nord réel.
+        rose.hidden = false;
+        rose.style.transform = "rotate(" + deg + "deg)";
+      }
+      cartePrincipale.invalidateSize({ animate: false });
+      cartePrincipale.setView(centre, zoom, { animate: false });
+    }
+    champRotation.addEventListener("change", appliquerRotation);
+
     const btn = document.getElementById("btn-imprimer");
     btn.hidden = false;
     btn.addEventListener("click", () => {
