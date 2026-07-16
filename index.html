@@ -50,57 +50,61 @@
       <button id="btn-menu" class="hamburger-btn" title="Menu" aria-haspopup="true" aria-expanded="false">☰</button>
     </div>
 
-    <!-- Menu déroulant : toutes les actions principales -->
+    <!-- Menu déroulant : toutes les actions, regroupées par thème.
+         Un groupe dont tous les boutons sont cachés disparaît (CSS :has). -->
     <nav id="menu-actions" class="menu-actions" hidden>
-      <!-- Bascule Édition / Visualisation : apparaît une fois une trace chargée -->
-      <button id="btn-mode" class="btn btn-ghost" hidden>👁 Mode visualisation</button>
 
-      <!-- Mes carnets : en créer, en ouvrir un autre, en afficher plusieurs -->
-      <button id="btn-carnets" class="btn btn-ghost">📚 Carnets</button>
+      <div class="menu-groupe">
+        <div class="menu-groupe-titre">Mon carnet</div>
+        <!-- Mes carnets : en créer, en ouvrir un autre, en afficher plusieurs -->
+        <button id="btn-carnets" class="btn btn-ghost">📚 Mes carnets</button>
+        <!-- Bouton qui déclenche le choix d'un fichier .gpx -->
+        <label id="label-gpx" class="btn btn-primary edition-seule">
+          🥾 Charger un GPX
+          <input id="gpx-input" type="file" accept=".gpx,application/gpx+xml" hidden />
+        </label>
+        <!-- Importer un carnet .json déjà sauvegardé (devient un nouveau carnet) -->
+        <label id="label-importer" class="btn btn-ghost edition-seule">
+          📥 Importer un carnet
+          <input id="import-input" type="file" accept=".json,application/json" hidden />
+        </label>
+      </div>
 
-      <!-- Bouton "ajouter des souvenirs" : apparaît une fois une trace chargée -->
-      <button id="btn-ajout-souvenir" class="btn btn-accent edition-seule" hidden>
-        <span class="btn-ico">📍</span> Ajouter des souvenirs
-      </button>
+      <div class="menu-groupe">
+        <div class="menu-groupe-titre">Créer</div>
+        <!-- Bouton "ajouter des souvenirs" : apparaît une fois une trace chargée -->
+        <button id="btn-ajout-souvenir" class="btn btn-accent edition-seule" hidden>
+          <span class="btn-ico">📍</span> Ajouter des souvenirs
+        </button>
+        <!-- Ouvre la réserve de souvenirs (préparés à l'avance, sans position) -->
+        <button id="btn-reserve" class="btn btn-ghost edition-seule" hidden>📦 Réserve</button>
+        <!-- Range les souvenirs dans l'ordre chronologique de leurs dates -->
+        <button id="btn-trier-dates" class="btn btn-ghost edition-seule" hidden>📅 Trier par date</button>
+      </div>
 
-      <!-- Ouvre la réserve de souvenirs (préparés à l'avance, sans position) -->
-      <button id="btn-reserve" class="btn btn-ghost edition-seule" hidden>📦 Réserve</button>
+      <div class="menu-groupe">
+        <div class="menu-groupe-titre">Affichage</div>
+        <!-- Bascule Édition / Visualisation : apparaît une fois une trace chargée -->
+        <button id="btn-mode" class="btn btn-ghost" hidden>👁 Mode visualisation</button>
+        <!-- Filtre les souvenirs par dates et pictogrammes (mode visualisation) -->
+        <button id="btn-filtrer" class="btn btn-ghost visu-seule" hidden>🔎 Filtrer</button>
+        <!-- Ouvre le panneau de personnalisation du style -->
+        <button id="btn-style" class="btn btn-ghost edition-seule" hidden>🎨 Style</button>
+        <!-- Ouvre le panneau d'édition du fond de carte -->
+        <button id="btn-fond" class="btn btn-ghost edition-seule" hidden>🖌️ Fond de carte</button>
+      </div>
 
-      <!-- Range les souvenirs dans l'ordre chronologique de leurs dates -->
-      <button id="btn-trier-dates" class="btn btn-ghost edition-seule" hidden>📅 Trier par date</button>
-
-      <!-- Filtre les souvenirs par dates et pictogrammes (mode visualisation) -->
-      <button id="btn-filtrer" class="btn btn-ghost visu-seule" hidden>🔎 Filtrer</button>
-
-      <!-- Ouvre le panneau de personnalisation du style -->
-      <button id="btn-style" class="btn btn-ghost edition-seule" hidden>🎨 Style</button>
-
-      <!-- Ouvre le panneau d'édition du fond de carte -->
-      <button id="btn-fond" class="btn btn-ghost edition-seule" hidden>🖌️ Fond de carte</button>
-
-      <!-- Exporter le carnet en un fichier .json : apparaît avec une trace -->
-      <button id="btn-exporter" class="btn btn-ghost" hidden>Exporter</button>
-
-      <!-- Exporte une affiche (carte + souvenirs) via l'impression du navigateur -->
-      <button id="btn-export-affiche" class="btn btn-ghost" hidden>🖨️ Affiche PDF</button>
-
-      <!-- Exporte la carte affichée en image PNG -->
-      <button id="btn-export-png" class="btn btn-ghost" hidden>🖼️ Export PNG</button>
-
-      <!-- Réinitialiser : efface la trace et les souvenirs (avec confirmation) -->
-      <button id="btn-reinitialiser" class="btn btn-ghost edition-seule" hidden>Réinitialiser</button>
-
-      <!-- Importer un carnet .json déjà sauvegardé -->
-      <label id="label-importer" class="btn btn-ghost edition-seule">
-        Importer
-        <input id="import-input" type="file" accept=".json,application/json" hidden />
-      </label>
-
-      <!-- Bouton qui déclenche le choix d'un fichier .gpx -->
-      <label id="label-gpx" class="btn btn-primary edition-seule">
-        Charger un GPX
-        <input id="gpx-input" type="file" accept=".gpx,application/gpx+xml" hidden />
-      </label>
+      <div class="menu-groupe">
+        <div class="menu-groupe-titre">Partager</div>
+        <!-- Exporte une affiche (carte + souvenirs) via l'impression du navigateur -->
+        <button id="btn-export-affiche" class="btn btn-ghost" hidden>🖨️ Affiche PDF</button>
+        <!-- Exporte la carte affichée en image PNG -->
+        <button id="btn-export-png" class="btn btn-ghost" hidden>🖼️ Export PNG</button>
+        <!-- Exporter le carnet en un fichier .json : apparaît avec une trace -->
+        <button id="btn-exporter" class="btn btn-ghost" hidden>💾 Sauvegarder (.json)</button>
+        <!-- Réinitialiser : efface la trace et les souvenirs (avec confirmation) -->
+        <button id="btn-reinitialiser" class="btn btn-ghost edition-seule" hidden>🗑 Réinitialiser</button>
+      </div>
     </nav>
   </header>
 
@@ -145,13 +149,28 @@
     <div id="welcome" class="welcome">
       <div class="welcome-card">
         <h1>Transforme ta trace en carnet de voyage</h1>
-        <p>Commence par charger un fichier <strong>.gpx</strong> de ta randonnée ou de ton voyage.</p>
+        <p>Charge un fichier <strong>.gpx</strong> de ta randonnée, pose des souvenirs (photos, récits, audios), personnalise le style de la carte… et partage une belle affiche.</p>
         <label class="btn btn-primary btn-lg">
-          Charger un GPX
+          🥾 Charger un GPX
           <input id="gpx-input-welcome" type="file" accept=".gpx,application/gpx+xml" hidden />
         </label>
-        <p class="welcome-hint">Pas de fichier sous la main ? Utilise <code>exemple-rando.gpx</code> fourni avec l'application.</p>
+        <div class="welcome-secondaires">
+          <button id="btn-exemple" class="btn btn-ghost">✨ Essayer avec l'exemple</button>
+          <button id="btn-carnets-accueil" class="btn btn-ghost">📚 Mes carnets</button>
+        </div>
       </div>
+    </div>
+
+    <!-- Boutons flottants sur la carte -->
+    <div class="flottants">
+      <button id="fab-recentrer" class="flottant flottant-secondaire" title="Recadrer sur le parcours" hidden>🎯</button>
+      <button id="fab-ajout" class="flottant flottant-principal edition-seule" title="Ajouter des souvenirs" hidden>＋</button>
+    </div>
+
+    <!-- Petite pastille d'attente (redessin du fond vectoriel) -->
+    <div id="patience" class="patience" hidden>
+      <span class="patience-rond"></span>
+      <span id="patience-texte">La carte se redessine…</span>
     </div>
 
     <!-- Bandeau d'aide affiché seulement la toute première fois qu'on active le mode ajout -->
@@ -685,6 +704,20 @@
       <div class="modal-actions">
         <button class="btn btn-ghost" id="affiche-annuler">Annuler</button>
         <button class="btn btn-accent" id="affiche-generer">Imprimer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Boîte de dialogue maison (confirmation ou saisie), à la place des
+       fenêtres grises du navigateur -->
+  <div id="modal-dialogue" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <h2 id="dialogue-titre">Confirmer</h2>
+      <p id="dialogue-message" class="modal-sous-titre"></p>
+      <input id="dialogue-champ" type="text" maxlength="80" hidden />
+      <div class="modal-actions">
+        <button id="dialogue-annuler" class="btn btn-ghost">Annuler</button>
+        <button id="dialogue-ok" class="btn btn-accent">OK</button>
       </div>
     </div>
   </div>

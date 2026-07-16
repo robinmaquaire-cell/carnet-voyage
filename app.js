@@ -399,7 +399,12 @@ function importerPolicePerso(fichier) {
 async function supprimerPolicePerso(id) {
   const p = etat.policesPerso.find((x) => x.id === id);
   if (!p) return;
-  if (!window.confirm(`Retirer la police « ${p.nom} » ?`)) return;
+  const ok = await demanderConfirmation(
+    "Retirer cette police ?",
+    `Les textes qui utilisent « ${p.nom} » reviendront à la police système.`,
+    { okLibelle: "Retirer" }
+  );
+  if (!ok) return;
   etat.policesPerso = etat.policesPerso.filter((x) => x.id !== id);
   try { await dbSauverCle("polices", etat.policesPerso.map((x) => ({ ...x }))); } catch (e) {}
   construireListePolices();
@@ -704,6 +709,8 @@ function afficherTrace(trace) {
   document.getElementById("btn-export-affiche").hidden = false;
   document.getElementById("btn-export-png").hidden = false;
   document.getElementById("btn-reinitialiser").hidden = false;
+  document.getElementById("fab-ajout").hidden = false;
+  document.getElementById("fab-recentrer").hidden = false;
 }
 
 /** Met à jour le petit bandeau en bas à gauche. */
@@ -932,6 +939,13 @@ function majBoutonAjout() {
   btn.innerHTML = etat.modeAjout
     ? '<span class="btn-ico">✕</span> Arrêter l’ajout'
     : '<span class="btn-ico">📍</span> Ajouter des souvenirs';
+  // Le bouton flottant « ＋ » reflète le même état.
+  const fab = document.getElementById("fab-ajout");
+  if (fab) {
+    fab.classList.toggle("actif", etat.modeAjout);
+    fab.textContent = etat.modeAjout ? "✕" : "＋";
+    fab.title = etat.modeAjout ? "Arrêter l'ajout" : "Ajouter des souvenirs";
+  }
 }
 
 // Clé localStorage : la bannière d'aide n'est montrée qu'une seule fois.
@@ -1172,11 +1186,13 @@ async function ajouterPictoPerso(fichier) {
  * Retire un pictogramme personnalisé de la bibliothèque. Les souvenirs qui
  * l'utilisaient reviennent à la pastille numérotée par défaut.
  */
-function supprimerPictoPerso(id) {
+async function supprimerPictoPerso(id) {
   const p = etat.pictosPerso.find((x) => x.id === id);
   if (!p) return;
-  const ok = window.confirm(
-    `Retirer le pictogramme « ${p.nom} » ?\n\nLes souvenirs qui l'utilisent reprendront la pastille numérotée.`
+  const ok = await demanderConfirmation(
+    "Retirer ce pictogramme ?",
+    `Les souvenirs qui utilisent « ${p.nom} » reprendront la pastille numérotée.`,
+    { okLibelle: "Retirer" }
   );
   if (!ok) return;
 
@@ -1477,39 +1493,60 @@ function renommerSouvenirActif(nouveauNom) {
 }
 
 /** Supprime le souvenir actif, après confirmation. */
-function supprimerSouvenirActif() {
+async function supprimerSouvenirActif() {
   const s = etat.souvenirActif;
   if (!s) return;
 
   // Cas d'un souvenir en réserve : on le retire simplement de la réserve.
   if (etat.stock.includes(s)) {
-    const okStock = window.confirm(
-      `Retirer « ${s.nom || "sans nom"} » de la réserve ?`
+    const okStock = await demanderConfirmation(
+      "Retirer de la réserve ?",
+      `« ${s.nom || "Sans nom"} » sera retiré de la réserve.`,
+      { okLibelle: "Retirer" }
     );
     if (!okStock) return;
+    const index = etat.stock.indexOf(s);
     etat.stock = etat.stock.filter((x) => x.id !== s.id);
     document.getElementById("panneau").hidden = true;
     document.getElementById("panneau").classList.remove("fiche-stock");
     etat.souvenirActif = null;
     ouvrirReserve();
-    toast("Retiré de la réserve");
     planifierSauvegarde();
+    // On peut se raviser pendant quelques secondes.
+    toastAvecAction("Retiré de la réserve.", "Annuler", () => {
+      etat.stock.splice(Math.min(index, etat.stock.length), 0, s);
+      renderReserve();
+      planifierSauvegarde();
+    });
     return;
   }
 
-  const ok = window.confirm(
-    `Supprimer définitivement le souvenir « ${s.nom || "sans nom"} » ?`
+  const ok = await demanderConfirmation(
+    "Supprimer ce souvenir ?",
+    `« ${s.nom || "Sans nom"} », ses photos et ses audios seront supprimés.`,
+    { okLibelle: "Supprimer" }
   );
   if (!ok) return;
 
+  const index = etat.souvenirs.indexOf(s);
   if (s.marker) etat.grappe.removeLayer(s.marker);
   retirerLabel(s);
   etat.souvenirs = etat.souvenirs.filter((x) => x.id !== s.id);
   renumeroterSouvenirs(); // les numéros suivants se décalent
   majVisibiliteLabels();
   fermerPanneau();
-  toast("Souvenir supprimé");
   planifierSauvegarde();
+  // Bouton « Annuler » : le souvenir revient à sa place, intact.
+  toastAvecAction("Souvenir supprimé.", "Annuler", () => {
+    s.marker = null;
+    s.label = null;
+    etat.souvenirs.splice(Math.min(index, etat.souvenirs.length), 0, s);
+    attacherMarqueur(s);
+    majLabel(s);
+    renumeroterSouvenirs();
+    majVisibiliteLabels();
+    planifierSauvegarde();
+  });
 }
 
 /* =========================================================
@@ -1587,15 +1624,16 @@ function ajouterDate() {
 }
 
 /** Range les souvenirs par date (les souvenirs sans date vont à la fin). */
-function trierSouvenirsParDate() {
+async function trierSouvenirsParDate() {
   const dates = etat.souvenirs.filter((s) => premiereDate(s));
   if (dates.length === 0) {
     toast("Renseigne d'abord des dates dans les fiches des souvenirs.", true);
     return;
   }
-  const ok = window.confirm(
-    "Ranger les souvenirs dans l'ordre de leurs dates ?\n\n" +
-    "Les souvenirs sans date iront à la fin, dans leur ordre actuel."
+  const ok = await demanderConfirmation(
+    "Ranger par date ?",
+    "Les souvenirs seront numérotés dans l'ordre de leurs dates ; ceux sans date iront à la fin.",
+    { okLibelle: "Ranger", danger: false }
   );
   if (!ok) return;
 
@@ -1873,8 +1911,12 @@ function afficherAudios(souvenir) {
       suppr.className = "icone-btn audio-suppr";
       suppr.title = "Supprimer cet enregistrement";
       suppr.textContent = "✕";
-      suppr.addEventListener("click", () => {
-        const ok = window.confirm("Supprimer cet enregistrement audio ?");
+      suppr.addEventListener("click", async () => {
+        const ok = await demanderConfirmation(
+          "Supprimer cet enregistrement ?",
+          a.legende ? `« ${a.legende} » sera supprimé.` : "L'enregistrement audio sera supprimé.",
+          { okLibelle: "Supprimer" }
+        );
         if (!ok) return;
         audios.splice(i, 1);
         afficherAudios(souvenir);
@@ -2563,13 +2605,20 @@ function appliquerSimplificationVecteur() {
   if (!m) return;
   const niveau = lireSimplification(etat.style.vecteur.simplification, 14);
   const arrondi = lireArrondi(etat.style.arrondi);
+  montrerPatience("La carte se redessine…");
   obtenirStyleVectoriel(niveau, arrondi)
     .then((style) => {
       m.setStyle(style);
       // Une fois le nouveau style affiché, on re-applique couleurs et détail.
-      m.once("idle", appliquerStyleVecteur);
+      m.once("idle", () => {
+        appliquerStyleVecteur();
+        cacherPatience();
+      });
     })
-    .catch(() => toast("Impossible de charger ce réglage (pas de connexion ?)", true));
+    .catch(() => {
+      cacherPatience();
+      toast("Impossible de charger ce réglage (pas de connexion ?)", true);
+    });
 }
 
 /** Affiche ou masque le bloc de réglages du fond vectoriel. */
@@ -2798,7 +2847,8 @@ async function importerDecorPerso(fichier) {
 async function supprimerDecorPerso(id) {
   const d = etat.decorsPerso.find((x) => x.id === id);
   if (!d) return;
-  if (!window.confirm(`Retirer « ${d.nom} » ?`)) return;
+  const ok = await demanderConfirmation("Retirer ce décor ?", `« ${d.nom} » sera retiré de la liste.`, { okLibelle: "Retirer" });
+  if (!ok) return;
   etat.decorsPerso = etat.decorsPerso.filter((x) => x.id !== id);
   try { await dbSauverCle("decors", etat.decorsPerso.map((x) => ({ ...x }))); } catch (e) {}
   construireListeDecors();
@@ -3370,7 +3420,7 @@ function majAnnotationActive(champs) {
   planifierSauvegarde();
 }
 
-/** Supprime l'annotation sélectionnée. */
+/** Supprime l'annotation sélectionnée (annulable pendant quelques secondes). */
 function supprimerAnnotationActive() {
   const a = etat.annotationActive;
   if (!a) return;
@@ -3378,8 +3428,13 @@ function supprimerAnnotationActive() {
   etat.annotations = etat.annotations.filter((x) => x !== a);
   etat.annotationActive = null;
   majEditeurAnnotation();
-  toast("Élément supprimé");
   planifierSauvegarde();
+  toastAvecAction("Élément supprimé.", "Annuler", () => {
+    a.marker = null;
+    etat.annotations.push(a);
+    attacherMarqueurAnnotation(a);
+    planifierSauvegarde();
+  });
 }
 
 /* =========================================================
@@ -3495,7 +3550,7 @@ function viderCarnetCourant() {
   // On masque les boutons liés à une trace et on réaffiche l'accueil.
   ["btn-mode", "btn-ajout-souvenir", "btn-reserve", "btn-trier-dates", "btn-filtrer",
    "btn-style", "btn-fond", "btn-exporter", "btn-export-affiche", "btn-export-png",
-   "btn-reinitialiser"]
+   "btn-reinitialiser", "fab-ajout", "fab-recentrer"]
     .forEach((id) => { document.getElementById(id).hidden = true; });
   document.getElementById("trace-info").hidden = true;
   document.getElementById("welcome").hidden = false;
@@ -3524,7 +3579,7 @@ async function ouvrirCarnet(id) {
 
 /** Crée un nouveau carnet vide et l'ouvre. */
 async function nouveauCarnet() {
-  const nom = (window.prompt("Nom du nouveau carnet :", "Nouveau carnet") || "").trim();
+  const nom = await demanderTexte("Nom du nouveau carnet", "Nouveau carnet", "Créer");
   if (!nom) return;
   await sauvegarderMaintenant();
   retirerTousFantomes();
@@ -3540,7 +3595,7 @@ async function nouveauCarnet() {
 
 /** Renomme un carnet. */
 async function renommerCarnet(carnet) {
-  const nom = (window.prompt("Nouveau nom du carnet :", carnet.nom) || "").trim();
+  const nom = await demanderTexte("Renommer le carnet", carnet.nom, "Renommer");
   if (!nom || nom === carnet.nom) return;
   carnet.nom = nom;
   await sauverIndexCarnets();
@@ -3551,11 +3606,11 @@ async function renommerCarnet(carnet) {
 
 /** Supprime un carnet (avec confirmation). */
 async function supprimerCarnet(carnet) {
-  const ok = window.confirm(
-    `Supprimer le carnet « ${carnet.nom} » ?\n\n` +
+  const ok = await demanderConfirmation(
+    `Supprimer « ${carnet.nom} » ?`,
     "Sa trace, ses souvenirs, photos et audios seront définitivement effacés. " +
-    "Pense à l'ouvrir et à « Exporter » d'abord si tu veux le conserver.\n\n" +
-    "Cette action est irréversible."
+    "Pense à l'ouvrir et à « Sauvegarder (.json) » d'abord si tu veux le conserver.",
+    { okLibelle: "Supprimer" }
   );
   if (!ok) return;
 
@@ -4256,11 +4311,11 @@ function exporterAffiche(reglages) {
  * donc précédée d'une confirmation.
  */
 async function reinitialiserCarnet() {
-  const ok = window.confirm(
-    "Réinitialiser la carte ?\n\n" +
-    "Cela efface la trace et TOUS les souvenirs de ce carnet " +
-    "(photos et textes compris). Pense à « Exporter » d'abord si tu " +
-    "veux le conserver.\n\nCette action est irréversible."
+  const ok = await demanderConfirmation(
+    "Réinitialiser ce carnet ?",
+    "La trace et TOUS les souvenirs de ce carnet (photos, audios, textes) seront " +
+    "définitivement effacés. Pense à « Sauvegarder (.json) » d'abord si tu veux le conserver.",
+    { okLibelle: "Tout effacer" }
   );
   if (!ok) return;
 
@@ -4715,6 +4770,123 @@ function toast(message, estErreur = false) {
   }, 3200);
 }
 
+/** Toast avec un bouton d'action (« Annuler » après une suppression, etc.). */
+function toastAvecAction(message, libelle, action, duree = 7000) {
+  const el = document.getElementById("toast");
+  el.className = "toast";
+  el.textContent = message + " ";
+  const bouton = document.createElement("button");
+  bouton.className = "toast-action";
+  bouton.textContent = libelle;
+  bouton.addEventListener("click", () => {
+    el.hidden = true;
+    clearTimeout(toastTimer);
+    action();
+  });
+  el.appendChild(bouton);
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, duree);
+}
+
+/* ---------- Boîte de dialogue maison (confirmation / saisie) ---------- */
+
+// Résolution de la promesse du dialogue en cours (null si aucun).
+let resoudreDialogue = null;
+
+/** Ferme le dialogue et renvoie la réponse à celui qui attendait. */
+function terminerDialogue(reponse) {
+  const resoudre = resoudreDialogue;
+  resoudreDialogue = null;
+  document.getElementById("modal-dialogue").hidden = true;
+  if (resoudre) resoudre(reponse);
+}
+
+/** Ouvre le dialogue (interne aux deux fonctions ci-dessous). */
+function ouvrirDialogue({ titre, message, saisie, valeur, okLibelle, danger }) {
+  return new Promise((resolve) => {
+    if (resoudreDialogue) terminerDialogue(null); // un seul dialogue à la fois
+    resoudreDialogue = resolve;
+    document.getElementById("dialogue-titre").textContent = titre;
+    const msg = document.getElementById("dialogue-message");
+    msg.textContent = message || "";
+    msg.hidden = !message;
+    const champ = document.getElementById("dialogue-champ");
+    champ.hidden = !saisie;
+    champ.value = valeur || "";
+    const ok = document.getElementById("dialogue-ok");
+    ok.textContent = okLibelle || "OK";
+    ok.className = danger ? "btn btn-danger" : "btn btn-accent";
+    document.getElementById("modal-dialogue").hidden = false;
+    if (saisie) { champ.focus(); champ.select(); }
+    else ok.focus();
+  });
+}
+
+/** Demande une confirmation. Renvoie true (OK) ou false (Annuler). */
+async function demanderConfirmation(titre, message, options = {}) {
+  const reponse = await ouvrirDialogue({
+    titre,
+    message,
+    okLibelle: options.okLibelle || "Confirmer",
+    danger: options.danger !== false, // par défaut : action sensible (rouge)
+  });
+  return reponse === true;
+}
+
+/** Demande un texte court (nom de carnet…). Renvoie la saisie, ou null. */
+async function demanderTexte(titre, valeurInitiale, okLibelle) {
+  const reponse = await ouvrirDialogue({
+    titre,
+    saisie: true,
+    valeur: valeurInitiale || "",
+    okLibelle: okLibelle || "Valider",
+    danger: false,
+  });
+  if (reponse !== true) return null;
+  return document.getElementById("dialogue-champ").value.trim() || null;
+}
+
+/* ---------- Pastille d'attente (redessin du fond vectoriel) ---------- */
+
+let patienceTimer = null;
+function montrerPatience(texte) {
+  document.getElementById("patience-texte").textContent = texte || "La carte se redessine…";
+  document.getElementById("patience").hidden = false;
+  // Filet de sécurité : la pastille ne reste jamais plus de 30 s.
+  clearTimeout(patienceTimer);
+  patienceTimer = setTimeout(cacherPatience, 30000);
+}
+function cacherPatience() {
+  clearTimeout(patienceTimer);
+  document.getElementById("patience").hidden = true;
+}
+
+/* ---------- Recadrage sur le parcours ---------- */
+
+/** Recadre la carte pour voir toute la trace et tous les souvenirs. */
+function recadrerSurParcours() {
+  if (!etat.trace) return;
+  const points = [];
+  etat.trace.segments.forEach((seg) => seg.forEach((p) => points.push(p)));
+  etat.souvenirs.forEach((s) => points.push([s.lat, s.lng]));
+  etat.annotations.forEach((a) => points.push([a.lat, a.lng]));
+  if (points.length) etat.carte.fitBounds(points, { padding: [40, 40] });
+}
+
+/** Charge la randonnée d'exemple (depuis l'écran d'accueil). */
+async function chargerExemple() {
+  try {
+    const reponse = await fetch("exemple-rando.gpx");
+    const trace = parseGpx(await reponse.text());
+    afficherTrace(trace);
+    toast(`Trace d'exemple chargée — pose ton premier souvenir avec le bouton ＋`);
+    planifierSauvegarde();
+  } catch (e) {
+    toast("Impossible de charger l'exemple.", true);
+  }
+}
+
 /* ---------- Menu des actions (bouton hamburger) ---------- */
 function ouvrirMenu() {
   document.getElementById("menu-actions").hidden = false;
@@ -4955,6 +5127,28 @@ function init() {
     });
   document.getElementById("filtre-reset")
     .addEventListener("click", reinitialiserFiltre);
+
+  // --- Boutons flottants sur la carte ---
+  document.getElementById("fab-ajout")
+    .addEventListener("click", basculerAjout);
+  document.getElementById("fab-recentrer")
+    .addEventListener("click", recadrerSurParcours);
+
+  // --- Écran d'accueil ---
+  document.getElementById("btn-exemple")
+    .addEventListener("click", chargerExemple);
+  document.getElementById("btn-carnets-accueil")
+    .addEventListener("click", ouvrirPanneauCarnets);
+
+  // --- Boîte de dialogue maison (confirmation / saisie) ---
+  document.getElementById("dialogue-ok")
+    .addEventListener("click", () => terminerDialogue(true));
+  document.getElementById("dialogue-annuler")
+    .addEventListener("click", () => terminerDialogue(false));
+  document.getElementById("dialogue-champ")
+    .addEventListener("keydown", (e) => {
+      if (e.key === "Enter") terminerDialogue(true);
+    });
 
   // --- Mes carnets ---
   document.getElementById("btn-carnets")
@@ -5226,7 +5420,8 @@ function init() {
 
     // 2) Échap : annule l'ajout en cours, sinon ferme ce qui est ouvert.
     if (e.key === "Escape") {
-      if (!document.getElementById("menu-actions").hidden) fermerMenu();
+      if (!document.getElementById("modal-dialogue").hidden) terminerDialogue(false);
+      else if (!document.getElementById("menu-actions").hidden) fermerMenu();
       else if (!document.getElementById("modal-police").hidden) fermerPolicePicker();
       else if (!document.getElementById("modal-decor").hidden) fermerDecorPicker();
       else if (!document.getElementById("modal-generer").hidden) fermerGenerer();

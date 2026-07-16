@@ -111,6 +111,31 @@ body {
 .menu-actions[hidden] { display: none; }
 .menu-actions .btn { width: 100%; justify-content: flex-start; }
 
+/* Groupes thématiques du menu. */
+.menu-groupe {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.menu-groupe + .menu-groupe {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--ligne);
+}
+.menu-groupe-titre {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--encre-douce);
+  padding: 0 4px;
+}
+/* Un groupe dont toutes les actions sont cachées disparaît entièrement
+   (avec son titre) — par exemple "Créer" tant qu'aucune trace n'est chargée,
+   ou les groupes d'édition en mode visualisation. */
+body:not(.mode-visualisation) .menu-groupe:not(:has(.btn:not([hidden]):not(.visu-seule))) { display: none; }
+body.mode-visualisation .menu-groupe:not(:has(.btn:not([hidden]):not(.edition-seule))) { display: none; }
+
 /* ---------- Boutons ---------- */
 .btn {
   display: inline-flex;
@@ -1482,6 +1507,113 @@ body {
   animation: toast-in .2s ease;
 }
 .toast.toast-error { background: #b4452f; }
+/* Bouton d'action dans un toast (« Annuler » après une suppression). */
+.toast-action {
+  margin-left: 10px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 999px;
+  padding: 4px 14px;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.toast-action:hover { background: rgba(255, 255, 255, 0.3); }
+
+/* ---------- Boutons flottants sur la carte ---------- */
+.flottants {
+  position: absolute;
+  right: 14px;
+  bottom: calc(132px + env(safe-area-inset-bottom, 0px));
+  z-index: 820;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.flottant {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  font-size: 26px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 3px 10px rgba(47, 59, 52, 0.35);
+}
+.flottant[hidden] { display: none; }
+.flottant-principal {
+  background: var(--foret);
+  color: #fff;
+  font-weight: 700;
+}
+.flottant-principal:hover { filter: brightness(1.08); }
+.flottant-principal.actif { background: #c0533e; }
+.flottant-secondaire {
+  width: 44px;
+  height: 44px;
+  font-size: 20px;
+  background: #fff;
+  border: 1.5px solid var(--ligne);
+}
+.flottant-secondaire:hover { background: var(--papier); }
+/* En visualisation, seul le recentrage reste (le ＋ est édition seule). */
+body.mode-visualisation .flottants { bottom: calc(132px + env(safe-area-inset-bottom, 0px)); }
+
+/* ---------- Pastille d'attente (redessin du fond) ---------- */
+.patience {
+  position: fixed;
+  left: 50%;
+  top: 66px;
+  transform: translateX(-50%);
+  z-index: 1300;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--carte-bg);
+  border: 1.5px solid var(--ligne);
+  border-radius: 999px;
+  box-shadow: var(--ombre);
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--encre-douce);
+}
+.patience[hidden] { display: none; }
+.patience-rond {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2.5px solid var(--ligne);
+  border-top-color: var(--foret);
+  animation: patience-tourne 0.9s linear infinite;
+}
+@keyframes patience-tourne { to { transform: rotate(360deg); } }
+
+/* ---------- Écran d'accueil : actions secondaires ---------- */
+.welcome-secondaires {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+/* ---------- Boîte de dialogue maison ---------- */
+#dialogue-champ {
+  width: 100%;
+  border: 1.5px solid var(--ligne);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 16px;
+  margin-top: 4px;
+}
+#dialogue-champ[hidden] { display: none; }
+#dialogue-message[hidden] { display: none; }
 @keyframes toast-in {
   from { opacity: 0; transform: translateX(-50%) translateY(8px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -1691,10 +1823,17 @@ body.mode-visualisation #panneau {
     flex-wrap: wrap;
     gap: 6px;
     padding: 8px 10px;
+    padding-top: calc(8px + env(safe-area-inset-top, 0px)); /* encoche iPhone */
   }
   .brand-name { font-size: 15px; }
   .statut-sauvegarde { display: none; } /* le petit "toast" suffit sur mobile */
-  .menu-actions { right: 8px; left: 8px; min-width: 0; }
+  .menu-actions {
+    right: 8px;
+    left: 8px;
+    min-width: 0;
+    max-height: 76vh;   /* le menu (long) défile au doigt */
+    overflow-y: auto;
+  }
 
   /* Panneaux (fiche souvenir, style) en plein écran */
   .panneau { width: 100%; max-width: 100%; }
@@ -1702,10 +1841,31 @@ body.mode-visualisation #panneau {
   /* Boutons un peu plus grands pour le tactile dans les fiches */
   .picto-btn { font-size: 19px; }
   .segment-btn { padding: 11px 8px; }
+  .icone-btn { min-width: 38px; min-height: 38px; font-size: 17px; }
+
+  /* Les champs à 16px : en dessous, iPhone zoome tout seul à la saisie. */
+  .style-input, .style-nombre, .panneau-titre, .fiche-texte,
+  .audio-legende, #dialogue-champ, #champ-nom { font-size: 16px; }
+
+  /* Fenêtres (polices, décors, pictos, dialogues) : jamais plus hautes
+     que l'écran, contenu défilant. */
+  .modal-card { max-height: 88vh; overflow-y: auto; }
+  .police-liste, .decor-liste, #souvenir-pictos { max-height: 46vh; }
+
+  /* Boutons flottants et décor adaptés au petit écran. */
+  .flottants { right: 10px; bottom: calc(110px + env(safe-area-inset-bottom, 0px)); }
+  .rose-carte { width: 64px; height: 64px; right: 14px; bottom: 18px; }
+  .bordure-carte { inset: 6px; }
+  .carte-titre { font-size: 16px; padding: 6px 14px; max-width: 88%; }
+  .patience { top: calc(58px + env(safe-area-inset-top, 0px)); }
 
   .welcome-card { padding: 24px 18px; }
   .welcome-card h1 { font-size: 20px; }
-  .trace-info { max-width: calc(100% - 32px); }
+  .trace-info { max-width: calc(100% - 90px); } /* laisse la place aux flottants */
+
+  /* Les listes de dates/audios restent confortables au doigt. */
+  .date-champ { min-height: 40px; }
+  .audio-ligne audio { height: 42px; }
 }
 
 /* ---------- Export affiche (impression / PDF) ---------- */
