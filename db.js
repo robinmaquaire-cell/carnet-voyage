@@ -1,18 +1,21 @@
 /* =========================================================
-   db.js — Sauvegarde locale du carnet (IndexedDB)
+   db.js — Sauvegarde locale des carnets (IndexedDB)
    ---------------------------------------------------------
    IndexedDB est une petite base de données intégrée au
    navigateur, capable de stocker beaucoup de données (utile
-   pour les photos, trop lourdes pour le stockage classique).
+   pour les photos et les audios, trop lourds pour le
+   stockage classique).
 
-   On garde les choses simples : une seule base, un seul tiroir
-   ("store"), et un seul carnet enregistré sous une clé fixe.
+   Organisation (plusieurs carnets depuis la v2) :
+   - clé "index"        : la liste des carnets {carnets:[{id,nom,visible}], actifId}
+   - clé "carnet-<id>"  : les données complètes d'un carnet
+   - clé "actuel"       : ANCIEN emplacement (un seul carnet) — migré au
+                          premier démarrage puis supprimé.
    ========================================================= */
 
 const DB_NOM = "carnet-voyage";
 const DB_VERSION = 1;
 const STORE = "carnet";
-const CLE = "actuel"; // on ne gère qu'un carnet à la fois
 
 /** Ouvre (ou crée) la base de données. Renvoie une promesse. */
 function ouvrirDb() {
@@ -30,34 +33,34 @@ function ouvrirDb() {
   });
 }
 
-/** Enregistre le carnet (objet simple, sans éléments Leaflet). */
-async function dbSauver(donnees) {
+/** Enregistre des données (objet simple) sous la clé donnée. */
+async function dbSauverCle(cle, donnees) {
   const db = await ouvrirDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
-    tx.objectStore(STORE).put(donnees, CLE);
+    tx.objectStore(STORE).put(donnees, cle);
     tx.oncomplete = () => { db.close(); resolve(true); };
     tx.onerror = () => { db.close(); reject(tx.error); };
   });
 }
 
-/** Charge le carnet enregistré, ou null s'il n'y en a pas. */
-async function dbCharger() {
+/** Charge les données enregistrées sous la clé donnée, ou null. */
+async function dbChargerCle(cle) {
   const db = await ouvrirDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readonly");
-    const req = tx.objectStore(STORE).get(CLE);
+    const req = tx.objectStore(STORE).get(cle);
     req.onsuccess = () => { db.close(); resolve(req.result || null); };
     req.onerror = () => { db.close(); reject(req.error); };
   });
 }
 
-/** Efface le carnet enregistré (utilisé par "Nouveau carnet"). */
-async function dbEffacer() {
+/** Efface les données enregistrées sous la clé donnée. */
+async function dbEffacerCle(cle) {
   const db = await ouvrirDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
-    tx.objectStore(STORE).delete(CLE);
+    tx.objectStore(STORE).delete(cle);
     tx.oncomplete = () => { db.close(); resolve(true); };
     tx.onerror = () => { db.close(); reject(tx.error); };
   });

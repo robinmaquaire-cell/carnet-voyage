@@ -11,11 +11,21 @@ const etat = {
   carte: null,            // l'objet carte Leaflet
   coucheFond: null,       // la couche d'images de fond (tuiles) actuellement affichée
   glMap: null,            // la carte MapLibre sous-jacente (fond vectoriel seulement)
+  grappe: null,           // groupe qui regroupe les épingles trop proches (clustering)
+  filtre: { du: "", au: "", pictos: null }, // filtre visualisation (pictos: null = tous)
+  carnets: [],            // l'index de tous les carnets : [{id, nom, visible}]
+  carnetActifId: 1,       // le carnet ouvert (le seul modifiable)
+  fantomes: new Map(),    // carnets AFFICHÉS en plus en visualisation : id → {couche, souvenirs, trace, pictosPerso}
   coucheTrace: null,      // le groupe de calques qui contient la trace dessinée
   trace: null,            // les données de la trace { name, segments, waypoints }
   souvenirs: [],          // la liste des points souvenirs posés par l'utilisateur
   stock: [],              // souvenirs "en réserve" (sans position), à poser plus tard
   pictosPerso: [],        // pictogrammes personnalisés importés par l'utilisateur
+  policesPerso: [],       // polices importées (partagées entre tous les carnets)
+  decorsPerso: [],        // roses des vents / bordures importées (partagées aussi)
+  annotations: [],        // pictogrammes et textes posés librement sur le fond de carte
+  annotationActive: null, // l'annotation en cours de modification dans l'éditeur
+  modeAnnotation: null,   // "picto" ou "texte" quand on attend un clic pour poser un élément
   modeAjout: false,       // vrai quand on attend un clic sur la carte pour poser un souvenir
   souvenirActif: null,    // le souvenir dont la fiche est ouverte dans le panneau
   style: null,            // les réglages d'apparence (rempli au démarrage)
@@ -38,29 +48,54 @@ let prochainIdSouvenir = 1;
 // Style par défaut d'un carnet (repris du look actuel).
 const STYLE_DEFAUT = {
   titre: "",
+  titrePolice: "titre", // police du cartouche de titre (clé du catalogue)
+  titreFond: "classique", // style du cartouche : classique | parchemin | pirate | sombre
   trace: { couleur: "#c8893d", epaisseur: 4, type: "plein" },
   fond: "topo",
   ambiance: "naturel",
   // Fond personnalisé : adresse de tuiles fournie par l'utilisateur.
   fondPerso: { url: "", maxZoom: 19, attribution: "", subdomains: "abc" },
   // Affichage des noms des souvenirs sur la carte.
+  // taille : "petit" | "moyen" | "grand" OU un nombre de pixels (réglage fin).
   labels: { afficher: false, police: "systeme", couleur: "#2f3b34", taille: "moyen" },
-  // Lissage des contours du fond (forêts, lacs, côtes) : "aucun" | "leger" | "moyen" | "fort".
-  lissage: "aucun",
+  // Arrondi des contours du fond (rayon en pixels, 0 = aucun). Contrairement
+  // à l'ancien "lissage" (un simple flou), c'est un vrai arrondi des angles.
+  arrondi: 0,
+  // Décor posé sur la carte (repris sur l'affiche PDF et l'export en image).
+  decor: { rose: false, bordure: false },
   // Personnalisation du fond VECTORIEL (couleur des zones, police des lieux).
   // null = on garde la couleur d'origine du fond vectoriel.
   vecteur: {
     zones: {
-      eau: null, riviere: null, foret: null, prairie: null, glacier: null,
-      bati: null, route: null, frontiere: null, noms: null, fond: null,
+      eau: null, riviere: null, foret: null, reserve: null, prairie: null,
+      glacier: null, bati: null, route: null, frontiere: null, noms: null, fond: null,
     },
     detail: "complet", // "complet" | "epure" (masque petites routes, bâtiments, POI)
     police: null,
-    preset: null, // null = fond vectoriel standard ; "ancienne" = look parchemin
+    preset: null, // null = fond standard ; sinon une clé de PRESETS_FOND
+    // Couches géographiques affichées (décochées = masquées).
+    couches: { noms: true, frontiere: true, riviere: true, route: true, bati: true },
+    // Simplification GÉOMÉTRIQUE des tracés du fond : zoom maximal des DONNÉES
+    // vectorielles (14 = tout le détail ; plus bas = contours plus généralisés,
+    // comme une carte à petite échelle).
+    simplification: 14,
   },
 };
 
-// Teinte d'ambiance et lissage : filtres CSS combinés en une seule variable
+// Correspondance des anciens réglages de simplification (mots) → zoom des données.
+const SIMPLIFICATION_ANCIENNE = { aucune: 14, legere: 12, moyenne: 10, forte: 8 };
+
+/** Normalise un réglage de simplification (nombre 1–14 ; mots des anciens carnets). */
+function lireSimplification(valeur, defaut) {
+  if (typeof valeur === "string" && SIMPLIFICATION_ANCIENNE[valeur] !== undefined) {
+    return SIMPLIFICATION_ANCIENNE[valeur];
+  }
+  const n = Number(valeur);
+  if (Number.isFinite(n) && n >= 1 && n <= 14) return Math.round(n);
+  return defaut;
+}
+
+// Teinte d'ambiance et arrondi : filtres CSS combinés en une seule variable
 // (--filtre-fond) posée sur la carte, pour que les deux réglages coexistent.
 const AMBIANCE_FILTRES = {
   naturel: "",
@@ -68,17 +103,50 @@ const AMBIANCE_FILTRES = {
   doux: "saturate(0.55) brightness(1.06)",
   medieval: "sepia(0.78) saturate(0.6) contrast(1.08) brightness(1.07)",
 };
-const LISSAGE_FILTRES = {
-  aucun: "",
-  leger: "blur(0.6px)",
-  moyen: "blur(1.3px)",
-  fort: "blur(2.4px)",
-};
 
-// Palette du préréglage "Carte ancienne".
-const PALETTE_ANCIENNE = {
-  fond: "#e9e0c4", eau: "#a7c0c4", foret: "#9fb083", prairie: "#dcd3ab", bati: "#cdb89a",
-  route: "#8a6b45",
+// Préréglages "carte médiévale" du fond vectoriel. Chacun règle d'un coup :
+// la palette des zones, la teinte du grain de parchemin, la couleur des noms
+// de lieux (écrits en italique, halo parchemin) et le décor (rose + bordure).
+const PRESETS_FOND = {
+  ancienne: {
+    label: "Carte ancienne",
+    zones: {
+      fond: "#e9e0c4", eau: "#a7c0c4", foret: "#9fb083", reserve: "#b3ab7d",
+      prairie: "#dcd3ab", bati: "#cdb89a", route: "#8a6b45",
+    },
+    teinte: "ancienne",           // variante du calque parchemin
+    noms: "#5a4632", halo: "#e9e0c4",
+  },
+  clair: {
+    label: "Parchemin clair",
+    zones: {
+      fond: "#f4ecd6", eau: "#ccdad1", riviere: "#b9cec5", foret: "#c4c69c",
+      reserve: "#cfc99e", prairie: "#eae1c0", bati: "#ddcaa9", route: "#a58353",
+      frontiere: "#a4886a", noms: "#6b5233",
+    },
+    teinte: "claire",
+    noms: "#6b5233", halo: "#f4ecd6",
+  },
+  sombre: {
+    label: "Parchemin sombre",
+    zones: {
+      fond: "#d8c49a", eau: "#8fa8a0", riviere: "#7f988f", foret: "#8a9468",
+      reserve: "#9a9a6d", prairie: "#c7b587", bati: "#b39b74", route: "#6f5636",
+      frontiere: "#7c5c3c", noms: "#4a3620",
+    },
+    teinte: "sombre",
+    noms: "#4a3620", halo: "#d8c49a",
+  },
+  pirate: {
+    label: "Carte de pirate",
+    zones: {
+      fond: "#e7d7b1", eau: "#7fa3a3", riviere: "#6f9393", foret: "#9aa878",
+      reserve: "#a8a878", prairie: "#d8c894", bati: "#c0a578", route: "#7a5c3a",
+      frontiere: "#8b3a2e", noms: "#5a3a22",
+    },
+    teinte: "pirate",
+    noms: "#5a3a22", halo: "#e7d7b1",
+  },
 };
 
 // Couleurs suggérées par défaut dans les sélecteurs de zones (non appliquées
@@ -87,6 +155,7 @@ const SUGGESTIONS_ZONE = {
   eau: "#3a7ca5",
   riviere: "#5f93b8",
   foret: "#3f7d52",
+  reserve: "#8fbf8f",
   prairie: "#cfe3b5",
   glacier: "#eef6f9",
   bati: "#d9c9b0",
@@ -102,7 +171,245 @@ const POLICES = {
   serif:   { label: "Serif",   css: 'Georgia, "Times New Roman", serif' },
   etroite: { label: "Étroite", css: '"Arial Narrow", "Roboto Condensed", sans-serif' },
   titre:   { label: "Titre",   css: '"Bricolage Grotesque", "Avenir Next", sans-serif' },
+  // Polices médiévales (chargées depuis Google Fonts dans index.html).
+  medievale: { label: "Médiévale", css: '"UnifrakturMaguntia", "Luminari", fantasy' },
+  pirate:    { label: "Pirate",    css: '"Pirata One", "Luminari", fantasy' },
 };
+
+/* ---------- Grand catalogue de polices (fenêtre « Choisir une police ») ----------
+   Les polices Google sont téléchargées à la demande (à l'ouverture de la
+   fenêtre de choix), pas au démarrage de l'application. */
+const CATALOGUE_POLICES = [
+  // Toujours disponibles (installées sur l'appareil).
+  { cle: "systeme",  label: "Système",  css: POLICES.systeme.css },
+  { cle: "serif",    label: "Serif",    css: POLICES.serif.css },
+  { cle: "etroite",  label: "Étroite",  css: POLICES.etroite.css },
+  { cle: "titre",    label: "Titre",    css: POLICES.titre.css },
+  // Médiéval & fantastique.
+  { cle: "medievale", label: "Unifraktur (gothique)", famille: "UnifrakturMaguntia", css: '"UnifrakturMaguntia", fantasy' },
+  { cle: "pirate",    label: "Pirata One (pirate)",   famille: "Pirata One",         css: '"Pirata One", fantasy' },
+  { cle: "g:medievalsharp", label: "MedievalSharp",   famille: "MedievalSharp",      css: '"MedievalSharp", fantasy' },
+  { cle: "g:uncial",   label: "Uncial Antiqua",       famille: "Uncial Antiqua",     css: '"Uncial Antiqua", fantasy' },
+  { cle: "g:almendra", label: "Almendra",             famille: "Almendra",           css: '"Almendra", serif' },
+  { cle: "g:grenze",   label: "Grenze Gotisch",       famille: "Grenze Gotisch",     css: '"Grenze Gotisch", fantasy' },
+  { cle: "g:metamorphous", label: "Metamorphous",     famille: "Metamorphous",       css: '"Metamorphous", serif' },
+  { cle: "g:imfell",   label: "IM Fell English",      famille: "IM Fell English",    css: '"IM Fell English", serif' },
+  { cle: "g:cinzel",   label: "Cinzel",               famille: "Cinzel",             css: '"Cinzel", serif' },
+  { cle: "g:cinzeldeco", label: "Cinzel Decorative",  famille: "Cinzel Decorative",  css: '"Cinzel Decorative", serif' },
+  // Manuscrites.
+  { cle: "g:caveat",   label: "Caveat (manuscrite)",  famille: "Caveat",             css: '"Caveat", cursive' },
+  { cle: "g:dancing",  label: "Dancing Script",       famille: "Dancing Script",     css: '"Dancing Script", cursive' },
+  { cle: "g:satisfy",  label: "Satisfy",              famille: "Satisfy",            css: '"Satisfy", cursive' },
+  { cle: "g:kalam",    label: "Kalam",                famille: "Kalam",              css: '"Kalam", cursive' },
+  { cle: "g:patrick",  label: "Patrick Hand",         famille: "Patrick Hand",       css: '"Patrick Hand", cursive' },
+  { cle: "g:homemade", label: "Homemade Apple",       famille: "Homemade Apple",     css: '"Homemade Apple", cursive' },
+  { cle: "g:amatic",   label: "Amatic SC",            famille: "Amatic SC",          css: '"Amatic SC", cursive' },
+  { cle: "g:berkshire", label: "Berkshire Swash",     famille: "Berkshire Swash",    css: '"Berkshire Swash", cursive' },
+  // Classiques élégantes.
+  { cle: "g:playfair", label: "Playfair Display",     famille: "Playfair Display",   css: '"Playfair Display", serif' },
+  { cle: "g:garamond", label: "EB Garamond",          famille: "EB Garamond",        css: '"EB Garamond", serif' },
+  { cle: "g:lora",     label: "Lora",                 famille: "Lora",               css: '"Lora", serif' },
+  { cle: "g:merri",    label: "Merriweather",         famille: "Merriweather",       css: '"Merriweather", serif' },
+  { cle: "g:quicksand", label: "Quicksand",           famille: "Quicksand",          css: '"Quicksand", sans-serif' },
+  { cle: "g:nunito",   label: "Nunito",               famille: "Nunito",             css: '"Nunito", sans-serif' },
+];
+
+// La fenêtre d'impression lit le catalogue via window.opener (comme etat).
+window.CATALOGUE_POLICES = CATALOGUE_POLICES;
+
+// Familles Google déjà demandées au navigateur (pour ne pas les recharger).
+const famillesChargees = new Set();
+
+/** Charge une police Google (une balise <link> par famille, à la demande). */
+function chargerPoliceGoogle(famille) {
+  if (!famille || famillesChargees.has(famille)) return;
+  famillesChargees.add(famille);
+  const lien = document.createElement("link");
+  lien.rel = "stylesheet";
+  lien.crossOrigin = "anonymous"; // permet d'incorporer la police à l'export PNG
+  lien.href = "https://fonts.googleapis.com/css2?family=" +
+    encodeURIComponent(famille).replace(/%20/g, "+") + "&display=swap";
+  document.head.appendChild(lien);
+}
+
+/**
+ * Traduit une clé de police enregistrée en famille CSS utilisable :
+ * clé du catalogue, "fontperso:<id>" (police importée), ou repli système.
+ */
+function cssDePolice(cle) {
+  if (typeof cle === "string" && cle.startsWith("fontperso:")) {
+    const id = Number(cle.slice("fontperso:".length));
+    const p = etat.policesPerso.find((x) => x.id === id);
+    return p ? `"PolicePerso${id}", sans-serif` : POLICES.systeme.css;
+  }
+  const entree = CATALOGUE_POLICES.find((p) => p.cle === cle);
+  if (entree) {
+    if (entree.famille) chargerPoliceGoogle(entree.famille);
+    return entree.css;
+  }
+  return (POLICES[cle] || POLICES.systeme).css;
+}
+
+/** Nom lisible d'une clé de police (pour les boutons « Police : … »). */
+function labelDePolice(cle) {
+  if (typeof cle === "string" && cle.startsWith("fontperso:")) {
+    const p = etat.policesPerso.find((x) => x.id === Number(cle.slice("fontperso:".length)));
+    return p ? p.nom : "Police importée";
+  }
+  const entree = CATALOGUE_POLICES.find((p) => p.cle === cle);
+  return entree ? entree.label : "Système";
+}
+
+/** Déclare une police importée auprès du navigateur (API FontFace). */
+function enregistrerPolicePerso(p) {
+  try {
+    const face = new FontFace("PolicePerso" + p.id, `url(${p.data})`);
+    face.load().then((f) => document.fonts.add(f)).catch(() => {});
+  } catch (e) { /* format non géré : la police restera en repli système */ }
+}
+
+/**
+ * Charge au démarrage les ressources PARTAGÉES entre carnets :
+ * polices importées et décors importés (stockés à part dans IndexedDB).
+ */
+async function chargerRessourcesGlobales() {
+  try {
+    const polices = await dbChargerCle("polices");
+    if (Array.isArray(polices)) {
+      etat.policesPerso = polices.filter((p) => p && p.data);
+      etat.policesPerso.forEach(enregistrerPolicePerso);
+    }
+  } catch (e) { /* pas de polices importées */ }
+  try {
+    const decors = await dbChargerCle("decors");
+    if (Array.isArray(decors)) etat.decorsPerso = decors.filter((d) => d && d.src);
+  } catch (e) { /* pas de décors importés */ }
+}
+
+// La fenêtre de choix de police sert plusieurs cibles :
+// "labels" (noms des souvenirs), "annot" (texte libre sélectionné),
+// "titre" (cartouche de titre), "affiche" (texte de l'affiche PDF).
+let ciblePolicePicker = null;
+
+/** Clé de police actuellement utilisée par une cible. */
+function cleActuellePolice(cible) {
+  if (cible === "labels") return etat.style.labels.police;
+  if (cible === "titre") return etat.style.titrePolice || "titre";
+  if (cible === "affiche") return reglagesAffiche.police;
+  if (cible === "annot" && etat.annotationActive) return etat.annotationActive.police;
+  return "systeme";
+}
+
+/** Met à jour un bouton « Police : … » (nom + aperçu dans la police). */
+function majBoutonPolice(cible) {
+  const btn = document.getElementById("police-btn-" + cible);
+  if (!btn) return;
+  const cle = cleActuellePolice(cible);
+  btn.textContent = labelDePolice(cle);
+  btn.style.fontFamily = cssDePolice(cle);
+}
+
+/** Ouvre la fenêtre de choix de police pour la cible donnée. */
+function ouvrirPolicePicker(cible) {
+  ciblePolicePicker = cible;
+  construireListePolices();
+  document.getElementById("modal-police").hidden = false;
+}
+
+function fermerPolicePicker() {
+  document.getElementById("modal-police").hidden = true;
+}
+
+/** (Re)construit la liste des polices (catalogue + importées). */
+function construireListePolices() {
+  const liste = document.getElementById("police-liste");
+  liste.innerHTML = "";
+  const actuelle = cleActuellePolice(ciblePolicePicker);
+
+  const ajouterLigne = (cle, label, css, suppression) => {
+    const ligne = document.createElement("div");
+    ligne.className = "police-ligne";
+    const b = document.createElement("button");
+    b.className = "police-choix" + (cle === actuelle ? " actif" : "");
+    b.style.fontFamily = css;
+    b.textContent = label;
+    b.addEventListener("click", () => choisirPolice(cle));
+    ligne.appendChild(b);
+    if (suppression) {
+      const suppr = document.createElement("button");
+      suppr.className = "icone-btn";
+      suppr.title = "Retirer cette police";
+      suppr.textContent = "✕";
+      suppr.addEventListener("click", suppression);
+      ligne.appendChild(suppr);
+    }
+    liste.appendChild(ligne);
+  };
+
+  CATALOGUE_POLICES.forEach((p) => {
+    if (p.famille) chargerPoliceGoogle(p.famille); // l'aperçu se charge à l'ouverture
+    ajouterLigne(p.cle, p.label, p.css);
+  });
+  etat.policesPerso.forEach((p) => {
+    ajouterLigne("fontperso:" + p.id, p.nom + " (importée)", `"PolicePerso${p.id}", sans-serif`,
+      () => supprimerPolicePerso(p.id));
+  });
+}
+
+/** Applique la police choisie à la cible en cours. */
+function choisirPolice(cle) {
+  if (ciblePolicePicker === "labels") {
+    etat.style.labels.police = cle;
+    appliquerStyleLabels();
+    planifierSauvegarde();
+  } else if (ciblePolicePicker === "titre") {
+    etat.style.titrePolice = cle;
+    appliquerTitre();
+    planifierSauvegarde();
+  } else if (ciblePolicePicker === "affiche") {
+    reglagesAffiche.police = cle;
+  } else if (ciblePolicePicker === "annot") {
+    majAnnotationActive({ police: cle });
+  }
+  majBoutonPolice(ciblePolicePicker);
+  fermerPolicePicker();
+}
+
+/** Importe un fichier de police (.ttf, .otf, .woff, .woff2). */
+function importerPolicePerso(fichier) {
+  if (!fichier) return;
+  const lecteur = new FileReader();
+  lecteur.onerror = () => toast("Lecture du fichier impossible.", true);
+  lecteur.onload = async () => {
+    const p = {
+      id: prochainIdRessource(),
+      nom: (fichier.name || "Police").replace(/\.[^.]+$/, "").slice(0, 40),
+      data: lecteur.result,
+    };
+    etat.policesPerso.push(p);
+    enregistrerPolicePerso(p);
+    try { await dbSauverCle("polices", etat.policesPerso.map((x) => ({ ...x }))); } catch (e) {}
+    construireListePolices();
+    toast(`Police « ${p.nom} » importée`);
+  };
+  lecteur.readAsDataURL(fichier);
+}
+
+/** Retire une police importée (les textes qui l'utilisaient reviennent au système). */
+async function supprimerPolicePerso(id) {
+  const p = etat.policesPerso.find((x) => x.id === id);
+  if (!p) return;
+  if (!window.confirm(`Retirer la police « ${p.nom} » ?`)) return;
+  etat.policesPerso = etat.policesPerso.filter((x) => x.id !== id);
+  try { await dbSauverCle("polices", etat.policesPerso.map((x) => ({ ...x }))); } catch (e) {}
+  construireListePolices();
+}
+
+/** Identifiant unique pour les ressources partagées (polices, décors). */
+function prochainIdRessource() {
+  const tous = [...etat.policesPerso, ...etat.decorsPerso];
+  return tous.reduce((m, x) => Math.max(m, x.id || 0), 0) + 1;
+}
 
 // Tailles proposées pour les noms des souvenirs.
 const TAILLES = { petit: "11px", moyen: "13px", grand: "16px" };
@@ -160,12 +467,79 @@ const PICTOS = [
   { cle: "avion",    glyph: "✈️", label: "Avion" },
   { cle: "village",  glyph: "🏘️", label: "Village" },
   { cle: "ville",    glyph: "🏙️", label: "Ville" },
+  // Symboles médiévaux (pour décorer le fond de carte façon carte ancienne).
+  { cle: "chateau",  glyph: "🏰", label: "Château" },
+  { cle: "epees",    glyph: "⚔️", label: "Épées croisées" },
+  { cle: "dragon",   glyph: "🐉", label: "Dragon" },
+  { cle: "couronne", glyph: "👑", label: "Couronne" },
+  { cle: "bouclier", glyph: "🛡️", label: "Bouclier" },
+  { cle: "arc",      glyph: "🏹", label: "Arc" },
+  { cle: "ancre",    glyph: "⚓", label: "Ancre" },
+  { cle: "voilier",  glyph: "⛵", label: "Voilier" },
+  { cle: "boussole", glyph: "🧭", label: "Boussole" },
+  { cle: "crane",    glyph: "☠️", label: "Tête de mort" },
+  { cle: "parchemin",glyph: "📜", label: "Parchemin" },
+  { cle: "cheval",   glyph: "🐎", label: "Cheval" },
 ];
 const PICTO_GLYPH = Object.fromEntries(PICTOS.map((p) => [p.cle, p.glyph]));
+
+/**
+ * Renvoie le symbole à afficher pour une clé de pictogramme :
+ * - "emoji:🦄" → l'émoji librement choisi par l'utilisateur ;
+ * - une clé prédéfinie ("montagne"…) → son émoji (anciens carnets compris) ;
+ * - sinon rien (pastille numérotée ou image importée).
+ */
+function glyphDePicto(cle) {
+  if (typeof cle === "string" && cle.startsWith("emoji:")) return cle.slice("emoji:".length);
+  return PICTO_GLYPH[cle] || "";
+}
+
+/**
+ * Garde le premier "caractère visuel" d'un texte saisi (un émoji peut être
+ * composé de plusieurs caractères techniques : drapeaux, familles…).
+ */
+function premierEmoji(texte) {
+  const t = (texte || "").trim();
+  if (!t) return "";
+  if (typeof Intl !== "undefined" && Intl.Segmenter) {
+    const seg = new Intl.Segmenter("fr", { granularity: "grapheme" });
+    for (const s of seg.segment(t)) return s.segment;
+  }
+  return t.slice(0, 8); // repli grossier si le navigateur ne sait pas découper
+}
 
 // Taille maximale (en pixels) d'un pictogramme personnalisé importé (petite
 // image, jamais affichée bien grande) ; export en PNG pour garder la transparence.
 const PICTO_TAILLE_MAX = 128;
+
+/* ---------- Annotations : pictogrammes et textes libres sur la carte ---------- */
+
+// Valeurs par défaut d'un nouvel élément posé sur le fond de carte.
+const ANNOT_PICTO_DEFAUT = { picto: "montagne", taille: 36 };
+const ANNOT_TEXTE_DEFAUT = {
+  texte: "Nouveau texte", police: "serif", couleur: "#2f3b34",
+  taille: 18, align: "centre", gras: false, italique: false,
+};
+
+// Alignement (mot français enregistré) → valeur CSS correspondante.
+const ANNOT_ALIGN_CSS = { gauche: "left", centre: "center", droite: "right" };
+
+// Grand catalogue de pictogrammes, classés par thème (fenêtre de choix).
+const PICTO_CATALOGUE = [
+  { titre: "Nature", emojis: ["⛰️","🏔️","🌋","🌲","🌳","🌴","🌵","🌊","🏞️","🏜️","🏝️","❄️","🌙","☀️","⭐","🌈","🍄","🌸"] },
+  { titre: "Animaux", emojis: ["🐺","🦅","🦌","🐻","🐟","🐬","🐴","🐐","🦉","🐍","🐮","🦋"] },
+  { titre: "Lieux", emojis: ["🏰","🏯","⛪","🕌","🗼","🏛️","🏘️","🏙️","⛺","🛖","🗿","💒","🌉","🚇","🏚️","⛲"] },
+  { titre: "Transport", emojis: ["🚶","🥾","🚴","🛶","⛵","⛴️","🚂","✈️","🚗","🛳️","🚠","🚩","🏁"] },
+  { titre: "Activités", emojis: ["🎣","🏊","🧗","🎿","🏕️","🔥","🍺","🍷","🧀","🥖","🍽️","🎶","📷","🛌","💧","🧭"] },
+  { titre: "Médiéval & pirate", emojis: ["⚔️","🗡️","🛡️","🏹","👑","🐉","☠️","🏴‍☠️","⚓","📜","🕯️","🗝️","🪙","🐎"] },
+];
+
+// Bornes de la taille selon le type d'élément (texte en px de police,
+// pictogramme en px de hauteur).
+const ANNOT_TAILLES = {
+  texte: { min: 10, max: 48 },
+  picto: { min: 16, max: 96 },
+};
 
 /**
  * Renvoie le pictogramme personnalisé correspondant à une clé "perso:<id>",
@@ -183,6 +557,7 @@ const FONDS = {
     url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
     options: {
       maxZoom: 17,
+      crossOrigin: "anonymous", // nécessaire pour l'export PNG de la carte
       attribution:
         'Carte : © <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA) · ' +
         'Données : © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
@@ -193,6 +568,7 @@ const FONDS = {
     options: {
       maxZoom: 20,
       subdomains: "abcd",
+      crossOrigin: "anonymous",
       attribution:
         '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · © <a href="https://carto.com/attributions">CARTO</a>',
     },
@@ -202,6 +578,7 @@ const FONDS = {
     options: {
       maxZoom: 20,
       subdomains: "abcd",
+      crossOrigin: "anonymous",
       attribution:
         '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · © <a href="https://carto.com/attributions">CARTO</a>',
     },
@@ -223,10 +600,35 @@ function initCarte() {
   appliquerFond(etat.style.fond);
   appliquerAmbiance(etat.style.ambiance);
 
-  // Clic sur la carte : si on est en "mode ajout", on récupère les
-  // coordonnées du point cliqué et on demande un nom pour le souvenir.
-  // Le mode reste actif après : on peut poser plusieurs souvenirs à la suite.
+  // Groupe des épingles de souvenirs : celles qui se chevauchent sont
+  // regroupées en une pastille avec un compteur (clic = zoom/éventail).
+  // Si le plugin n'a pas pu se charger (hors ligne), on retombe sur un
+  // simple groupe de calques, sans regroupement.
+  if (typeof L.markerClusterGroup === "function") {
+    etat.grappe = L.markerClusterGroup({
+      maxClusterRadius: 44,          // on ne regroupe que ce qui se chevauche
+      showCoverageOnHover: false,
+      spiderfyOnMaxZoom: true,       // au zoom max, le clic ouvre en éventail
+      iconCreateFunction: creerIconeGrappe,
+    });
+    // Quand des grappes se forment/défont, on rafraîchit les étiquettes de noms.
+    etat.grappe.on("animationend spiderfied unspiderfied", majVisibiliteLabels);
+    etat.carte.on("zoomend", majVisibiliteLabels);
+  } else {
+    etat.grappe = L.layerGroup();
+  }
+  etat.grappe.addTo(etat.carte);
+
+  // Clic sur la carte : selon le mode en cours, on pose un élément de
+  // décoration (pictogramme/texte) ou un souvenir.
   etat.carte.on("click", (e) => {
+    // Pose d'un pictogramme ou d'un texte sur le fond de carte.
+    if (etat.modeAnnotation) {
+      creerAnnotation(etat.modeAnnotation, e.latlng);
+      return;
+    }
+    // Pose d'un souvenir. Le mode reste actif après : on peut en poser
+    // plusieurs à la suite.
     if (!etat.modeAjout) return;
     masquerAideAjout(); // l'utilisateur a compris, plus besoin de la bannière
     demanderNomSouvenir(e.latlng);
@@ -294,9 +696,13 @@ function afficherTrace(trace) {
   document.getElementById("btn-mode").hidden = false;
   document.getElementById("btn-ajout-souvenir").hidden = false;
   document.getElementById("btn-reserve").hidden = false;
+  document.getElementById("btn-trier-dates").hidden = false;
+  document.getElementById("btn-filtrer").hidden = false;
   document.getElementById("btn-style").hidden = false;
+  document.getElementById("btn-fond").hidden = false;
   document.getElementById("btn-exporter").hidden = false;
   document.getElementById("btn-export-affiche").hidden = false;
+  document.getElementById("btn-export-png").hidden = false;
   document.getElementById("btn-reinitialiser").hidden = false;
 }
 
@@ -306,7 +712,9 @@ function majBandeauInfos(trace) {
   const nbPoints = trace.segments.reduce((n, s) => n + s.length, 0);
   const km = longueurKm(trace.segments);
 
-  document.getElementById("trace-name").textContent = trace.name;
+  // On affiche le nom du CARNET (pas celui du fichier GPX).
+  const carnet = carnetActif();
+  document.getElementById("trace-name").textContent = (carnet && carnet.nom) || trace.name;
   document.getElementById("trace-stats").textContent =
     `${km.toFixed(1)} km · ${nbPoints} points` +
     (trace.waypoints.length ? ` · ${trace.waypoints.length} repères` : "");
@@ -353,9 +761,15 @@ function chargerFichierGpx(fichier) {
  * tard, varier la couleur ou le pictogramme selon le type de souvenir.
  * @param {number} numero  Le rang du souvenir (1, 2, 3...).
  */
-function creerIconeSouvenir(numero, pictoCle) {
-  const perso = obtenirPictoPerso(pictoCle);
-  const glyph = perso ? "" : PICTO_GLYPH[pictoCle]; // vide pour la pastille par défaut
+function creerIconeSouvenir(numero, pictoCle, pictosPerso) {
+  // Par défaut on cherche dans les pictos du carnet ouvert ; un carnet
+  // affiché "en plus" (visualisation) fournit sa propre bibliothèque.
+  const perso = pictosPerso
+    ? (pictoCle && pictoCle.startsWith("perso:")
+        ? pictosPerso.find((p) => p.id === Number(pictoCle.slice("perso:".length))) || null
+        : null)
+    : obtenirPictoPerso(pictoCle);
+  const glyph = perso ? "" : glyphDePicto(pictoCle); // vide pour la pastille par défaut
 
   // La forme de l'épingle (goutte + pastille blanche).
   const pin = `
@@ -381,6 +795,40 @@ function creerIconeSouvenir(numero, pictoCle) {
   });
 }
 
+/**
+ * Icône d'une grappe : même forme d'épingle que les souvenirs, avec le
+ * nombre de souvenirs regroupés à la place du numéro.
+ */
+function creerIconeGrappe(grappe) {
+  const n = grappe.getChildCount();
+  const pin = `
+    <svg class="pin-souvenir" width="38" height="48" viewBox="0 0 34 44" xmlns="http://www.w3.org/2000/svg">
+      <path d="M17 1 C8 1 1 8 1 17 C1 29 17 43 17 43 C17 43 33 29 33 17 C33 8 26 1 17 1 Z"
+            fill="#b23c28" stroke="#ffffff" stroke-width="2"/>
+      <circle cx="17" cy="16" r="9.5" fill="#ffffff"/>
+    </svg>`;
+  return L.divIcon({
+    className: "",
+    html: `<div class="pin-wrap grappe-wrap">${pin}<span class="grappe-nombre">${n}</span></div>`,
+    iconSize: [38, 48],
+    iconAnchor: [19, 47],
+  });
+}
+
+/**
+ * Affiche ou masque l'étiquette de nom de chaque souvenir selon que son
+ * épingle est visible telle quelle ou fondue dans une grappe.
+ */
+function majVisibiliteLabels() {
+  etat.souvenirs.forEach((s) => {
+    if (!s.label || !s.marker) return;
+    // getVisibleParent : l'épingle elle-même si elle est visible, sinon sa grappe.
+    const visible = !etat.grappe.getVisibleParent ||
+      etat.grappe.getVisibleParent(s.marker) === s.marker;
+    s.label.setOpacity(visible ? 1 : 0);
+  });
+}
+
 /** Rend inoffensif un texte saisi avant de l'insérer dans du HTML. */
 function echapperHtml(texte) {
   const div = document.createElement("div");
@@ -399,8 +847,29 @@ function photoCouverture(souvenir) {
  * Construit le contenu HTML de l'étiquette (tooltip) d'un souvenir :
  * sa photo de couverture (si elle existe) + sa légende, le numéro et le nom.
  */
+/**
+ * Renvoie la liste à laquelle appartient un souvenir : celle du carnet
+ * ouvert, ou celle d'un carnet affiché en plus (visualisation).
+ */
+function listeDuSouvenir(souvenir) {
+  if (etat.souvenirs.includes(souvenir) || etat.stock.includes(souvenir)) return etat.souvenirs;
+  for (const f of etat.fantomes.values()) {
+    if (f.souvenirs.includes(souvenir)) return f.souvenirs;
+  }
+  return etat.souvenirs;
+}
+
+/** Renvoie la trace du carnet auquel appartient un souvenir. */
+function traceDuSouvenir(souvenir) {
+  if (etat.souvenirs.includes(souvenir)) return etat.trace;
+  for (const f of etat.fantomes.values()) {
+    if (f.souvenirs.includes(souvenir)) return f.trace;
+  }
+  return etat.trace;
+}
+
 function libelleTooltip(souvenir) {
-  const numero = etat.souvenirs.indexOf(souvenir) + 1;
+  const numero = listeDuSouvenir(souvenir).indexOf(souvenir) + 1;
   const titre = `${numero || "•"}. ${echapperHtml(souvenir.nom || "Souvenir")}`;
   const couv = photoCouverture(souvenir);
 
@@ -541,6 +1010,8 @@ function ajouterSouvenir(lat, lng, nom, contenu = {}, ouvrirFiche = true) {
     couverture: contenu.couverture !== undefined ? contenu.couverture : null,
     textes: contenu.textes || "",
     pictogramme: contenu.pictogramme || "souvenir",
+    dates: Array.isArray(contenu.dates) ? contenu.dates.slice() : [],
+    audios: Array.isArray(contenu.audios) ? contenu.audios.map((a) => ({ ...a })) : [],
     marker: null,
     label: null,             // étiquette de nom permanente (si activée)
   };
@@ -566,7 +1037,6 @@ function attacherMarqueur(souvenir) {
     icon: creerIconeSouvenir(numero, souvenir.pictogramme),
     draggable: true, // permet de déplacer le souvenir en le glissant sur la carte
   })
-    .addTo(etat.carte)
     .bindTooltip(libelleTooltip(souvenir), {
       direction: "top",
       offset: [0, -38],
@@ -575,9 +1045,13 @@ function attacherMarqueur(souvenir) {
     .on("click", () => ouvrirPanneau(souvenir))
     .on("dragend", (e) => deplacerSouvenirVersPoint(souvenir, e.target.getLatLng()));
 
-  if (etat.mode === "visualisation") marker.dragging.disable();
+  // L'épingle passe par le groupe de regroupement (grappes si chevauchement).
+  etat.grappe.addLayer(marker);
+
+  if (etat.mode === "visualisation" && marker.dragging) marker.dragging.disable();
 
   souvenir.marker = marker;
+  majVisibiliteLabels();
   return marker;
 }
 
@@ -586,6 +1060,13 @@ function deplacerSouvenirVersPoint(souvenir, latlng) {
   souvenir.lat = latlng.lat;
   souvenir.lng = latlng.lng;
   if (souvenir.label) souvenir.label.setLatLng(latlng);
+  // On ressort puis on remet l'épingle dans le groupe : si elle a été posée
+  // sur une autre, elles se regroupent aussitôt.
+  if (souvenir.marker && etat.grappe.hasLayer(souvenir.marker)) {
+    etat.grappe.removeLayer(souvenir.marker);
+    etat.grappe.addLayer(souvenir.marker);
+    majVisibiliteLabels();
+  }
   if (etat.souvenirActif === souvenir) {
     document.getElementById("souvenir-coords").textContent =
       `📍 ${souvenir.lat.toFixed(5)}, ${souvenir.lng.toFixed(5)}`;
@@ -597,21 +1078,54 @@ function deplacerSouvenirVersPoint(souvenir, latlng) {
 
 /* ---------- Pictogramme d'un souvenir ---------- */
 
-/** Crée les boutons du sélecteur de pictogramme (prédéfinis + personnalisés). */
-function construirePictos() {
+/**
+ * Crée les boutons du sélecteur de pictogramme.
+ * Pour un SOUVENIR : seulement la pastille numérotée + les images importées
+ * (la liste d'émojis prédéfinis a été retirée : on tape l'émoji de son choix).
+ * Pour un élément du FOND DE CARTE : la liste de symboles reste proposée.
+ */
+function construirePictos(cible) {
+  cible = cible || ciblePictoPicker || "souvenir";
   const c = document.getElementById("souvenir-pictos");
   c.innerHTML = "";
-  PICTOS.forEach((p) => {
+
+  // Pour un souvenir : la pastille numérotée reste le premier choix.
+  if (cible === "souvenir") {
     const b = document.createElement("button");
     b.className = "picto-btn";
-    b.dataset.picto = p.cle;
-    b.title = p.label;
-    b.innerHTML = p.glyph || "①"; // la pastille par défaut n'a pas de symbole
-    b.addEventListener("click", () => choisirPictogramme(p.cle));
+    b.dataset.picto = "souvenir";
+    b.title = "Pastille numérotée";
+    b.textContent = "①";
+    b.addEventListener("click", () => choisirPictogramme("souvenir"));
     c.appendChild(b);
+  }
+
+  // Le grand catalogue, classé par thème.
+  PICTO_CATALOGUE.forEach((groupe) => {
+    const titre = document.createElement("div");
+    titre.className = "picto-groupe-titre";
+    titre.textContent = groupe.titre;
+    c.appendChild(titre);
+    const grille = document.createElement("div");
+    grille.className = "picto-grille-groupe";
+    groupe.emojis.forEach((emoji) => {
+      const b = document.createElement("button");
+      b.className = "picto-btn";
+      b.dataset.picto = "emoji:" + emoji;
+      b.textContent = emoji;
+      b.addEventListener("click", () => choisirPictogramme("emoji:" + emoji));
+      grille.appendChild(b);
+    });
+    c.appendChild(grille);
   });
 
   // Pictogrammes personnalisés importés par l'utilisateur (avec suppression).
+  if (etat.pictosPerso.length > 0) {
+    const titre = document.createElement("div");
+    titre.className = "picto-groupe-titre";
+    titre.textContent = "Importés";
+    c.appendChild(titre);
+  }
   etat.pictosPerso.forEach((p) => {
     const cle = "perso:" + p.id;
     const b = document.createElement("button");
@@ -682,6 +1196,16 @@ function supprimerPictoPerso(id) {
     majPictoBoutonActuel("souvenir");
   }
 
+  // Les éléments posés sur le fond de carte reprennent le pictogramme par défaut.
+  etat.annotations.forEach((a) => {
+    if (a.type !== "picto" || a.picto !== cle) return;
+    a.picto = ANNOT_PICTO_DEFAUT.picto;
+    redessinerAnnotation(a);
+  });
+  if (etat.annotationActive && etat.annotationActive.picto === cle) {
+    majAnnotPictoBouton(ANNOT_PICTO_DEFAUT.picto);
+  }
+
   construirePictos();
   planifierSauvegarde();
   toast("Pictogramme retiré");
@@ -702,12 +1226,21 @@ function majPictoBoutonActuel(cle) {
     el.innerHTML = `<img src="${perso.src}" alt="">`;
     return;
   }
-  const p = PICTOS.find((x) => x.cle === (cle || "souvenir"));
-  el.textContent = (p && p.glyph) || "①";
+  el.textContent = glyphDePicto(cle) || "①";
 }
 
-/** Change le pictogramme du souvenir affiché et met à jour son épingle. */
+// La fenêtre de choix sert à deux endroits : l'épingle d'un souvenir
+// ("souvenir") ou un pictogramme posé sur le fond de carte ("annotation").
+let ciblePictoPicker = "souvenir";
+
+/** Applique le pictogramme choisi à la cible en cours (souvenir ou annotation). */
 function choisirPictogramme(cle) {
+  if (ciblePictoPicker === "annotation") {
+    majAnnotationActive({ picto: cle });
+    majAnnotPictoBouton(cle);
+    fermerPictoPicker();
+    return;
+  }
   const s = etat.souvenirActif;
   if (!s) return;
   s.pictogramme = cle;
@@ -719,10 +1252,39 @@ function choisirPictogramme(cle) {
   planifierSauvegarde();
 }
 
-/** Ouvre la fenêtre de choix du pictogramme. */
+/** Pré-remplit le champ émoji avec le choix actuel (s'il en est un). */
+function preremplirChampEmoji(cle) {
+  document.getElementById("picto-emoji-input").value =
+    (typeof cle === "string" && cle.startsWith("emoji:")) ? cle.slice("emoji:".length) : "";
+}
+
+/** Valide l'émoji tapé dans le champ et l'applique à la cible en cours. */
+function appliquerEmojiSaisi() {
+  const emoji = premierEmoji(document.getElementById("picto-emoji-input").value);
+  if (!emoji) {
+    toast("Tape d'abord un émoji dans le champ.", true);
+    return;
+  }
+  choisirPictogramme("emoji:" + emoji);
+}
+
+/** Ouvre la fenêtre de choix du pictogramme (pour l'épingle du souvenir). */
 function ouvrirPictoPicker() {
   if (!etat.souvenirActif) return;
+  ciblePictoPicker = "souvenir";
+  construirePictos("souvenir");
   majPictoActif(etat.souvenirActif.pictogramme);
+  preremplirChampEmoji(etat.souvenirActif.pictogramme);
+  document.getElementById("modal-picto").hidden = false;
+}
+
+/** Ouvre la même fenêtre pour un pictogramme posé sur le fond de carte. */
+function ouvrirPictoPickerAnnotation() {
+  if (!etat.annotationActive || etat.annotationActive.type !== "picto") return;
+  ciblePictoPicker = "annotation";
+  construirePictos("annotation");
+  majPictoActif(etat.annotationActive.picto);
+  preremplirChampEmoji(etat.annotationActive.picto);
   document.getElementById("modal-picto").hidden = false;
 }
 
@@ -733,6 +1295,9 @@ function fermerPictoPicker() {
 
 /** Ouvre le panneau latéral sur la fiche d'un souvenir (posé ou en réserve). */
 function ouvrirPanneau(souvenir) {
+  // Si un enregistrement audio est en cours sur une autre fiche, on l'arrête.
+  if (etat.souvenirActif !== souvenir) arreterEnregistrementAudio();
+
   etat.souvenirActif = souvenir;
   const enReserve = etat.stock.includes(souvenir);
 
@@ -747,6 +1312,9 @@ function ouvrirPanneau(souvenir) {
   majPictoActif(souvenir.pictogramme);
   majPictoBoutonActuel(souvenir.pictogramme);
   afficherGalerie(souvenir);
+  afficherDates(souvenir);
+  afficherAudios(souvenir);
+  majBoutonAudio(false);
 
   if (enReserve) {
     // Un souvenir en réserve n'a pas de position : pas de coordonnées,
@@ -764,8 +1332,9 @@ function ouvrirPanneau(souvenir) {
 
 /** Met à jour le compteur "n / total" et l'état (actif/grisé) des flèches. */
 function majNavigation() {
-  const total = etat.souvenirs.length;
-  const index = etat.souvenirs.indexOf(etat.souvenirActif); // 0 si introuvable
+  const liste = listeDuSouvenir(etat.souvenirActif);
+  const total = liste.length;
+  const index = liste.indexOf(etat.souvenirActif); // 0 si introuvable
   document.getElementById("souvenir-compteur").textContent =
     `${index + 1} / ${total}`;
   // On grise la flèche "précédent" sur le premier, "suivant" sur le dernier.
@@ -799,8 +1368,14 @@ function deplacerSouvenir(decalage) {
 
 /** Ouvre le souvenir voisin (décalage -1 = précédent, +1 = suivant). */
 function naviguerSouvenir(decalage) {
-  const index = etat.souvenirs.indexOf(etat.souvenirActif);
-  const cible = etat.souvenirs[index + decalage];
+  const liste = listeDuSouvenir(etat.souvenirActif);
+  let index = liste.indexOf(etat.souvenirActif);
+  let cible = null;
+  // On saute les souvenirs masqués par le filtre (mode visualisation).
+  do {
+    index += decalage;
+    cible = liste[index];
+  } while (cible && cible.masque);
   if (!cible) return;
   ouvrirPanneau(cible);
   // On recentre la carte sur le souvenir visé, sans changer le zoom.
@@ -809,6 +1384,7 @@ function naviguerSouvenir(decalage) {
 
 /** Ferme le panneau latéral. */
 function fermerPanneau() {
+  arreterEnregistrementAudio(); // au cas où un enregistrement tournait encore
   const etaitEnReserve = etat.souvenirActif && etat.stock.includes(etat.souvenirActif);
   document.getElementById("panneau").hidden = true;
   document.getElementById("panneau").classList.remove("fiche-stock");
@@ -853,26 +1429,27 @@ function creerMiniCarte() {
 
 /** Met à jour la mini-carte pour situer le souvenir donné sur le parcours. */
 function majMiniCarte(souvenir) {
-  if (!etat.trace || !souvenir) return;
+  const trace = traceDuSouvenir(souvenir); // celle du carnet du souvenir
+  if (!trace || !souvenir) return;
   if (!etat.miniCarte) creerMiniCarte();
 
   etat.miniCouche.clearLayers();
 
   // Le tracé, en fin pour le contexte.
-  etat.trace.segments.forEach((seg) => {
+  trace.segments.forEach((seg) => {
     L.polyline(seg, { color: "#c8893d", weight: 3, opacity: 0.85 })
       .addTo(etat.miniCouche);
   });
 
   // L'épingle du souvenir (même pictogramme que sur la grande carte).
-  const numero = etat.souvenirs.indexOf(souvenir) + 1;
+  const numero = listeDuSouvenir(souvenir).indexOf(souvenir) + 1;
   L.marker([souvenir.lat, souvenir.lng], {
     icon: creerIconeSouvenir(numero, souvenir.pictogramme),
   }).addTo(etat.miniCouche);
 
   // Tous les points pour cadrer sur l'ensemble du parcours.
   const points = [];
-  etat.trace.segments.forEach((seg) => seg.forEach((p) => points.push(p)));
+  trace.segments.forEach((seg) => seg.forEach((p) => points.push(p)));
   points.push([souvenir.lat, souvenir.lng]);
 
   // La carte vient peut-être d'être affichée : on recalcule sa taille puis on cadre.
@@ -925,13 +1502,391 @@ function supprimerSouvenirActif() {
   );
   if (!ok) return;
 
-  if (s.marker) s.marker.remove();
+  if (s.marker) etat.grappe.removeLayer(s.marker);
   retirerLabel(s);
   etat.souvenirs = etat.souvenirs.filter((x) => x.id !== s.id);
   renumeroterSouvenirs(); // les numéros suivants se décalent
+  majVisibiliteLabels();
   fermerPanneau();
   toast("Souvenir supprimé");
   planifierSauvegarde();
+}
+
+/* =========================================================
+   Dates des souvenirs (une ou plusieurs par point)
+   ========================================================= */
+
+/** Formate une date ISO (2026-07-14) en français court : 14 juil. 2026. */
+function formaterDate(iso) {
+  const d = new Date(iso + "T12:00:00");
+  if (isNaN(d)) return iso;
+  return d.toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
+}
+
+/** La plus ancienne date d'un souvenir, ou "" s'il n'en a pas. */
+function premiereDate(souvenir) {
+  const dates = (souvenir.dates || []).filter(Boolean).slice().sort();
+  return dates[0] || "";
+}
+
+/** (Re)construit la liste des dates dans la fiche du souvenir ouvert. */
+function afficherDates(souvenir) {
+  const liste = document.getElementById("souvenir-dates");
+  const vide = document.getElementById("dates-vide");
+  liste.innerHTML = "";
+  const dates = souvenir.dates || (souvenir.dates = []);
+  vide.hidden = dates.length > 0;
+
+  dates.forEach((d, i) => {
+    const ligne = document.createElement("div");
+    ligne.className = "date-ligne";
+
+    if (etat.mode === "visualisation") {
+      // Lecture seule : la date joliment écrite, sans champ de saisie.
+      const texte = document.createElement("span");
+      texte.className = "date-texte";
+      texte.textContent = "📅 " + (d ? formaterDate(d) : "—");
+      ligne.appendChild(texte);
+    } else {
+      const champ = document.createElement("input");
+      champ.type = "date";
+      champ.className = "style-input date-champ";
+      champ.value = d || "";
+      champ.addEventListener("change", () => {
+        dates[i] = champ.value;
+        planifierSauvegarde();
+      });
+
+      const suppr = document.createElement("button");
+      suppr.className = "icone-btn date-suppr";
+      suppr.title = "Retirer cette date";
+      suppr.textContent = "✕";
+      suppr.addEventListener("click", () => {
+        dates.splice(i, 1);
+        afficherDates(souvenir);
+        planifierSauvegarde();
+      });
+
+      ligne.appendChild(champ);
+      ligne.appendChild(suppr);
+    }
+    liste.appendChild(ligne);
+  });
+}
+
+/** Ajoute une ligne de date vide à la fiche du souvenir ouvert. */
+function ajouterDate() {
+  const s = etat.souvenirActif;
+  if (!s) return;
+  (s.dates = s.dates || []).push("");
+  afficherDates(s);
+  // On met le curseur directement dans le champ tout juste ajouté.
+  const champs = document.querySelectorAll("#souvenir-dates input");
+  const dernier = champs[champs.length - 1];
+  if (dernier) dernier.focus();
+}
+
+/** Range les souvenirs par date (les souvenirs sans date vont à la fin). */
+function trierSouvenirsParDate() {
+  const dates = etat.souvenirs.filter((s) => premiereDate(s));
+  if (dates.length === 0) {
+    toast("Renseigne d'abord des dates dans les fiches des souvenirs.", true);
+    return;
+  }
+  const ok = window.confirm(
+    "Ranger les souvenirs dans l'ordre de leurs dates ?\n\n" +
+    "Les souvenirs sans date iront à la fin, dans leur ordre actuel."
+  );
+  if (!ok) return;
+
+  // Tri stable : à date égale (ou sans date), l'ordre actuel est conservé.
+  etat.souvenirs = etat.souvenirs
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => {
+      const da = premiereDate(a.s), db = premiereDate(b.s);
+      if (!da && !db) return a.i - b.i;
+      if (!da) return 1;
+      if (!db) return -1;
+      return da < db ? -1 : da > db ? 1 : a.i - b.i;
+    })
+    .map((x) => x.s);
+
+  renumeroterSouvenirs();
+  if (etat.souvenirActif) majNavigation();
+  toast("Souvenirs rangés par date");
+  planifierSauvegarde();
+}
+
+/* =========================================================
+   Filtre des souvenirs par dates et pictogrammes (visualisation)
+   ========================================================= */
+
+/** Ouvre le panneau des filtres (mode visualisation seulement). */
+function ouvrirPanneauFiltre() {
+  if (etat.mode !== "visualisation") return;
+  fermerPanneauCarnets();
+  construireFiltrePictos();
+  document.getElementById("filtre-du").value = etat.filtre.du || "";
+  document.getElementById("filtre-au").value = etat.filtre.au || "";
+  majBilanFiltre();
+  document.getElementById("panneau-filtre").hidden = false;
+}
+
+/** Ferme le panneau des filtres (le filtre reste appliqué). */
+function fermerPanneauFiltre() {
+  document.getElementById("panneau-filtre").hidden = true;
+}
+
+/** Les pictogrammes réellement utilisés par les souvenirs, avec leur nombre. */
+function pictosUtilises() {
+  const vus = new Map();
+  etat.souvenirs.forEach((s) => {
+    const cle = s.pictogramme || "souvenir";
+    vus.set(cle, (vus.get(cle) || 0) + 1);
+  });
+  return vus;
+}
+
+/** (Re)construit les cases à cocher des pictogrammes utilisés. */
+function construireFiltrePictos() {
+  const c = document.getElementById("filtre-pictos");
+  c.innerHTML = "";
+  const vus = pictosUtilises();
+
+  vus.forEach((nb, cle) => {
+    const ligne = document.createElement("label");
+    ligne.className = "filtre-picto";
+
+    const caseACocher = document.createElement("input");
+    caseACocher.type = "checkbox";
+    caseACocher.dataset.picto = cle;
+    caseACocher.checked = !etat.filtre.pictos || etat.filtre.pictos.has(cle);
+    caseACocher.addEventListener("change", () => {
+      // On reconstitue l'ensemble des pictogrammes cochés.
+      const coches = new Set();
+      c.querySelectorAll("input[type=checkbox]").forEach((inp) => {
+        if (inp.checked) coches.add(inp.dataset.picto);
+      });
+      etat.filtre.pictos = coches.size === vus.size ? null : coches;
+      appliquerFiltreSouvenirs();
+    });
+
+    const glyphe = document.createElement("span");
+    glyphe.className = "filtre-picto-glyphe";
+    const perso = obtenirPictoPerso(cle);
+    if (perso) glyphe.innerHTML = `<img src="${perso.src}" alt="">`;
+    else glyphe.textContent = glyphDePicto(cle) || "①";
+
+    const compteur = document.createElement("span");
+    compteur.className = "filtre-picto-nb";
+    compteur.textContent = nb > 1 ? `× ${nb}` : "";
+
+    ligne.append(caseACocher, glyphe, compteur);
+    c.appendChild(ligne);
+  });
+}
+
+/** Un souvenir passe-t-il le filtre courant ? */
+function souvenirPasseFiltre(s) {
+  const f = etat.filtre;
+  if (f.pictos && !f.pictos.has(s.pictogramme || "souvenir")) return false;
+  if (f.du || f.au) {
+    const dates = (s.dates || []).filter(Boolean);
+    if (dates.length === 0) return false; // période demandée → sans date : masqué
+    const dansPeriode = dates.some((d) => (!f.du || d >= f.du) && (!f.au || d <= f.au));
+    if (!dansPeriode) return false;
+  }
+  return true;
+}
+
+/** Applique le filtre : masque/réaffiche épingles et étiquettes. */
+function appliquerFiltreSouvenirs() {
+  etat.souvenirs.forEach((s) => {
+    s.masque = etat.mode === "visualisation" && !souvenirPasseFiltre(s);
+    if (!s.marker) return;
+    const surCarte = etat.grappe.hasLayer(s.marker);
+    if (s.masque && surCarte) {
+      etat.grappe.removeLayer(s.marker);
+      retirerLabel(s);
+    } else if (!s.masque && !surCarte) {
+      etat.grappe.addLayer(s.marker);
+      majLabel(s);
+    }
+  });
+  majVisibiliteLabels();
+  majBilanFiltre();
+}
+
+/** Petit bilan « x souvenirs affichés sur y » dans le panneau des filtres. */
+function majBilanFiltre() {
+  const el = document.getElementById("filtre-bilan");
+  const total = etat.souvenirs.length;
+  const visibles = etat.souvenirs.filter((s) => !s.masque).length;
+  el.textContent = visibles === total
+    ? `Les ${total} souvenirs sont affichés.`
+    : `${visibles} souvenir${visibles > 1 ? "s" : ""} affiché${visibles > 1 ? "s" : ""} sur ${total}.`;
+}
+
+/** Efface le filtre et réaffiche tous les souvenirs. */
+function reinitialiserFiltre() {
+  etat.filtre = { du: "", au: "", pictos: null };
+  document.getElementById("filtre-du").value = "";
+  document.getElementById("filtre-au").value = "";
+  construireFiltrePictos();
+  appliquerFiltreSouvenirs();
+}
+
+/* =========================================================
+   Enregistrements audio des souvenirs (façon mini podcast)
+   ========================================================= */
+
+let enregistreurAudio = null; // le MediaRecorder en cours, ou null
+let fluxMicro = null;         // le flux du micro, pour bien l'éteindre après
+let morceauxAudio = [];       // les bouts d'enregistrement reçus au fil de l'eau
+let timerAudio = null;        // met à jour la durée affichée sur le bouton
+let debutAudio = 0;
+
+/** 75 secondes → "1:15". */
+function formaterDuree(sec) {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/** Met le bouton d'enregistrement dans le bon état (repos / en cours). */
+function majBoutonAudio(enCours) {
+  const btn = document.getElementById("audio-enregistrer");
+  btn.classList.toggle("enregistre", !!enCours);
+  btn.textContent = enCours
+    ? `⏹ Arrêter · ${formaterDuree((Date.now() - debutAudio) / 1000)}`
+    : "🎙️ Enregistrer";
+}
+
+/** Démarre ou arrête l'enregistrement (bouton de la fiche). */
+async function basculerEnregistrementAudio() {
+  if (enregistreurAudio) {
+    arreterEnregistrementAudio();
+    return;
+  }
+  const souvenir = etat.souvenirActif;
+  if (!souvenir) return;
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    toast("Ce navigateur ne sait pas enregistrer de l'audio.", true);
+    return;
+  }
+
+  try {
+    fluxMicro = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    toast("Micro refusé. Autorise le micro dans ton navigateur pour enregistrer.", true);
+    return;
+  }
+
+  morceauxAudio = [];
+  enregistreurAudio = new MediaRecorder(fluxMicro);
+  enregistreurAudio.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) morceauxAudio.push(e.data);
+  };
+  enregistreurAudio.onstop = () => {
+    const type = enregistreurAudio.mimeType || "audio/webm";
+    const duree = Math.round((Date.now() - debutAudio) / 1000);
+    const blob = new Blob(morceauxAudio, { type });
+
+    // On éteint le micro et on remet tout au repos.
+    fluxMicro.getTracks().forEach((t) => t.stop());
+    fluxMicro = null;
+    enregistreurAudio = null;
+    morceauxAudio = [];
+    clearInterval(timerAudio);
+    majBoutonAudio(false);
+
+    // Le son devient un texte (data URL), stockable dans le carnet comme les photos.
+    const lecteur = new FileReader();
+    lecteur.onload = () => {
+      (souvenir.audios = souvenir.audios || []).push({
+        src: lecteur.result,
+        legende: "",
+        duree,
+      });
+      if (etat.souvenirActif === souvenir) afficherAudios(souvenir);
+      toast("Enregistrement ajouté");
+      planifierSauvegarde();
+    };
+    lecteur.onerror = () => toast("Impossible d'enregistrer ce son.", true);
+    lecteur.readAsDataURL(blob);
+  };
+
+  enregistreurAudio.start();
+  debutAudio = Date.now();
+  majBoutonAudio(true);
+  timerAudio = setInterval(() => majBoutonAudio(true), 500);
+}
+
+/** Arrête proprement l'enregistrement en cours (s'il y en a un). */
+function arreterEnregistrementAudio() {
+  if (enregistreurAudio && enregistreurAudio.state !== "inactive") {
+    enregistreurAudio.stop(); // le reste se fait dans onstop
+  }
+}
+
+/** (Re)construit la liste des enregistrements dans la fiche. */
+function afficherAudios(souvenir) {
+  const liste = document.getElementById("souvenir-audios");
+  const vide = document.getElementById("audios-vide");
+  liste.innerHTML = "";
+  const audios = souvenir.audios || (souvenir.audios = []);
+  vide.hidden = audios.length > 0;
+
+  audios.forEach((a, i) => {
+    const ligne = document.createElement("div");
+    ligne.className = "audio-ligne";
+
+    const lecteur = document.createElement("audio");
+    lecteur.controls = true;
+    lecteur.preload = "metadata";
+    lecteur.src = a.src;
+    ligne.appendChild(lecteur);
+
+    if (etat.mode === "visualisation") {
+      if (a.legende) {
+        const texte = document.createElement("p");
+        texte.className = "audio-legende-texte";
+        texte.textContent = a.legende;
+        ligne.appendChild(texte);
+      }
+    } else {
+      const bas = document.createElement("div");
+      bas.className = "audio-ligne-bas";
+
+      const legende = document.createElement("input");
+      legende.type = "text";
+      legende.className = "style-input audio-legende";
+      legende.placeholder = "Légende de cet enregistrement…";
+      legende.maxLength = 140;
+      legende.value = a.legende || "";
+      legende.addEventListener("input", () => {
+        a.legende = legende.value;
+        planifierSauvegarde();
+      });
+
+      const suppr = document.createElement("button");
+      suppr.className = "icone-btn audio-suppr";
+      suppr.title = "Supprimer cet enregistrement";
+      suppr.textContent = "✕";
+      suppr.addEventListener("click", () => {
+        const ok = window.confirm("Supprimer cet enregistrement audio ?");
+        if (!ok) return;
+        audios.splice(i, 1);
+        afficherAudios(souvenir);
+        planifierSauvegarde();
+      });
+
+      bas.appendChild(legende);
+      bas.appendChild(suppr);
+      ligne.appendChild(bas);
+    }
+    liste.appendChild(ligne);
+  });
 }
 
 /* =========================================================
@@ -1196,8 +2151,14 @@ function appliquerFond(cle) {
       preserveDrawingBuffer: true,
     }).addTo(etat.carte);
     etat.glMap = etat.coucheFond.getMaplibreMap();
-    // Une fois le style chargé, on applique nos personnalisations enregistrées.
-    surStyleVecteurPret(appliquerStyleVecteur);
+    // Une fois le style chargé, on applique nos personnalisations enregistrées
+    // (en passant par la version simplifiée du style si elle est demandée).
+    surStyleVecteurPret(() => {
+      const niveau = lireSimplification(etat.style.vecteur.simplification, 14);
+      const arrondi = lireArrondi(etat.style.arrondi);
+      if (niveau < 14 || arrondi > 0) appliquerSimplificationVecteur();
+      else appliquerStyleVecteur();
+    });
     return;
   }
   etat.glMap = null;
@@ -1211,6 +2172,7 @@ function appliquerFond(cle) {
     url = fp.url;
     options = {
       maxZoom: fp.maxZoom || 19,
+      crossOrigin: "anonymous", // nécessaire pour l'export PNG
       attribution: fp.attribution || "Fond personnalisé",
     };
     if (url.includes("{s}")) options.subdomains = fp.subdomains || "abc";
@@ -1250,7 +2212,10 @@ function classeZone(couche) {
   if (sl === "waterway" || /waterway|stream|canal/.test(id)) return "riviere";
   if (/ice|glacier|snow/.test(id)) return "glacier";
   if (sl === "water" || /water|ocean|sea|lake|river|bay/.test(id)) return "eau";
-  if (/wood|forest|park|golf|cemetery|orchard|vineyard/.test(id)) return "foret";
+  // Parcs nationaux et réserves naturelles : leur propre catégorie,
+  // testée AVANT la forêt (les identifiants contiennent souvent "park").
+  if (sl === "park" || /national_park|nature_reserve|protected|park/.test(id)) return "reserve";
+  if (/wood|forest|golf|cemetery|orchard|vineyard/.test(id)) return "foret";
   if (/grass|meadow|scrub|heath|wetland|farmland|landcover|landuse/.test(id)) return "prairie";
   if (sl === "building" || /building/.test(id)) return "bati";
   if (sl === "boundary" || /boundary|admin/.test(id)) return "frontiere";
@@ -1298,20 +2263,38 @@ function appliquerNiveauDetail(epure) {
 
 /** Applique toutes les personnalisations vectorielles enregistrées. */
 function appliquerStyleVecteur() {
-  const ancienne = etat.style.vecteur.preset === "ancienne";
-  majClasseAncienne(etat.style.fond === "vectoriel" && ancienne); // grain de papier
+  const preset = PRESETS_FOND[etat.style.vecteur.preset] || null;
+  majClasseAncienne(etat.style.fond === "vectoriel" && !!preset); // grain de papier
   if (!etat.glMap || !etat.glMap.isStyleLoaded()) return;
   const z = etat.style.vecteur.zones;
   Object.keys(z).forEach((cat) => {
     if (z[cat]) appliquerCouleurZone(cat, z[cat]);
   });
-  appliquerNiveauDetail(etat.style.vecteur.detail === "epure" || ancienne);
-  if (ancienne) appliquerPresetAncienneAuStyle();
+  appliquerNiveauDetail(etat.style.vecteur.detail === "epure" || !!preset);
+  if (preset) styliserLabelsPreset(preset);
+  appliquerCouchesVisibles(); // les couches décochées passent en dernier
 }
 
-/** Active/désactive le grain de papier (calque parchemin) sur la carte. */
+/** Active/désactive le grain de papier (calque parchemin) et sa teinte. */
 function majClasseAncienne(on) {
   document.getElementById("map").classList.toggle("vecteur-ancienne", !!on);
+  const parchemin = document.getElementById("parchemin");
+  parchemin.classList.remove("teinte-ancienne", "teinte-claire", "teinte-sombre", "teinte-pirate");
+  const preset = PRESETS_FOND[etat.style.vecteur.preset];
+  if (on && preset) parchemin.classList.add("teinte-" + preset.teinte);
+}
+
+/** Masque les couches géographiques décochées (noms, frontières, rivières…). */
+function appliquerCouchesVisibles() {
+  const m = etat.glMap;
+  if (!m) return;
+  const couches = etat.style.vecteur.couches || {};
+  m.getStyle().layers.forEach((l) => {
+    let cat = classeZone(l);
+    if (l.type === "symbol") cat = "noms"; // tous les textes = "noms de lieux"
+    if (!cat || couches[cat] !== false) return;
+    try { m.setLayoutProperty(l.id, "visibility", "none"); } catch (e) {}
+  });
 }
 
 /** Décide si une couche du fond vectoriel relève du "détail" à masquer. */
@@ -1338,31 +2321,37 @@ function appliquerMailleGrossiere() {
   });
 }
 
-/** Met les noms de lieux en italique, encre brune sur halo parchemin. */
-function styliserLabelsAncienne() {
+/** Met les noms de lieux en italique, aux couleurs du préréglage choisi. */
+function styliserLabelsPreset(preset) {
   const m = etat.glMap;
   if (!m) return;
+  appliquerMailleGrossiere();
   m.getStyle().layers.forEach((l) => {
     if (l.type !== "symbol" || !(l.layout && l.layout["text-field"])) return;
     try { if (m.getLayoutProperty(l.id, "visibility") === "none") return; } catch (e) {}
     try { m.setLayoutProperty(l.id, "text-font", ["Noto Sans Italic"]); } catch (e) {}
-    try { m.setPaintProperty(l.id, "text-color", "#5a4632"); } catch (e) {}
-    try { m.setPaintProperty(l.id, "text-halo-color", "#e9e0c4"); } catch (e) {}
+    try { m.setPaintProperty(l.id, "text-color", preset.noms); } catch (e) {}
+    try { m.setPaintProperty(l.id, "text-halo-color", preset.halo); } catch (e) {}
     try { m.setPaintProperty(l.id, "text-halo-width", 1.4); } catch (e) {}
   });
 }
 
-/** Applique les retouches "ancienne" au style vectoriel déjà chargé. */
-function appliquerPresetAncienneAuStyle() {
-  appliquerMailleGrossiere();
-  styliserLabelsAncienne();
-}
-
-/** Active le préréglage "Carte ancienne" (palette + grosse maille + papier). */
-function appliquerPresetAncienne() {
+/** Active un préréglage médiéval (palette + grosse maille + papier + décor). */
+function appliquerPresetFond(cle) {
+  const preset = PRESETS_FOND[cle];
+  if (!preset) return;
   const v = etat.style.vecteur;
-  v.preset = "ancienne";
-  v.zones = { ...PALETTE_ANCIENNE };
+  v.preset = cle;
+  // On repart des couleurs du préréglage (les zones absentes restent d'origine).
+  Object.keys(v.zones).forEach((k) => { v.zones[k] = preset.zones[k] || null; });
+
+  // Le décor "carte ancienne" complet : rose des vents + bordure
+  // (on garde les variantes déjà choisies par l'utilisateur, s'il y en a).
+  etat.style.decor = {
+    rose: etat.style.decor.rose || "ancienne",
+    bordure: etat.style.decor.bordure || "double",
+  };
+  appliquerDecor();
 
   // On s'assure que le fond vectoriel est actif.
   if (etat.style.fond !== "vectoriel") {
@@ -1370,9 +2359,13 @@ function appliquerPresetAncienne() {
     majSegment("fond-carte", "fond", "vectoriel");
     basculerBlocPerso(false);
     basculerBlocVecteur(true);
+    document.getElementById("fond-aide-vectoriel").hidden = true;
     appliquerFond("vectoriel");
+  } else {
+    // Le style vectoriel est peut-être personnalisé : on le recharge proprement
+    // (au niveau de simplification/arrondi en cours) puis on repeint tout.
+    appliquerSimplificationVecteur();
   }
-  surStyleVecteurPret(appliquerStyleVecteur);
   majClasseAncienne(true);
   synchroniserControlesStyle();
   planifierSauvegarde();
@@ -1391,12 +2384,192 @@ function reinitialiserZonesVecteur() {
   Object.keys(z).forEach((k) => (z[k] = null));
   etat.style.vecteur.preset = null;     // on quitte aussi le préréglage "ancienne"
   majClasseAncienne(false);
-  if (etat.glMap) {
-    etat.glMap.setStyle(STYLE_VECTORIEL_URL);
-    etat.glMap.once("idle", appliquerStyleVecteur);
-  }
+  // On recharge le style de base (au niveau de simplification en cours).
+  appliquerSimplificationVecteur();
   synchroniserControlesStyle();
   planifierSauvegarde();
+}
+
+/* ---------- Simplification et arrondi des tracés du fond vectoriel ----------
+   Simplification : on plafonne le zoom des DONNÉES (tuiles moins détaillées).
+   Arrondi : on LISSE la géométrie des tuiles elles-mêmes (algorithme de
+   Chaikin) via un "protocole" MapLibre qui intercepte chaque tuile, la
+   décode, arrondit ses lignes et polygones, puis la ré-encode. Résultat :
+   des formes vraiment arrondies, parfaitement nettes (aucun flou). */
+
+// Le style vectoriel d'origine (JSON), téléchargé une seule fois : on en a
+// besoin pour fabriquer une variante "simplifiée".
+let styleVectorielBase = null;
+
+// Les adresses de tuiles (TileJSON) de chaque source, résolues une seule fois.
+const tileJsonCache = new Map();
+
+// Bibliothèques de décodage/encodage des tuiles vectorielles (chargées à la
+// demande depuis un CDN ; si indisponibles, l'arrondi est ignoré sans casser).
+let modulesMvt = null;
+async function chargerModulesMvt() {
+  if (modulesMvt) return modulesMvt;
+  const [vt, pbf, vtpbf] = await Promise.all([
+    import("https://esm.sh/@mapbox/vector-tile@1.3.1"),
+    import("https://esm.sh/pbf@3.2.1"),
+    import("https://esm.sh/vt-pbf@3.1.3"),
+  ]);
+  modulesMvt = {
+    VectorTile: vt.VectorTile,
+    Pbf: pbf.default || pbf,
+    vtpbf: vtpbf.default || vtpbf,
+  };
+  return modulesMvt;
+}
+
+/**
+ * Arrondit une ligne brisée par l'algorithme de Chaikin : chaque passe
+ * remplace chaque angle par deux points aux 1/4 et 3/4 des segments,
+ * ce qui adoucit les angles tout en suivant la forme d'origine.
+ */
+function lisserLigneChaikin(points, passes, fermee) {
+  for (let p = 0; p < passes; p++) {
+    const n = points.length;
+    if (n < (fermee ? 3 : 3)) break;
+    const res = [];
+    if (!fermee) res.push(points[0]); // on garde les extrémités des lignes
+    const fin = fermee ? n : n - 1;
+    for (let i = 0; i < fin; i++) {
+      const a = points[i], b = points[(i + 1) % n];
+      res.push({ x: 0.75 * a.x + 0.25 * b.x, y: 0.75 * a.y + 0.25 * b.y });
+      res.push({ x: 0.25 * a.x + 0.75 * b.x, y: 0.25 * a.y + 0.75 * b.y });
+    }
+    if (!fermee) res.push(points[n - 1]);
+    points = res;
+  }
+  return points;
+}
+
+/** Décode une tuile vectorielle, arrondit ses tracés, la ré-encode. */
+function tuileArrondie(brut, passes) {
+  const { VectorTile, Pbf, vtpbf } = modulesMvt;
+  const tuile = new VectorTile(new Pbf(new Uint8Array(brut)));
+  const couches = {};
+
+  Object.keys(tuile.layers).forEach((nom) => {
+    const src = tuile.layers[nom];
+    couches[nom] = {
+      version: src.version || 2,
+      name: nom,
+      extent: src.extent,
+      length: src.length,
+      feature: (i) => {
+        const f = src.feature(i);
+        const geometrie = f.loadGeometry().map((ligne) => {
+          if (f.type === 1) return ligne; // points : rien à arrondir
+          if (f.type === 3) {
+            // Anneau de polygone : fermé (dernier point = premier).
+            const ouvert = ligne.slice(0, ligne.length - 1);
+            const lisse = lisserLigneChaikin(ouvert, passes, true);
+            lisse.push({ x: lisse[0].x, y: lisse[0].y }); // on referme
+            return lisse;
+          }
+          return lisserLigneChaikin(ligne, passes, false); // ligne (route…)
+        });
+        return {
+          id: f.id,
+          type: f.type,
+          properties: f.properties,
+          loadGeometry: () => geometrie,
+        };
+      },
+    };
+  });
+
+  return vtpbf.fromVectorTileJs({ layers: couches });
+}
+
+// Enregistre le protocole "lisse://" auprès de MapLibre (une seule fois).
+// Adresse des tuiles : lisse://<passes>/<adresse https sans le préfixe>.
+let protocoleLisseEnregistre = false;
+function enregistrerProtocoleLisse() {
+  if (protocoleLisseEnregistre || typeof maplibregl === "undefined" || !maplibregl.addProtocol) return;
+  protocoleLisseEnregistre = true;
+  maplibregl.addProtocol("lisse", async (params) => {
+    const m = params.url.match(/^lisse:\/\/(\d+)\/(.+)$/);
+    if (!m) throw new Error("adresse de tuile invalide");
+    const passes = Number(m[1]);
+    const reponse = await fetch("https://" + m[2]);
+    if (!reponse.ok) throw new Error("tuile indisponible");
+    const brut = await reponse.arrayBuffer();
+    try {
+      await chargerModulesMvt();
+      const d = tuileArrondie(brut, passes);
+      // MapLibre attend un ArrayBuffer : on extrait celui du tampon encodé.
+      return { data: d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength) };
+    } catch (e) {
+      return { data: brut }; // repli : tuile telle quelle, sans arrondi
+    }
+  });
+}
+
+/** Résout l'adresse des tuiles d'une source (via son TileJSON), avec cache. */
+async function resoudreTuiles(urlTileJson) {
+  if (tileJsonCache.has(urlTileJson)) return tileJsonCache.get(urlTileJson);
+  const reponse = await fetch(urlTileJson);
+  if (!reponse.ok) throw new Error("TileJSON indisponible");
+  const infos = await reponse.json();
+  tileJsonCache.set(urlTileJson, infos);
+  return infos;
+}
+
+/**
+ * Renvoie le style vectoriel (adresse ou objet JSON) correspondant à un
+ * niveau de simplification. Principe : on plafonne le zoom des DONNÉES
+ * vectorielles ; au-delà, la carte agrandit des tuiles moins détaillées,
+ * dont les contours (côtes, rivières, routes) sont naturellement généralisés.
+ */
+async function obtenirStyleVectoriel(maxzoom, arrondi) {
+  const simplifie = maxzoom && maxzoom < 14;
+  if (!simplifie && !arrondi) return STYLE_VECTORIEL_URL; // réglages d'origine
+
+  if (!styleVectorielBase) {
+    const reponse = await fetch(STYLE_VECTORIEL_URL);
+    if (!reponse.ok) throw new Error("Style vectoriel indisponible");
+    styleVectorielBase = await reponse.json();
+  }
+  const style = JSON.parse(JSON.stringify(styleVectorielBase));
+
+  for (const src of Object.values(style.sources || {})) {
+    if (src.type !== "vector") continue;
+    if (simplifie) src.maxzoom = Math.min(src.maxzoom || 14, maxzoom);
+    if (arrondi > 0) {
+      // Les tuiles passent par notre protocole d'arrondi. Pour cela, il faut
+      // l'adresse directe des tuiles : on la lit dans le TileJSON de la source.
+      let tuiles = src.tiles;
+      if (!tuiles && src.url) {
+        const infos = await resoudreTuiles(src.url);
+        tuiles = infos.tiles;
+        if (!src.maxzoom && infos.maxzoom) src.maxzoom = simplifie ? Math.min(infos.maxzoom, maxzoom) : infos.maxzoom;
+        if (infos.minzoom !== undefined) src.minzoom = infos.minzoom;
+      }
+      if (Array.isArray(tuiles)) {
+        src.tiles = tuiles.map((u) => "lisse://" + arrondi + "/" + u.replace(/^https?:\/\//, ""));
+        delete src.url;
+      }
+    }
+  }
+  return style;
+}
+
+/** Recharge le fond vectoriel (simplification + arrondi enregistrés). */
+function appliquerSimplificationVecteur() {
+  const m = etat.glMap;
+  if (!m) return;
+  const niveau = lireSimplification(etat.style.vecteur.simplification, 14);
+  const arrondi = lireArrondi(etat.style.arrondi);
+  obtenirStyleVectoriel(niveau, arrondi)
+    .then((style) => {
+      m.setStyle(style);
+      // Une fois le nouveau style affiché, on re-applique couleurs et détail.
+      m.once("idle", appliquerStyleVecteur);
+    })
+    .catch(() => toast("Impossible de charger ce réglage (pas de connexion ?)", true));
 }
 
 /** Affiche ou masque le bloc de réglages du fond vectoriel. */
@@ -1404,12 +2577,10 @@ function basculerBlocVecteur(visible) {
   document.getElementById("vecteur-bloc").hidden = !visible;
 }
 
-/** Compose le filtre du fond (ambiance + lissage) et le pose sur la carte. */
+/** Compose le filtre du fond (teinte d'ambiance) et le pose sur la carte. */
 function appliquerFiltreFond() {
   const fa = AMBIANCE_FILTRES[etat.style.ambiance] || "";
-  const fl = LISSAGE_FILTRES[etat.style.lissage] || "";
-  const combine = [fa, fl].filter(Boolean).join(" ") || "none";
-  document.getElementById("map").style.setProperty("--filtre-fond", combine);
+  document.getElementById("map").style.setProperty("--filtre-fond", fa || "none");
 }
 
 /** Applique l'ambiance (teinte générale) : classe (pour le parchemin) + filtre. */
@@ -1422,11 +2593,229 @@ function appliquerAmbiance(cle) {
   appliquerFiltreFond();
 }
 
+/* ---------- Décor : variantes de roses des vents et de bordures ---------- */
+
+// Chaque rose est un petit dessin SVG complet (affiché en bas à droite).
+const ROSES_VENTS = {
+  classique: {
+    label: "Classique",
+    svg: `<svg viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="30" cy="30" r="28" fill="rgba(244,236,215,0.85)" stroke="#5a4632" stroke-width="1.4"/>
+      <circle cx="30" cy="30" r="21" fill="none" stroke="#5a4632" stroke-width="0.6" opacity="0.6"/>
+      <g stroke="#5a4632" stroke-width="0.5" opacity="0.55">
+        <line x1="30" y1="4" x2="30" y2="56"/><line x1="4" y1="30" x2="56" y2="30"/>
+        <line x1="12" y1="12" x2="48" y2="48"/><line x1="48" y1="12" x2="12" y2="48"/>
+      </g>
+      <polygon points="30,6 34,27 30,23 26,27" fill="#a33d2a"/>
+      <polygon points="30,54 34,33 30,37 26,33" fill="#5a4632"/>
+      <polygon points="6,30 27,26 23,30 27,34" fill="#5a4632"/>
+      <polygon points="54,30 33,26 37,30 33,34" fill="#5a4632"/>
+      <text x="30" y="14.5" text-anchor="middle" font-size="7.5" font-weight="bold"
+            font-family="Georgia, serif" fill="#5a4632">N</text>
+    </svg>`,
+  },
+  etoile: {
+    label: "Étoile 8 branches",
+    svg: `<svg viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="30,2 33,25 30,21 27,25" fill="#a33d2a"/>
+      <polygon points="30,58 33,35 30,39 27,35" fill="#3d3021"/>
+      <polygon points="2,30 25,27 21,30 25,33" fill="#3d3021"/>
+      <polygon points="58,30 35,27 39,30 35,33" fill="#3d3021"/>
+      <polygon points="11,11 27,25 24,26 26,28" fill="#8a6b45"/>
+      <polygon points="49,11 33,25 36,26 34,28" fill="#8a6b45"/>
+      <polygon points="11,49 27,35 24,34 26,32" fill="#8a6b45"/>
+      <polygon points="49,49 33,35 36,34 34,32" fill="#8a6b45"/>
+      <circle cx="30" cy="30" r="4.5" fill="#f4ecd7" stroke="#3d3021" stroke-width="1"/>
+    </svg>`,
+  },
+  epuree: {
+    label: "Épurée",
+    svg: `<svg viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="30" cy="30" r="26" fill="rgba(255,255,255,0.8)" stroke="#2f3b34" stroke-width="2"/>
+      <polygon points="30,9 36,34 30,29 24,34" fill="#2f3b34"/>
+      <text x="30" y="52" text-anchor="middle" font-size="12" font-weight="bold"
+            font-family="'Avenir Next', sans-serif" fill="#2f3b34">N</text>
+    </svg>`,
+  },
+  ancienne: {
+    label: "Ancienne ornée",
+    svg: `<svg viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="30" cy="30" r="28" fill="rgba(233,224,196,0.9)" stroke="#5a4632" stroke-width="2"/>
+      <circle cx="30" cy="30" r="24" fill="none" stroke="#5a4632" stroke-width="0.6"/>
+      <circle cx="30" cy="30" r="17" fill="none" stroke="#5a4632" stroke-width="0.6" stroke-dasharray="2 2"/>
+      <g stroke="#5a4632" stroke-width="0.45" opacity="0.7">
+        <line x1="30" y1="6" x2="30" y2="54"/><line x1="6" y1="30" x2="54" y2="30"/>
+        <line x1="13" y1="13" x2="47" y2="47"/><line x1="47" y1="13" x2="13" y2="47"/>
+      </g>
+      <polygon points="30,7 33.5,28 30,24.5 26.5,28" fill="#a33d2a" stroke="#5a4632" stroke-width="0.5"/>
+      <polygon points="30,53 33.5,32 30,35.5 26.5,32" fill="#e9e0c4" stroke="#5a4632" stroke-width="0.7"/>
+      <polygon points="7,30 28,26.5 24.5,30 28,33.5" fill="#e9e0c4" stroke="#5a4632" stroke-width="0.7"/>
+      <polygon points="53,30 32,26.5 35.5,30 32,33.5" fill="#e9e0c4" stroke="#5a4632" stroke-width="0.7"/>
+      <text x="30" y="15" text-anchor="middle" font-size="7" font-style="italic"
+            font-family="Georgia, serif" fill="#5a4632">N</text>
+      <circle cx="30" cy="30" r="2.4" fill="#5a4632"/>
+    </svg>`,
+  },
+};
+
+// Bordures prédéfinies : chacune correspond à une classe CSS .bordure-<cle>.
+const BORDURES = {
+  double: { label: "Double filet" },
+  epaisse: { label: "Filet épais" },
+  pointillee: { label: "Pointillée" },
+  corde: { label: "Corde" },
+  ornee: { label: "Ornée" },
+};
+
+/** Renvoie le décor importé correspondant à une clé "perso:<id>", ou null. */
+function decorPerso(cle) {
+  if (typeof cle !== "string" || !cle.startsWith("perso:")) return null;
+  return etat.decorsPerso.find((x) => x.id === Number(cle.slice("perso:".length))) || null;
+}
+
+/** Applique la rose des vents et la bordure choisies (ou les masque). */
+function appliquerDecor() {
+  const d = etat.style.decor || {};
+
+  // Rose des vents (true = "classique", pour les anciennes sauvegardes).
+  const cleRose = d.rose === true ? "classique" : d.rose;
+  const roseEl = document.getElementById("rose-carte");
+  roseEl.hidden = !cleRose;
+  if (cleRose) {
+    const perso = decorPerso(cleRose);
+    roseEl.innerHTML = perso
+      ? `<img src="${perso.src}" alt="" style="width:100%;height:100%;object-fit:contain">`
+      : (ROSES_VENTS[cleRose] || ROSES_VENTS.classique).svg;
+  }
+
+  // Bordure (true = "double").
+  const cleBordure = d.bordure === true ? "double" : d.bordure;
+  const bordEl = document.getElementById("bordure-carte");
+  bordEl.hidden = !cleBordure;
+  bordEl.className = "bordure-carte";
+  bordEl.style.borderImageSource = "";
+  if (cleBordure) {
+    const perso = decorPerso(cleBordure);
+    if (perso) {
+      bordEl.classList.add("bordure-perso");
+      bordEl.style.borderImageSource = `url(${perso.src})`;
+    } else {
+      bordEl.classList.add("bordure-" + (BORDURES[cleBordure] ? cleBordure : "double"));
+    }
+  }
+}
+
+/* ---------- Fenêtre de choix du décor (roses + bordures + import) ---------- */
+
+let cibleDecorPicker = "rose"; // "rose" | "bordure"
+
+function ouvrirDecorPicker(cible) {
+  cibleDecorPicker = cible;
+  document.getElementById("decor-titre-modal").textContent =
+    cible === "rose" ? "Choisir une rose des vents" : "Choisir une bordure";
+  construireListeDecors();
+  document.getElementById("modal-decor").hidden = false;
+}
+
+function fermerDecorPicker() {
+  document.getElementById("modal-decor").hidden = true;
+}
+
+/** (Re)construit la grille des décors proposés (prédéfinis + importés). */
+function construireListeDecors() {
+  const liste = document.getElementById("decor-liste");
+  liste.innerHTML = "";
+  const d = etat.style.decor || {};
+  const actuel = cibleDecorPicker === "rose"
+    ? (d.rose === true ? "classique" : d.rose)
+    : (d.bordure === true ? "double" : d.bordure);
+
+  const ajouter = (cle, label, apercuHtml, suppression) => {
+    const carte = document.createElement("div");
+    carte.className = "decor-choix-wrap";
+    const b = document.createElement("button");
+    b.className = "decor-choix" + (cle === actuel ? " actif" : "");
+    b.innerHTML = `<span class="decor-apercu">${apercuHtml}</span><span class="decor-nom">${label}</span>`;
+    b.addEventListener("click", () => choisirDecor(cle));
+    carte.appendChild(b);
+    if (suppression) {
+      const suppr = document.createElement("button");
+      suppr.className = "picto-perso-suppr";
+      suppr.textContent = "✕";
+      suppr.title = "Retirer ce décor";
+      suppr.addEventListener("click", (e) => { e.stopPropagation(); suppression(); });
+      carte.appendChild(suppr);
+    }
+    liste.appendChild(carte);
+  };
+
+  if (cibleDecorPicker === "rose") {
+    Object.entries(ROSES_VENTS).forEach(([cle, r]) => ajouter(cle, r.label, r.svg));
+  } else {
+    Object.entries(BORDURES).forEach(([cle, b]) =>
+      ajouter(cle, b.label, `<span class="apercu-bordure bordure-${cle}"></span>`));
+  }
+  etat.decorsPerso
+    .filter((x) => x.type === cibleDecorPicker)
+    .forEach((x) => {
+      const apercu = cibleDecorPicker === "rose"
+        ? `<img src="${x.src}" alt="" style="max-width:100%;max-height:100%;object-fit:contain">`
+        : `<span class="apercu-bordure bordure-perso" style="border-image-source:url(${x.src})"></span>`;
+      ajouter("perso:" + x.id, x.nom, apercu, () => supprimerDecorPerso(x.id));
+    });
+}
+
+/** Applique le décor choisi (et coche la case correspondante). */
+function choisirDecor(cle) {
+  etat.style.decor[cibleDecorPicker] = cle;
+  document.getElementById("decor-" + cibleDecorPicker).checked = true;
+  appliquerDecor();
+  fermerDecorPicker();
+  planifierSauvegarde();
+}
+
+/** Importe une image comme rose des vents ou bordure. */
+async function importerDecorPerso(fichier) {
+  if (!fichier || !fichier.type.startsWith("image/")) return;
+  try {
+    const src = await importerImage(fichier, 512, "image/png");
+    const d = {
+      id: prochainIdRessource(),
+      nom: (fichier.name || "Décor").replace(/\.[^.]+$/, "").slice(0, 40),
+      type: cibleDecorPicker,
+      src,
+    };
+    etat.decorsPerso.push(d);
+    try { await dbSauverCle("decors", etat.decorsPerso.map((x) => ({ ...x }))); } catch (e) {}
+    construireListeDecors();
+    toast(`Décor « ${d.nom} » importé`);
+  } catch (e) {
+    toast("Impossible d'importer cette image.", true);
+  }
+}
+
+/** Retire un décor importé. */
+async function supprimerDecorPerso(id) {
+  const d = etat.decorsPerso.find((x) => x.id === id);
+  if (!d) return;
+  if (!window.confirm(`Retirer « ${d.nom} » ?`)) return;
+  etat.decorsPerso = etat.decorsPerso.filter((x) => x.id !== id);
+  try { await dbSauverCle("decors", etat.decorsPerso.map((x) => ({ ...x }))); } catch (e) {}
+  construireListeDecors();
+  appliquerDecor(); // au cas où il était utilisé
+}
+
+// Styles proposés pour le cartouche de titre (classes CSS .titre-<cle>).
+const TITRE_FONDS = ["classique", "parchemin", "pirate", "sombre"];
+
 /** Affiche (ou masque) le cartouche de titre sur la carte. */
 function appliquerTitre() {
   const el = document.getElementById("carte-titre");
   const titre = (etat.style.titre || "").trim();
   el.textContent = titre;
+  el.style.fontFamily = cssDePolice(etat.style.titrePolice || "titre");
+  const fond = TITRE_FONDS.includes(etat.style.titreFond) ? etat.style.titreFond : "classique";
+  el.className = "carte-titre" + (fond === "classique" ? "" : " titre-" + fond);
   el.hidden = titre.length === 0;
 }
 
@@ -1486,11 +2875,14 @@ function appliquerStyleLabels() {
   const lab = etat.style.labels;
   const map = document.getElementById("map");
   // Les étiquettes héritent de ces variables CSS posées sur la carte.
-  map.style.setProperty("--label-police", (POLICES[lab.police] || POLICES.systeme).css);
+  map.style.setProperty("--label-police", cssDePolice(lab.police));
   map.style.setProperty("--label-couleur", lab.couleur);
-  map.style.setProperty("--label-taille", TAILLES[lab.taille] || TAILLES.moyen);
+  // Taille : mot-clé (petit/moyen/grand) ou nombre de pixels (réglage fin).
+  map.style.setProperty("--label-taille",
+    TAILLES[lab.taille] || (Number(lab.taille) ? lab.taille + "px" : TAILLES.moyen));
   // Création ou retrait des étiquettes selon l'activation.
   etat.souvenirs.forEach(majLabel);
+  majVisibiliteLabels(); // pas d'étiquette pour une épingle fondue dans une grappe
 }
 
 /** Applique l'intégralité du style et synchronise les contrôles du panneau. */
@@ -1501,6 +2893,7 @@ function appliquerStyleComplet() {
   appliquerStyleLabels();
   appliquerStyleVecteur();
   appliquerTitre();
+  appliquerDecor();
   synchroniserControlesStyle();
 }
 
@@ -1510,6 +2903,8 @@ function fusionnerStyle(s) {
   if (!s) return base;
   return {
     titre: typeof s.titre === "string" ? s.titre : base.titre,
+    titrePolice: typeof s.titrePolice === "string" ? s.titrePolice : base.titrePolice,
+    titreFond: TITRE_FONDS.includes(s.titreFond) ? s.titreFond : base.titreFond,
     trace: {
       couleur: (s.trace && s.trace.couleur) || base.trace.couleur,
       epaisseur: (s.trace && s.trace.epaisseur) || base.trace.epaisseur,
@@ -1527,20 +2922,55 @@ function fusionnerStyle(s) {
     },
     labels: {
       afficher: !!(s.labels && s.labels.afficher),
-      police: (s.labels && POLICES[s.labels.police]) ? s.labels.police : base.labels.police,
+      // Toute clé de police est acceptée (catalogue, importée…) : le rendu
+      // retombe sur la police système si elle n'existe plus.
+      police: (s.labels && typeof s.labels.police === "string") ? s.labels.police : base.labels.police,
       couleur: (s.labels && s.labels.couleur) || base.labels.couleur,
-      taille: (s.labels && TAILLES[s.labels.taille]) ? s.labels.taille : base.labels.taille,
+      taille: lireTailleLabels(s.labels && s.labels.taille, base.labels.taille),
     },
-    lissage: LISSAGE_FILTRES[s.lissage] !== undefined ? s.lissage : base.lissage,
+    // L'ancien "lissage" (flou) n'existe plus : on lit le nouvel "arrondi".
+    arrondi: lireArrondi(s.arrondi),
     vecteur: {
       zones: Object.fromEntries(
         Object.keys(base.vecteur.zones).map((cle) => [cle, lireCouleurOuNull(s.vecteur, cle)])
       ),
       detail: (s.vecteur && s.vecteur.detail === "epure") ? "epure" : "complet",
       police: (s.vecteur && typeof s.vecteur.police === "string") ? s.vecteur.police : base.vecteur.police,
-      preset: (s.vecteur && s.vecteur.preset === "ancienne") ? "ancienne" : null,
+      preset: (s.vecteur && PRESETS_FOND[s.vecteur.preset]) ? s.vecteur.preset : null,
+      couches: Object.fromEntries(
+        Object.keys(base.vecteur.couches).map((cle) => [
+          cle,
+          !(s.vecteur && s.vecteur.couches && s.vecteur.couches[cle] === false),
+        ])
+      ),
+      simplification: lireSimplification(s.vecteur && s.vecteur.simplification, base.vecteur.simplification),
+    },
+    decor: {
+      rose: lireCleDecor(s.decor && s.decor.rose, "classique"),
+      bordure: lireCleDecor(s.decor && s.decor.bordure, "double"),
     },
   };
+}
+
+/** Lit un choix de décor : false, une clé de variante, ou true (ancien format). */
+function lireCleDecor(valeur, cleParDefaut) {
+  if (valeur === true) return cleParDefaut;
+  return typeof valeur === "string" && valeur ? valeur : false;
+}
+
+/** Lit une taille de noms de souvenirs : mot-clé (petit/moyen/grand) ou nombre de px. */
+function lireTailleLabels(valeur, defaut) {
+  if (TAILLES[valeur]) return valeur;
+  const n = Number(valeur);
+  if (Number.isFinite(n) && n >= 8 && n <= 28) return Math.round(n);
+  return defaut;
+}
+
+/** Lit un nombre de passes d'arrondi (0 à 4). */
+function lireArrondi(valeur) {
+  const n = Number(valeur);
+  if (Number.isFinite(n) && n >= 0 && n <= 4) return Math.round(n);
+  return 0;
 }
 
 /** Lit une couleur de zone sauvegardée (chaîne hex) ou null. */
@@ -1600,7 +3030,9 @@ function synchroniserControlesStyle() {
   majSegment("trace-type", "type", s.trace.type);
   majSegment("fond-carte", "fond", s.fond);
   majSegment("ambiance-carte", "ambiance", s.ambiance);
-  majSegment("lissage-carte", "lissage", s.lissage);
+  // Arrondi : bouton en évidence si le rayon correspond à un préréglage.
+  majSegment("arrondi-carte", "arrondi", String(s.arrondi));
+  document.getElementById("arrondi-valeur").value = s.arrondi;
 
   // Bloc du fond personnalisé : visible et rempli si "perso" est choisi.
   basculerBlocPerso(s.fond === "perso");
@@ -1612,16 +3044,31 @@ function synchroniserControlesStyle() {
   // remplis avec la couleur choisie ou la suggestion par défaut.
   basculerBlocVecteur(s.fond === "vectoriel");
   majSegment("vecteur-detail", "detail", s.vecteur.detail);
+  majSegment("preset-fond", "preset", s.vecteur.preset || "");
+  document.querySelectorAll(".couches-liste input[data-couche]").forEach((inp) => {
+    inp.checked = s.vecteur.couches[inp.dataset.couche] !== false;
+  });
+  document.getElementById("decor-rose").checked = !!(s.decor && s.decor.rose);
+  document.getElementById("decor-bordure").checked = !!(s.decor && s.decor.bordure);
+  const simplification = lireSimplification(s.vecteur.simplification, 14);
+  majSegment("vecteur-simplification", "simplification", String(simplification));
+  document.getElementById("simplification-valeur").value = simplification;
   document.querySelectorAll("#vecteur-bloc input[data-zone]").forEach((inp) => {
     const cat = inp.dataset.zone;
     inp.value = s.vecteur.zones[cat] || SUGGESTIONS_ZONE[cat] || "#888888";
   });
+  // Petit rappel affiché quand le fond choisi n'est pas le vectoriel.
+  document.getElementById("fond-aide-vectoriel").hidden = s.fond === "vectoriel";
 
   // Réglages des noms de souvenirs.
   document.getElementById("labels-afficher").checked = s.labels.afficher;
   document.getElementById("labels-reglages").hidden = !s.labels.afficher;
-  majSegment("labels-police", "police", s.labels.police);
-  majSegment("labels-taille", "taille", s.labels.taille);
+  majBoutonPolice("labels");
+  majBoutonPolice("titre");
+  majSegment("titre-fond", "titrefond", s.titreFond || "classique");
+  majSegment("labels-taille", "taille", String(s.labels.taille));
+  document.getElementById("labels-taille-valeur").value =
+    TAILLES[s.labels.taille] ? parseInt(TAILLES[s.labels.taille], 10) : s.labels.taille;
   majPastillesActives("labels-couleurs", s.labels.couleur);
 }
 
@@ -1704,6 +3151,8 @@ function basculerBlocPerso(visible) {
 /** Ouvre le panneau Style. */
 function ouvrirPanneauStyle() {
   if (etat.mode === "visualisation") return; // édition seulement
+  fermerPanneauFond(); // un seul panneau de gauche à la fois
+  fermerPanneauCarnets();
   synchroniserControlesStyle();
   document.getElementById("panneau-style").hidden = false;
 }
@@ -1711,6 +3160,609 @@ function ouvrirPanneauStyle() {
 /** Ferme le panneau Style. */
 function fermerPanneauStyle() {
   document.getElementById("panneau-style").hidden = true;
+}
+
+/* =========================================================
+   Édition du fond de carte : panneau, pictogrammes et textes libres
+   ========================================================= */
+
+/** Ouvre le panneau Fond de carte. */
+function ouvrirPanneauFond() {
+  if (etat.mode === "visualisation") return; // édition seulement
+  fermerPanneauStyle(); // un seul panneau de gauche à la fois
+  fermerPanneauCarnets();
+  synchroniserControlesStyle();
+  majEditeurAnnotation();
+  // Attention : "panneau-fond" (sans -carte) est le voile sombre des pop up !
+  document.getElementById("panneau-fond-carte").hidden = false;
+}
+
+/** Ferme le panneau Fond de carte (et met fin à la pose en cours). */
+function fermerPanneauFond() {
+  document.getElementById("panneau-fond-carte").hidden = true;
+  desarmerAjoutAnnotation();
+  deselectionnerAnnotation();
+}
+
+/* ---------- Icônes et marqueurs des annotations ---------- */
+
+/**
+ * Fabrique l'icône Leaflet d'une annotation (pictogramme ou texte).
+ * Tout le style est porté en ligne pour que la fenêtre d'impression
+ * puisse reproduire le même rendu sans dépendre de notre CSS.
+ */
+function creerIconeAnnotation(a) {
+  let contenu;
+  if (a.type === "picto") {
+    const perso = obtenirPictoPerso(a.picto);
+    contenu = perso
+      ? `<img class="annot-picto-img" src="${perso.src}" style="height:${a.taille}px" alt="">`
+      : `<span class="annot-picto" style="font-size:${a.taille}px">${glyphDePicto(a.picto) || "⛰️"}</span>`;
+  } else {
+    const css = [
+      `font-family:${cssDePolice(a.police)}`,
+      `color:${a.couleur}`,
+      `font-size:${a.taille}px`,
+      `text-align:${ANNOT_ALIGN_CSS[a.align] || "center"}`,
+      `font-weight:${a.gras ? "800" : "400"}`,
+      `font-style:${a.italique ? "italic" : "normal"}`,
+    ].join(";");
+    const html = echapperHtml(a.texte || "").replace(/\n/g, "<br>");
+    // Les noms de polices contiennent des guillemets : on les échappe pour
+    // ne pas couper l'attribut style en plein milieu.
+    contenu = `<div class="annot-texte" style="${css.replace(/"/g, "&quot;")}">${html}</div>`;
+  }
+  const actif = etat.annotationActive === a ? " annot-actif" : "";
+  return L.divIcon({
+    className: "",
+    html: `<div class="annot-wrap${actif}">${contenu}</div>`,
+    iconSize: [0, 0], // le contenu se centre lui-même sur le point (CSS)
+  });
+}
+
+/** Pose (ou repose) le marqueur d'une annotation sur la carte. */
+function attacherMarqueurAnnotation(a) {
+  const marker = L.marker([a.lat, a.lng], {
+    icon: creerIconeAnnotation(a),
+    draggable: true,
+  })
+    .addTo(etat.carte)
+    .on("click", () => {
+      if (etat.mode === "edition") selectionnerAnnotation(a);
+    })
+    .on("dragend", (e) => {
+      const p = e.target.getLatLng();
+      a.lat = p.lat;
+      a.lng = p.lng;
+      planifierSauvegarde();
+    });
+
+  if (etat.mode === "visualisation") marker.dragging.disable();
+  a.marker = marker;
+  return marker;
+}
+
+/** Redessine l'icône d'une annotation après un changement de réglage. */
+function redessinerAnnotation(a) {
+  if (a && a.marker) a.marker.setIcon(creerIconeAnnotation(a));
+}
+
+/** Retire toutes les annotations de la carte et de l'état. */
+function effacerAnnotations() {
+  etat.annotations.forEach((a) => { if (a.marker) a.marker.remove(); });
+  etat.annotations = [];
+  etat.annotationActive = null;
+  majEditeurAnnotation();
+}
+
+/* ---------- Pose d'une nouvelle annotation ---------- */
+
+/** Passe en mode "pose d'un élément" : le prochain clic sur la carte le place. */
+function armerAjoutAnnotation(type) {
+  if (etat.mode === "visualisation") return;
+  desarmerAjout(); // on ne pose pas un souvenir ET un élément en même temps
+  etat.modeAnnotation = type;
+  document.getElementById("map").classList.add("mode-ajout");
+  document.getElementById("banniere-annot-texte").textContent =
+    type === "picto"
+      ? "🖌️ Clique sur la carte pour placer le pictogramme."
+      : "🖌️ Clique sur la carte pour placer le texte.";
+  document.getElementById("banniere-annot").hidden = false;
+}
+
+/** Quitte le mode "pose d'un élément". */
+function desarmerAjoutAnnotation() {
+  etat.modeAnnotation = null;
+  document.getElementById("banniere-annot").hidden = true;
+  if (!etat.modeAjout) document.getElementById("map").classList.remove("mode-ajout");
+}
+
+/** Crée une annotation à l'endroit cliqué, puis ouvre son éditeur. */
+function creerAnnotation(type, latlng) {
+  const base = type === "picto" ? ANNOT_PICTO_DEFAUT : ANNOT_TEXTE_DEFAUT;
+  const a = {
+    id: prochainIdSouvenir++,
+    type,
+    lat: latlng.lat,
+    lng: latlng.lng,
+    ...JSON.parse(JSON.stringify(base)),
+    marker: null,
+  };
+  etat.annotations.push(a);
+  attacherMarqueurAnnotation(a);
+  desarmerAjoutAnnotation();
+  selectionnerAnnotation(a);
+  // Pour un texte, on met le curseur directement dans le champ de saisie.
+  if (type === "texte") {
+    const champ = document.getElementById("annot-texte");
+    champ.focus();
+    champ.select();
+  }
+  planifierSauvegarde();
+}
+
+/* ---------- Sélection et éditeur d'une annotation ---------- */
+
+/** Sélectionne une annotation : cadre visible + éditeur ouvert dans le panneau. */
+function selectionnerAnnotation(a) {
+  const precedente = etat.annotationActive;
+  etat.annotationActive = a;
+  if (precedente && precedente !== a) redessinerAnnotation(precedente);
+  redessinerAnnotation(a);
+  ouvrirPanneauFond();
+}
+
+/** Désélectionne l'annotation en cours (referme l'éditeur). */
+function deselectionnerAnnotation() {
+  const a = etat.annotationActive;
+  if (!a) return;
+  etat.annotationActive = null;
+  redessinerAnnotation(a);
+  majEditeurAnnotation();
+}
+
+/** Recale l'éditeur du panneau sur l'annotation sélectionnée (ou le cache). */
+function majEditeurAnnotation() {
+  const a = etat.annotationActive;
+  const editeur = document.getElementById("annot-editeur");
+  editeur.hidden = !a;
+  if (!a) return;
+
+  document.getElementById("annot-editeur-titre").textContent =
+    a.type === "picto" ? "Pictogramme sélectionné" : "Texte sélectionné";
+  document.getElementById("annot-bloc-texte").hidden = a.type !== "texte";
+  document.getElementById("annot-bloc-picto").hidden = a.type !== "picto";
+
+  // Curseur de taille, borné selon le type d'élément.
+  const bornes = ANNOT_TAILLES[a.type] || ANNOT_TAILLES.texte;
+  const curseur = document.getElementById("annot-taille");
+  curseur.min = bornes.min;
+  curseur.max = bornes.max;
+  curseur.value = a.taille;
+  document.getElementById("annot-taille-val").textContent = a.taille;
+
+  if (a.type === "texte") {
+    document.getElementById("annot-texte").value = a.texte || "";
+    document.getElementById("annot-couleur").value = a.couleur;
+    majBoutonPolice("annot");
+    majSegment("annot-align", "align", a.align);
+    document.getElementById("annot-gras").classList.toggle("actif", !!a.gras);
+    document.getElementById("annot-italique").classList.toggle("actif", !!a.italique);
+  } else {
+    majAnnotPictoBouton(a.picto);
+  }
+}
+
+/** Affiche le pictogramme courant sur le bouton "Changer de pictogramme". */
+function majAnnotPictoBouton(cle) {
+  const el = document.getElementById("annot-picto-glyph");
+  const perso = obtenirPictoPerso(cle);
+  if (perso) el.innerHTML = `<img src="${perso.src}" alt="">`;
+  else el.textContent = glyphDePicto(cle) || "⛰️";
+}
+
+/** Modifie l'annotation sélectionnée et redessine son marqueur. */
+function majAnnotationActive(champs) {
+  const a = etat.annotationActive;
+  if (!a) return;
+  Object.assign(a, champs);
+  redessinerAnnotation(a);
+  planifierSauvegarde();
+}
+
+/** Supprime l'annotation sélectionnée. */
+function supprimerAnnotationActive() {
+  const a = etat.annotationActive;
+  if (!a) return;
+  if (a.marker) a.marker.remove();
+  etat.annotations = etat.annotations.filter((x) => x !== a);
+  etat.annotationActive = null;
+  majEditeurAnnotation();
+  toast("Élément supprimé");
+  planifierSauvegarde();
+}
+
+/* =========================================================
+   Plusieurs carnets sur la même carte
+   ---------------------------------------------------------
+   Un seul carnet est OUVERT (modifiable) à la fois. En mode
+   visualisation, on peut AFFICHER d'autres carnets en plus :
+   leur trace et leurs épingles apparaissent, consultables en
+   lecture seule (on les appelle des carnets "affichés en plus",
+   gérés dans etat.fantomes).
+   ========================================================= */
+
+/** La fiche (id, nom, visible) du carnet actuellement ouvert. */
+function carnetActif() {
+  return etat.carnets.find((c) => c.id === etat.carnetActifId) || null;
+}
+
+// Garde-fou : tant que l'index n'a pas été lu correctement au démarrage,
+// on n'écrit RIEN (sinon un raté de lecture écraserait la liste des carnets).
+let indexCarnetsPret = false;
+
+/** Enregistre l'index des carnets (liste + carnet ouvert). */
+async function sauverIndexCarnets() {
+  if (!indexCarnetsPret) return;
+  await dbSauverCle("index", {
+    carnets: etat.carnets.map((c) => ({ id: c.id, nom: c.nom, visible: !!c.visible })),
+    actifId: etat.carnetActifId,
+  });
+}
+
+/**
+ * Au démarrage : lit l'index des carnets (en migrant l'ancien format à un
+ * seul carnet si besoin), puis recharge le carnet ouvert.
+ */
+async function demarrerCarnets() {
+  try {
+    let index = await dbChargerCle("index");
+
+    // Migration depuis l'ancien format (un seul carnet sous la clé "actuel").
+    if (!index) {
+      const ancien = await dbChargerCle("actuel");
+      if (ancien && ancien.trace) {
+        index = {
+          carnets: [{ id: 1, nom: ancien.trace.name || "Mon carnet", visible: true }],
+          actifId: 1,
+        };
+        await dbSauverCle("carnet-1", ancien);
+        await dbSauverCle("index", index);
+        await dbEffacerCle("actuel");
+      }
+    }
+
+    if (!index || !Array.isArray(index.carnets) || index.carnets.length === 0) {
+      // Tout premier démarrage : un carnet vide, prêt à recevoir un GPX.
+      etat.carnets = [{ id: 1, nom: "Mon carnet", visible: true }];
+      etat.carnetActifId = 1;
+      indexCarnetsPret = true; // lecture réussie (il n'y avait rien) : on peut écrire
+      await sauverIndexCarnets();
+      return;
+    }
+
+    etat.carnets = index.carnets.map((c) => ({
+      id: c.id,
+      nom: c.nom || "Carnet",
+      visible: c.visible !== false,
+    }));
+    etat.carnetActifId = etat.carnets.some((c) => c.id === index.actifId)
+      ? index.actifId
+      : etat.carnets[0].id;
+    indexCarnetsPret = true; // l'index a bien été lu : les écritures sont sûres
+
+    const donnees = await dbChargerCle("carnet-" + etat.carnetActifId);
+    if (donnees && donnees.trace) {
+      restaurerCarnet(donnees);
+      toast(`Carnet « ${carnetActif().nom} » rechargé`);
+    }
+  } catch (e) {
+    // IndexedDB indisponible : on démarre à vide, sans bruit.
+    if (etat.carnets.length === 0) {
+      etat.carnets = [{ id: 1, nom: "Mon carnet", visible: true }];
+      etat.carnetActifId = 1;
+    }
+  }
+}
+
+/**
+ * Vide l'écran du carnet courant (sans toucher aux sauvegardes) : utilisé
+ * quand on ouvre un carnet encore vide ou qu'on réinitialise.
+ */
+function viderCarnetCourant() {
+  desarmerAjout();
+  fermerPanneauFond(); // met aussi fin à la pose d'un pictogramme/texte
+  effacerSouvenirs();
+  effacerAnnotations();
+  etat.stock = [];
+  etat.pictosPerso = [];
+  construirePictos();
+  fermerReserve();
+  if (etat.coucheTrace) { etat.coucheTrace.remove(); etat.coucheTrace = null; }
+  etat.trace = null;
+  prochainIdSouvenir = 1;
+
+  etat.style = JSON.parse(JSON.stringify(STYLE_DEFAUT));
+  appliquerFond(etat.style.fond);
+  appliquerAmbiance(etat.style.ambiance);
+  appliquerFiltreFond();
+  appliquerTitre();
+  appliquerDecor();
+  fermerPanneauStyle();
+
+  etat.carte.setView([46.6, 2.5], 6);
+
+  // On masque les boutons liés à une trace et on réaffiche l'accueil.
+  ["btn-mode", "btn-ajout-souvenir", "btn-reserve", "btn-trier-dates", "btn-filtrer",
+   "btn-style", "btn-fond", "btn-exporter", "btn-export-affiche", "btn-export-png",
+   "btn-reinitialiser"]
+    .forEach((id) => { document.getElementById(id).hidden = true; });
+  document.getElementById("trace-info").hidden = true;
+  document.getElementById("welcome").hidden = false;
+}
+
+/** Ouvre un autre carnet (le carnet courant est d'abord sauvegardé). */
+async function ouvrirCarnet(id) {
+  if (id === etat.carnetActifId) return;
+  await sauvegarderMaintenant(); // le carnet courant est mis à l'abri
+  retirerTousFantomes();
+
+  etat.carnetActifId = id;
+  let donnees = null;
+  try { donnees = await dbChargerCle("carnet-" + id); } catch (e) {}
+
+  if (donnees && donnees.trace) {
+    restaurerCarnet(donnees);
+  } else {
+    viderCarnetCourant(); // carnet encore vide : écran d'accueil
+  }
+  definirMode("edition"); // on repasse en édition sur le carnet ouvert
+  await sauverIndexCarnets();
+  renderCarnets();
+  toast(`Carnet « ${carnetActif().nom} » ouvert`);
+}
+
+/** Crée un nouveau carnet vide et l'ouvre. */
+async function nouveauCarnet() {
+  const nom = (window.prompt("Nom du nouveau carnet :", "Nouveau carnet") || "").trim();
+  if (!nom) return;
+  await sauvegarderMaintenant();
+  retirerTousFantomes();
+
+  const id = Math.max(0, ...etat.carnets.map((c) => c.id)) + 1;
+  etat.carnets.push({ id, nom, visible: true });
+  etat.carnetActifId = id;
+  viderCarnetCourant();
+  await sauverIndexCarnets();
+  renderCarnets();
+  toast(`Carnet « ${nom} » créé — charge un fichier GPX pour commencer`);
+}
+
+/** Renomme un carnet. */
+async function renommerCarnet(carnet) {
+  const nom = (window.prompt("Nouveau nom du carnet :", carnet.nom) || "").trim();
+  if (!nom || nom === carnet.nom) return;
+  carnet.nom = nom;
+  await sauverIndexCarnets();
+  renderCarnets();
+  // Le bandeau en bas à gauche affiche le nom du carnet ouvert.
+  if (carnet.id === etat.carnetActifId && etat.trace) majBandeauInfos(etat.trace);
+}
+
+/** Supprime un carnet (avec confirmation). */
+async function supprimerCarnet(carnet) {
+  const ok = window.confirm(
+    `Supprimer le carnet « ${carnet.nom} » ?\n\n` +
+    "Sa trace, ses souvenirs, photos et audios seront définitivement effacés. " +
+    "Pense à l'ouvrir et à « Exporter » d'abord si tu veux le conserver.\n\n" +
+    "Cette action est irréversible."
+  );
+  if (!ok) return;
+
+  retirerFantome(carnet.id);
+  try { await dbEffacerCle("carnet-" + carnet.id); } catch (e) {}
+  etat.carnets = etat.carnets.filter((c) => c.id !== carnet.id);
+
+  // Si on vient de supprimer le carnet ouvert, on bascule sur un autre.
+  if (carnet.id === etat.carnetActifId) {
+    if (etat.carnets.length === 0) {
+      etat.carnets = [{ id: 1, nom: "Mon carnet", visible: true }];
+      etat.carnetActifId = 1;
+      viderCarnetCourant();
+    } else {
+      etat.carnetActifId = etat.carnets[0].id;
+      let donnees = null;
+      try { donnees = await dbChargerCle("carnet-" + etat.carnetActifId); } catch (e) {}
+      if (donnees && donnees.trace) restaurerCarnet(donnees);
+      else viderCarnetCourant();
+    }
+  }
+  await sauverIndexCarnets();
+  renderCarnets();
+  toast(`Carnet « ${carnet.nom} » supprimé`);
+}
+
+/* ---------- Panneau « Mes carnets » ---------- */
+
+function ouvrirPanneauCarnets() {
+  fermerPanneauStyle();
+  fermerPanneauFond();
+  fermerPanneauFiltre();
+  renderCarnets();
+  document.getElementById("panneau-carnets").hidden = false;
+}
+
+function fermerPanneauCarnets() {
+  document.getElementById("panneau-carnets").hidden = true;
+}
+
+/** (Re)construit la liste des carnets dans le panneau. */
+function renderCarnets() {
+  const liste = document.getElementById("carnets-liste");
+  liste.innerHTML = "";
+  const enVisu = etat.mode === "visualisation";
+
+  etat.carnets.forEach((c) => {
+    const actif = c.id === etat.carnetActifId;
+    const ligne = document.createElement("div");
+    ligne.className = "carnet-ligne" + (actif ? " carnet-ligne-actif" : "");
+
+    // En visualisation : case à cocher « afficher sur la carte ».
+    if (enVisu) {
+      const caseACocher = document.createElement("input");
+      caseACocher.type = "checkbox";
+      caseACocher.title = "Afficher sur la carte";
+      caseACocher.checked = actif ? true : !!c.visible;
+      caseACocher.disabled = actif; // le carnet ouvert est toujours affiché
+      caseACocher.addEventListener("change", () =>
+        basculerVisibiliteCarnet(c, caseACocher.checked));
+      ligne.appendChild(caseACocher);
+    }
+
+    const nom = document.createElement("span");
+    nom.className = "carnet-nom";
+    nom.textContent = c.nom + (actif ? " — ouvert" : "");
+    ligne.appendChild(nom);
+
+    // En édition : ouvrir / renommer / supprimer.
+    if (!enVisu) {
+      const actions = document.createElement("span");
+      actions.className = "carnet-actions";
+      if (!actif) {
+        const ouvrir = document.createElement("button");
+        ouvrir.className = "btn btn-ghost btn-petit";
+        ouvrir.textContent = "Ouvrir";
+        ouvrir.addEventListener("click", () => ouvrirCarnet(c.id));
+        actions.appendChild(ouvrir);
+      }
+      const renommer = document.createElement("button");
+      renommer.className = "icone-btn";
+      renommer.title = "Renommer";
+      renommer.textContent = "✏️";
+      renommer.addEventListener("click", () => renommerCarnet(c));
+      actions.appendChild(renommer);
+
+      const suppr = document.createElement("button");
+      suppr.className = "icone-btn";
+      suppr.title = "Supprimer ce carnet";
+      suppr.textContent = "🗑";
+      suppr.addEventListener("click", () => supprimerCarnet(c));
+      actions.appendChild(suppr);
+
+      ligne.appendChild(actions);
+    }
+    liste.appendChild(ligne);
+  });
+}
+
+/* ---------- Carnets affichés en plus (mode visualisation) ---------- */
+
+/** Coche/décoche l'affichage d'un carnet sur la carte (visualisation). */
+async function basculerVisibiliteCarnet(carnet, visible) {
+  carnet.visible = visible;
+  await sauverIndexCarnets();
+  if (etat.mode !== "visualisation" || carnet.id === etat.carnetActifId) return;
+  if (visible) afficherFantome(carnet.id);
+  else retirerFantome(carnet.id);
+}
+
+/** Charge et affiche un carnet en plus sur la carte (lecture seule). */
+async function afficherFantome(id) {
+  if (etat.fantomes.has(id) || id === etat.carnetActifId) return;
+  let donnees = null;
+  try { donnees = await dbChargerCle("carnet-" + id); } catch (e) {}
+  if (!donnees || !donnees.trace) {
+    toast("Ce carnet est encore vide (pas de trace).", true);
+    return;
+  }
+
+  const couche = L.layerGroup().addTo(etat.carte);
+  const pictosPerso = Array.isArray(donnees.pictosPerso) ? donnees.pictosPerso : [];
+
+  // La trace, avec le style enregistré dans CE carnet.
+  const t = (donnees.style && donnees.style.trace) || { couleur: "#8a8a8a", epaisseur: 3, type: "plein" };
+  donnees.trace.segments.forEach((seg) => {
+    L.polyline(seg, {
+      color: t.couleur,
+      weight: t.epaisseur,
+      opacity: 0.85,
+      dashArray: TYPES_LIGNE[t.type],
+    }).addTo(couche);
+  });
+
+  // Les souvenirs : épingles consultables (fiche en lecture seule).
+  const souvenirs = (donnees.souvenirs || []).map((sv) => ({
+    id: sv.id,
+    nom: sv.nom || "",
+    lat: sv.lat,
+    lng: sv.lng,
+    photos: Array.isArray(sv.photos) ? sv.photos : [],
+    couverture: sv.couverture === undefined ? null : sv.couverture,
+    textes: sv.textes || "",
+    pictogramme: sv.pictogramme || "souvenir",
+    dates: lireDates(sv.dates),
+    audios: lireAudios(sv.audios),
+    marker: null,
+    label: null,
+  }));
+
+  const fantome = { couche, souvenirs, trace: donnees.trace, pictosPerso };
+  etat.fantomes.set(id, fantome); // AVANT les tooltips (listeDuSouvenir s'en sert)
+
+  souvenirs.forEach((sv, i) => {
+    if (typeof sv.lat !== "number" || typeof sv.lng !== "number") return;
+    const m = L.marker([sv.lat, sv.lng], {
+      icon: creerIconeSouvenir(i + 1, sv.pictogramme, pictosPerso),
+    })
+      .bindTooltip(libelleTooltip(sv), {
+        direction: "top",
+        offset: [0, -38],
+        className: "tt-souvenir",
+      })
+      .on("click", () => ouvrirPanneau(sv)); // fiche en lecture seule (visu)
+    m.addTo(couche);
+    sv.marker = m;
+  });
+
+  // Les pictogrammes/textes libres de ce carnet, eux aussi affichés (figés).
+  (donnees.annotations || []).forEach((sa) => {
+    if (typeof sa.lat !== "number" || typeof sa.lng !== "number") return;
+    const type = sa.type === "picto" ? "picto" : "texte";
+    const a = {
+      type,
+      picto: sa.picto, texte: sa.texte, police: sa.police, couleur: sa.couleur,
+      taille: sa.taille || (type === "picto" ? 36 : 18),
+      align: sa.align, gras: sa.gras, italique: sa.italique,
+    };
+    L.marker([sa.lat, sa.lng], { icon: creerIconeAnnotation(a), interactive: false })
+      .addTo(couche);
+  });
+}
+
+/** Retire un carnet affiché en plus. */
+function retirerFantome(id) {
+  const f = etat.fantomes.get(id);
+  if (!f) return;
+  // Si la fiche ouverte appartient à ce carnet, on la ferme d'abord.
+  if (etat.souvenirActif && f.souvenirs.includes(etat.souvenirActif)) fermerPanneau();
+  f.couche.remove();
+  etat.fantomes.delete(id);
+}
+
+/** Retire tous les carnets affichés en plus. */
+function retirerTousFantomes() {
+  [...etat.fantomes.keys()].forEach(retirerFantome);
+}
+
+/** À l'entrée en visualisation : affiche les carnets cochés « visibles ». */
+function majFantomes() {
+  if (etat.mode !== "visualisation") {
+    retirerTousFantomes();
+    return;
+  }
+  etat.carnets.forEach((c) => {
+    if (c.id !== etat.carnetActifId && c.visible) afficherFantome(c.id);
+  });
 }
 
 /* =========================================================
@@ -1737,6 +3789,8 @@ function serialiserCarnet() {
       couverture: s.couverture,
       textes: s.textes,
       pictogramme: s.pictogramme || "souvenir",
+      dates: s.dates || [],
+      audios: s.audios || [],
     })),
     souvenirs: etat.souvenirs.map((s) => ({
       id: s.id,
@@ -1747,14 +3801,44 @@ function serialiserCarnet() {
       couverture: s.couverture,
       textes: s.textes,
       pictogramme: s.pictogramme || "souvenir",
+      dates: s.dates || [],               // dates ISO ("2026-07-14")
+      audios: s.audios || [],             // [{ src, legende, duree }]
+    })),
+    // Pictogrammes et textes posés librement sur le fond de carte.
+    annotations: etat.annotations.map((a) => ({
+      id: a.id,
+      type: a.type,
+      lat: a.lat,
+      lng: a.lng,
+      picto: a.picto,
+      texte: a.texte,
+      police: a.police,
+      couleur: a.couleur,
+      taille: a.taille,
+      align: a.align,
+      gras: a.gras,
+      italique: a.italique,
     })),
   };
+}
+
+/** Lit un tableau de dates sauvegardé (en ignorant ce qui n'est pas une chaîne). */
+function lireDates(dates) {
+  return Array.isArray(dates) ? dates.filter((d) => typeof d === "string") : [];
+}
+
+/** Lit un tableau d'enregistrements audio sauvegardé. */
+function lireAudios(audios) {
+  if (!Array.isArray(audios)) return [];
+  return audios
+    .filter((a) => a && typeof a.src === "string")
+    .map((a) => ({ src: a.src, legende: a.legende || "", duree: a.duree || 0 }));
 }
 
 /** Retire tous les souvenirs (et leurs marqueurs) de la carte. */
 function effacerSouvenirs() {
   etat.souvenirs.forEach((s) => {
-    if (s.marker) s.marker.remove();
+    if (s.marker) etat.grappe.removeLayer(s.marker);
     retirerLabel(s);
   });
   etat.souvenirs = [];
@@ -1785,6 +3869,8 @@ function restaurerCarnet(donnees) {
     couverture: s.couverture === undefined ? null : s.couverture,
     textes: s.textes || "",
     pictogramme: s.pictogramme || "souvenir",
+    dates: lireDates(s.dates),
+    audios: lireAudios(s.audios),
   }));
 
   effacerSouvenirs();
@@ -1800,6 +3886,8 @@ function restaurerCarnet(donnees) {
       couverture: sv.couverture === undefined ? null : sv.couverture,
       textes: sv.textes || "",
       pictogramme: sv.pictogramme || "souvenir",
+      dates: lireDates(sv.dates),
+      audios: lireAudios(sv.audios),
       marker: null,
       label: null,
     };
@@ -1809,8 +3897,34 @@ function restaurerCarnet(donnees) {
 
   renumeroterSouvenirs();
 
-  // On reprend le compteur d'identifiants là où il en était (souvenirs + réserve + pictos).
-  const maxId = [...etat.souvenirs, ...etat.stock, ...etat.pictosPerso]
+  // Les pictogrammes et textes posés sur le fond de carte.
+  effacerAnnotations();
+  (donnees.annotations || []).forEach((sa) => {
+    const type = sa.type === "picto" ? "picto" : "texte";
+    const base = type === "picto" ? ANNOT_PICTO_DEFAUT : ANNOT_TEXTE_DEFAUT;
+    if (typeof sa.lat !== "number" || typeof sa.lng !== "number") return;
+    const a = {
+      id: sa.id,
+      type,
+      lat: sa.lat,
+      lng: sa.lng,
+      picto: typeof sa.picto === "string" ? sa.picto : ANNOT_PICTO_DEFAUT.picto,
+      texte: typeof sa.texte === "string" ? sa.texte : ANNOT_TEXTE_DEFAUT.texte,
+      police: typeof sa.police === "string" ? sa.police : ANNOT_TEXTE_DEFAUT.police,
+      couleur: typeof sa.couleur === "string" ? sa.couleur : ANNOT_TEXTE_DEFAUT.couleur,
+      taille: typeof sa.taille === "number" ? sa.taille : base.taille,
+      align: ANNOT_ALIGN_CSS[sa.align] ? sa.align : ANNOT_TEXTE_DEFAUT.align,
+      gras: !!sa.gras,
+      italique: !!sa.italique,
+      marker: null,
+    };
+    etat.annotations.push(a);
+    attacherMarqueurAnnotation(a);
+  });
+
+  // On reprend le compteur d'identifiants là où il en était
+  // (souvenirs + réserve + pictos + annotations).
+  const maxId = [...etat.souvenirs, ...etat.stock, ...etat.pictosPerso, ...etat.annotations]
     .reduce((m, s) => Math.max(m, s.id || 0), 0);
   prochainIdSouvenir = donnees.prochainId || maxId + 1;
 
@@ -1830,7 +3944,15 @@ function planifierSauvegarde() {
 
 async function sauvegarderMaintenant() {
   try {
-    await dbSauver(serialiserCarnet());
+    const cle = "carnet-" + etat.carnetActifId;
+    // Garde-fou : on ne remplace JAMAIS un carnet sauvegardé (avec trace)
+    // par un état vide — protège les données si un chargement a raté.
+    if (!etat.trace) {
+      const existant = await dbChargerCle(cle).catch(() => null);
+      if (existant && existant.trace) return;
+    }
+    await dbSauverCle(cle, serialiserCarnet());
+    await sauverIndexCarnets();
     indiquerEnregistre();
   } catch (e) {
     toast("La sauvegarde locale a échoué (stockage plein ?).", true);
@@ -1859,7 +3981,8 @@ function exporterCarnet() {
   const blob = new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
 
-  const nomBrut = etat.trace.name || "carnet";
+  const carnet = carnetActif();
+  const nomBrut = (carnet && carnet.nom) || etat.trace.name || "carnet";
   const nomFichier = "carnet-" + nomBrut.replace(/[^\w\-]+/g, "_");
 
   const a = document.createElement("a");
@@ -1868,6 +3991,210 @@ function exporterCarnet() {
   a.click();
   URL.revokeObjectURL(url);
   toast("Carnet exporté");
+}
+
+/* ---------- Export de la carte en image PNG ----------
+   On utilise dom-to-image-more (bien plus fidèle que html2canvas avec les
+   cartes Leaflet/MapLibre : transformations, polices, calques). Le canvas
+   WebGL du fond vectoriel est d'abord FIGÉ en image, car un canvas ne
+   survit pas au clonage de la page pendant la capture. */
+
+// La bibliothèque de capture est chargée seulement au premier export.
+let domToImagePromesse = null;
+function chargerDomToImage() {
+  if (window.domtoimage) return Promise.resolve(window.domtoimage);
+  if (!domToImagePromesse) {
+    domToImagePromesse = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://unpkg.com/dom-to-image-more@3.5.0/dist/dom-to-image-more.min.js";
+      script.onload = () => resolve(window.domtoimage);
+      script.onerror = () => {
+        domToImagePromesse = null;
+        reject(new Error("Bibliothèque d'export indisponible"));
+      };
+      document.head.appendChild(script);
+    });
+  }
+  return domToImagePromesse;
+}
+
+/** Dessine un élément SVG (trace, rose des vents…) sur le canvas de sortie. */
+async function dessinerSvgSurCanvas(ctx, svg, r) {
+  const clone = svg.cloneNode(true);
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  clone.style.transform = ""; // pas de position d'écran dans l'image
+  const texte = new XMLSerializer().serializeToString(clone);
+  const image = new Image();
+  await new Promise((ok, ko) => {
+    image.onload = ok;
+    image.onerror = () => ko(new Error("SVG illisible"));
+    image.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(texte);
+  });
+  ctx.drawImage(image, r.x, r.y, r.l, r.h);
+}
+
+/**
+ * Compose l'image de la carte couche par couche, dans un canvas :
+ * fond (tuiles ou vectoriel) → trace → parchemin → épingles/étiquettes/textes
+ * (rendus un par un : un élément récalcitrant n'efface pas les autres) →
+ * décor (bordure, rose des vents) et titre. Renvoie le canvas.
+ * `zone` peut appartenir à une autre fenêtre (l'affiche) ; `domtoimage` est
+ * l'instance de la bibliothèque de capture chargée dans cette fenêtre-là.
+ */
+async function composerImageCarte(zone, echelle, domtoimage) {
+  const doc = zone.ownerDocument;
+  const rZone = zone.getBoundingClientRect();
+  const L2 = Math.max(1, Math.round(rZone.width * echelle));
+  const H2 = Math.max(1, Math.round(rZone.height * echelle));
+
+  const sortie = doc.createElement("canvas");
+  sortie.width = L2;
+  sortie.height = H2;
+  const ctx = sortie.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, L2, H2);
+
+  // Position d'un élément dans l'image (par rapport au coin de la zone).
+  const rectDe = (el) => {
+    const r = el.getBoundingClientRect();
+    return {
+      x: (r.left - rZone.left) * echelle,
+      y: (r.top - rZone.top) * echelle,
+      l: r.width * echelle,
+      h: r.height * echelle,
+    };
+  };
+  const visible = (r) => r.l > 0 && r.h > 0 && r.x < L2 && r.y < H2 && r.x + r.l > 0 && r.y + r.h > 0;
+
+  // 1) Le fond : tuiles d'images (fonds classiques) et/ou canvas vectoriel,
+  //    composés d'abord à part pour recevoir la teinte d'ambiance d'un bloc.
+  const fond = doc.createElement("canvas");
+  fond.width = L2;
+  fond.height = H2;
+  const fctx = fond.getContext("2d");
+  zone.querySelectorAll(".leaflet-tile-pane img.leaflet-tile").forEach((tuile) => {
+    if (!tuile.complete || !tuile.naturalWidth) return;
+    const r = rectDe(tuile);
+    if (!visible(r)) return;
+    try { fctx.drawImage(tuile, r.x, r.y, r.l, r.h); } catch (e) { /* tuile non exportable */ }
+  });
+  const canvasGl = zone.querySelector("canvas.maplibregl-canvas");
+  if (canvasGl) {
+    const r = rectDe(canvasGl);
+    try { fctx.drawImage(canvasGl, r.x, r.y, r.l, r.h); } catch (e) {}
+  }
+  const paneTuiles = zone.querySelector(".leaflet-tile-pane");
+  const filtreAmbiance = paneTuiles ? doc.defaultView.getComputedStyle(paneTuiles).filter : "none";
+  ctx.filter = (filtreAmbiance && filtreAmbiance !== "none") ? filtreAmbiance : "none";
+  ctx.drawImage(fond, 0, 0);
+  ctx.filter = "none";
+
+  // 2) La trace (et les repères ronds) : calques SVG de Leaflet.
+  for (const svg of zone.querySelectorAll(".leaflet-overlay-pane svg")) {
+    const r = rectDe(svg);
+    if (!visible(r)) continue;
+    try { await dessinerSvgSurCanvas(ctx, svg, r); } catch (e) {}
+  }
+
+  // 3) Le grain de parchemin (fondu "multiply", comme à l'écran).
+  const parchemin = doc.getElementById("parchemin");
+  if (parchemin && doc.defaultView.getComputedStyle(parchemin).display !== "none") {
+    ctx.globalCompositeOperation = "multiply";
+    ctx.fillStyle = doc.defaultView.getComputedStyle(parchemin).backgroundColor;
+    ctx.fillRect(0, 0, L2, H2);
+    const vignette = ctx.createRadialGradient(
+      L2 / 2, H2 / 2, Math.min(L2, H2) * 0.32,
+      L2 / 2, H2 / 2, Math.hypot(L2, H2) / 2
+    );
+    vignette.addColorStop(0, "rgba(120,85,40,0)");
+    vignette.addColorStop(1, "rgba(78,52,22,0.6)");
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, L2, H2);
+    ctx.globalCompositeOperation = "source-over";
+  }
+
+  // Rendu d'un élément HTML isolé (épingle, étiquette, cartouche, bordure).
+  const dessinerElement = async (el) => {
+    if (!el || el.hidden) return;
+    // Les textes/pictogrammes libres ont un marqueur de taille nulle dont le
+    // contenu déborde : on mesure et on dessine alors ce contenu-là.
+    let cible = el;
+    let r = rectDe(el);
+    if ((r.l < 2 || r.h < 2) && el.firstElementChild) {
+      cible = el.firstElementChild;
+      r = rectDe(cible);
+    }
+    if (!visible(r)) return;
+    const opacite = parseFloat(doc.defaultView.getComputedStyle(el).opacity);
+    if (opacite < 0.05) return; // étiquette masquée (souvenir dans une grappe)
+    try {
+      const png = await domtoimage.toPng(cible, {
+        bgcolor: null,
+        // On neutralise le POSITIONNEMENT (transform de Leaflet) pendant le
+        // rendu isolé : sinon le contenu est dessiné hors du cadre.
+        style: { transform: "none", position: "static", left: "auto", top: "auto", margin: "0" },
+        width: Math.max(1, Math.round(r.l / echelle)),
+        height: Math.max(1, Math.round(r.h / echelle)),
+      });
+      const image = new Image();
+      await new Promise((ok, ko) => {
+        image.onload = ok;
+        image.onerror = () => ko(new Error("élément illisible"));
+        image.src = png;
+      });
+      ctx.globalAlpha = Math.min(1, opacite || 1);
+      ctx.drawImage(image, r.x, r.y, r.l, r.h);
+      ctx.globalAlpha = 1;
+    } catch (e) { /* on continue sans cet élément */ }
+  };
+
+  // 4) Épingles (souvenirs, grappes, pictogrammes, textes) puis étiquettes.
+  for (const el of zone.querySelectorAll(".leaflet-marker-pane .leaflet-marker-icon")) {
+    await dessinerElement(el);
+  }
+  for (const el of zone.querySelectorAll(".leaflet-tooltip-pane .leaflet-tooltip")) {
+    await dessinerElement(el);
+  }
+
+  // 5) Le décor par-dessus : bordure, rose des vents, cartouche de titre.
+  const bordure = doc.getElementById("bordure-carte");
+  if (bordure && !bordure.hidden) await dessinerElement(bordure);
+  const rose = doc.getElementById("rose-carte") || doc.getElementById("rose-vents");
+  if (rose && !rose.hidden) {
+    const r = rectDe(rose);
+    const svgRose = rose.querySelector("svg");
+    const imgRose = rose.querySelector("img");
+    if (svgRose && visible(r)) {
+      try { await dessinerSvgSurCanvas(ctx, svgRose, r); } catch (e) {}
+    } else if (imgRose && visible(r)) {
+      try { ctx.drawImage(imgRose, r.x, r.y, r.l, r.h); } catch (e) {}
+    }
+  }
+  const titre = doc.getElementById("carte-titre");
+  if (titre && !titre.hidden) await dessinerElement(titre);
+
+  return sortie;
+}
+
+/** Capture la carte (fond + trace + épingles + décor) et la télécharge en PNG. */
+async function exporterImagePng() {
+  if (!etat.trace) {
+    toast("Charge d'abord une trace avant d'exporter.", true);
+    return;
+  }
+  toast("Préparation de l'image… (quelques secondes)");
+  try {
+    const domtoimage = await chargerDomToImage();
+    const canvas = await composerImageCarte(document.querySelector("main.layout"), 2, domtoimage);
+    const lien = document.createElement("a");
+    const nom = (carnetActif() && carnetActif().nom) || "carte";
+    lien.download = "carte-" + nom.replace(/[^\w\-]+/g, "_") + ".png";
+    lien.href = canvas.toDataURL("image/png");
+    lien.click();
+    toast("Image PNG exportée");
+  } catch (e) {
+    toast("Export en image impossible ici. Essaie plutôt « Affiche PDF ».", true);
+  }
 }
 
 /* ---------- Export "affiche" (PDF, via une fenêtre d'impression à part) ---------- */
@@ -1893,7 +4220,7 @@ function ouvrirModalAffiche() {
   }
   majSegment("affiche-format", "format", reglagesAffiche.format);
   majSegment("affiche-orientation", "orientation", reglagesAffiche.orientation);
-  majSegment("affiche-police", "police", reglagesAffiche.police);
+  majBoutonPolice("affiche");
   document.getElementById("affiche-couleur").value = reglagesAffiche.couleur;
   document.getElementById("modal-affiche").hidden = false;
 }
@@ -1937,47 +4264,18 @@ async function reinitialiserCarnet() {
   );
   if (!ok) return;
 
-  // On vide l'état et la carte.
-  desarmerAjout();
-  effacerSouvenirs();
-  etat.stock = [];
-  etat.pictosPerso = [];
-  construirePictos();
-  fermerReserve();
-  if (etat.coucheTrace) { etat.coucheTrace.remove(); etat.coucheTrace = null; }
-  etat.trace = null;
-  prochainIdSouvenir = 1;
-
-  // On remet le style par défaut (fond, ambiance, titre).
-  etat.style = JSON.parse(JSON.stringify(STYLE_DEFAUT));
-  appliquerFond(etat.style.fond);
-  appliquerAmbiance(etat.style.ambiance);
-  appliquerTitre();
-  fermerPanneauStyle();
-
-  // On recentre la carte sur la vue par défaut (la France).
-  etat.carte.setView([46.6, 2.5], 6);
-
-  // On revient en mode édition pour le prochain carnet.
+  // On vide l'écran, on revient en édition, et on efface la sauvegarde
+  // de CE carnet (les autres carnets ne sont pas touchés).
+  viderCarnetCourant();
   definirMode("edition");
-
-  // On masque les boutons liés à une trace et on réaffiche l'accueil.
-  document.getElementById("btn-mode").hidden = true;
-  document.getElementById("btn-ajout-souvenir").hidden = true;
-  document.getElementById("btn-reserve").hidden = true;
-  document.getElementById("btn-style").hidden = true;
-  document.getElementById("btn-exporter").hidden = true;
-  document.getElementById("btn-export-affiche").hidden = true;
-  document.getElementById("btn-reinitialiser").hidden = true;
-  document.getElementById("trace-info").hidden = true;
-  document.getElementById("welcome").hidden = false;
-
-  // On efface la sauvegarde locale pour ne pas la recharger au prochain départ.
-  try { await dbEffacer(); } catch (e) { /* rien à faire si déjà vide */ }
+  try { await dbEffacerCle("carnet-" + etat.carnetActifId); } catch (e) {}
   toast("Carte réinitialisée");
 }
 
-/** Lit un fichier .json choisi et restaure le carnet qu'il contient. */
+/**
+ * Lit un fichier .json choisi et l'importe comme un NOUVEAU carnet
+ * (le carnet en cours est sauvegardé, rien n'est écrasé).
+ */
 function importerCarnetFichier(fichier) {
   if (!fichier) return;
   const lecteur = new FileReader();
@@ -1988,9 +4286,18 @@ function importerCarnetFichier(fichier) {
       if (!donnees || !donnees.trace) {
         throw new Error("Ce fichier n'est pas un carnet valide.");
       }
+      await sauvegarderMaintenant(); // met le carnet courant à l'abri
+      retirerTousFantomes();
+
+      const id = Math.max(0, ...etat.carnets.map((c) => c.id)) + 1;
+      const nom = (donnees.trace && donnees.trace.name) || "Carnet importé";
+      etat.carnets.push({ id, nom, visible: true });
+      etat.carnetActifId = id;
+
       restaurerCarnet(donnees);
       await sauvegarderMaintenant();
-      toast("Carnet importé");
+      renderCarnets();
+      toast(`Importé comme nouveau carnet « ${nom} »`);
     } catch (e) {
       toast(e.message || "Import impossible.", true);
     }
@@ -1998,18 +4305,7 @@ function importerCarnetFichier(fichier) {
   lecteur.readAsText(fichier);
 }
 
-/** Au démarrage : recharge le carnet précédemment sauvegardé, s'il existe. */
-async function chargerCarnetSauvegarde() {
-  try {
-    const donnees = await dbCharger();
-    if (donnees && donnees.trace) {
-      restaurerCarnet(donnees);
-      toast("Carnet précédent rechargé");
-    }
-  } catch (e) {
-    // Pas de carnet ou IndexedDB indisponible : on démarre à vide, sans bruit.
-  }
-}
+// (Le rechargement au démarrage est géré par demarrerCarnets(), plus haut.)
 
 /* =========================================================
    Mode Édition / Visualisation (lecture seule)
@@ -2035,16 +4331,42 @@ function definirMode(mode) {
   legende.placeholder = vue ? "" : "Ajouter une légende à cette photo…";
 
   // En visualisation : on coupe l'ajout en cours et le panneau Style.
+  // Un enregistrement audio en cours s'arrête au changement de mode.
+  arreterEnregistrementAudio();
+
   if (vue) {
     desarmerAjout();
     fermerPanneauStyle();
+    fermerPanneauFond(); // met aussi fin à la pose/sélection d'un élément
+  } else {
+    // Retour en édition : plus de filtre, tout le monde réapparaît.
+    fermerPanneauFiltre();
+    reinitialiserFiltre();
   }
+
+  // La fiche affiche les dates/audios différemment selon le mode.
+  if (etat.souvenirActif) {
+    afficherDates(etat.souvenirActif);
+    afficherAudios(etat.souvenirActif);
+  }
+
+  // Carnets affichés en plus : seulement en visualisation.
+  majFantomes();
+  // Le panneau des carnets change de contenu selon le mode.
+  if (!document.getElementById("panneau-carnets").hidden) renderCarnets();
 
   // Les épingles ne se déplacent qu'en édition.
   etat.souvenirs.forEach((s) => {
     if (!s.marker || !s.marker.dragging) return;
     if (vue) s.marker.dragging.disable();
     else s.marker.dragging.enable();
+  });
+
+  // Même chose pour les pictogrammes et textes posés sur le fond de carte.
+  etat.annotations.forEach((a) => {
+    if (!a.marker || !a.marker.dragging) return;
+    if (vue) a.marker.dragging.disable();
+    else a.marker.dragging.enable();
   });
 
   // Le fond assombri (pop up) ne concerne que la visualisation.
@@ -2103,7 +4425,7 @@ function renderReserve() {
       vign.appendChild(im);
       vign.classList.add("reserve-vignette-vide");
     } else {
-      vign.textContent = PICTO_GLYPH[item.pictogramme] || "📝";
+      vign.textContent = glyphDePicto(item.pictogramme) || "📝";
       vign.classList.add("reserve-vignette-vide");
     }
 
@@ -2136,6 +4458,8 @@ function creerStock() {
     photos: [],
     couverture: null,
     pictogramme: "souvenir",
+    dates: [],
+    audios: [],
   };
   etat.stock.push(item);
   ouvrirStockEdition(item);
@@ -2166,7 +4490,7 @@ function renderStockPourModal() {
     const perso = obtenirPictoPerso(item.pictogramme);
     const icone = perso
       ? `<img class="modal-stock-icone" src="${perso.src}" alt="">`
-      : `<span class="modal-stock-icone-emoji">${PICTO_GLYPH[item.pictogramme] || "📝"}</span>`;
+      : `<span class="modal-stock-icone-emoji">${glyphDePicto(item.pictogramme) || "📝"}</span>`;
     b.innerHTML = icone + echapperHtml(item.nom || "Sans nom");
     b.addEventListener("click", () => appliquerStockSurCarte(item));
     liste.appendChild(b);
@@ -2184,6 +4508,8 @@ function appliquerStockSurCarte(item) {
     photos: item.photos,
     couverture: item.couverture,
     pictogramme: item.pictogramme,
+    dates: item.dates,
+    audios: item.audios,
   }, false);
   etat.stock = etat.stock.filter((x) => x.id !== item.id);
   document.getElementById("modal-nom").hidden = true;
@@ -2407,6 +4733,7 @@ function basculerMenu() {
    5. Démarrage : on branche les boutons et on crée la carte
    --------------------------------------------------------- */
 function init() {
+  enregistrerProtocoleLisse(); // l'arrondi des tuiles vectorielles
   initCarte();
 
   // Les deux boutons "Charger un GPX" (barre du haut + écran d'accueil)
@@ -2469,6 +4796,13 @@ function init() {
       e.target.value = ""; // permet de réimporter le même fichier ensuite
       ajouterPictoPerso(fichier);
     });
+  // Émoji libre : bouton "Utiliser" ou touche Entrée dans le champ.
+  document.getElementById("picto-emoji-ok")
+    .addEventListener("click", appliquerEmojiSaisi);
+  document.getElementById("picto-emoji-input")
+    .addEventListener("keydown", (e) => {
+      if (e.key === "Enter") appliquerEmojiSaisi();
+    });
 
   // --- Photos et récit ---
   document.getElementById("ajout-photos")
@@ -2516,6 +4850,120 @@ function init() {
   document.getElementById("fermer-style")
     .addEventListener("click", fermerPanneauStyle);
 
+  // --- Panneau Fond de carte ---
+  document.getElementById("btn-fond")
+    .addEventListener("click", ouvrirPanneauFond);
+  document.getElementById("fermer-fond")
+    .addEventListener("click", fermerPanneauFond);
+  // Simplification des tracés : préréglages + réglage fin numérique.
+  const choisirSimplification = (v) => {
+    const niveau = lireSimplification(v, 14);
+    etat.style.vecteur.simplification = niveau;
+    majSegment("vecteur-simplification", "simplification", String(niveau));
+    document.getElementById("simplification-valeur").value = niveau;
+    appliquerSimplificationVecteur();
+    planifierSauvegarde();
+  };
+  brancherSegment("vecteur-simplification", "simplification", choisirSimplification);
+  document.getElementById("simplification-valeur")
+    .addEventListener("change", (e) => choisirSimplification(e.target.value));
+
+  // --- Pictogrammes et textes posés sur le fond de carte ---
+  document.getElementById("btn-ajout-annot-picto")
+    .addEventListener("click", () => armerAjoutAnnotation("picto"));
+  document.getElementById("btn-ajout-annot-texte")
+    .addEventListener("click", () => armerAjoutAnnotation("texte"));
+  document.getElementById("annuler-annot")
+    .addEventListener("click", desarmerAjoutAnnotation);
+  document.getElementById("annot-terminer")
+    .addEventListener("click", deselectionnerAnnotation);
+  document.getElementById("annot-supprimer")
+    .addEventListener("click", supprimerAnnotationActive);
+  document.getElementById("annot-choisir-picto")
+    .addEventListener("click", ouvrirPictoPickerAnnotation);
+  document.getElementById("annot-texte")
+    .addEventListener("input", (e) => majAnnotationActive({ texte: e.target.value }));
+  document.getElementById("annot-couleur")
+    .addEventListener("input", (e) => majAnnotationActive({ couleur: e.target.value }));
+  document.getElementById("annot-taille")
+    .addEventListener("input", (e) => {
+      const taille = parseInt(e.target.value, 10);
+      document.getElementById("annot-taille-val").textContent = taille;
+      majAnnotationActive({ taille });
+    });
+  brancherSegment("annot-align", "align", (v) => {
+    majSegment("annot-align", "align", v);
+    majAnnotationActive({ align: v });
+  });
+  document.getElementById("annot-gras")
+    .addEventListener("click", (e) => {
+      const a = etat.annotationActive;
+      if (!a) return;
+      majAnnotationActive({ gras: !a.gras });
+      e.target.classList.toggle("actif", a.gras);
+    });
+  document.getElementById("annot-italique")
+    .addEventListener("click", (e) => {
+      const a = etat.annotationActive;
+      if (!a) return;
+      majAnnotationActive({ italique: !a.italique });
+      e.target.classList.toggle("actif", a.italique);
+    });
+
+  // --- Fenêtre de choix de police (catalogue + import) ---
+  document.getElementById("police-btn-labels")
+    .addEventListener("click", () => ouvrirPolicePicker("labels"));
+  document.getElementById("police-btn-titre")
+    .addEventListener("click", () => ouvrirPolicePicker("titre"));
+  document.getElementById("police-btn-annot")
+    .addEventListener("click", () => ouvrirPolicePicker("annot"));
+  document.getElementById("police-btn-affiche")
+    .addEventListener("click", () => ouvrirPolicePicker("affiche"));
+  document.getElementById("fermer-police")
+    .addEventListener("click", fermerPolicePicker);
+  document.getElementById("police-import")
+    .addEventListener("change", (e) => {
+      const fichier = e.target.files[0];
+      e.target.value = "";
+      importerPolicePerso(fichier);
+    });
+
+  // --- Dates des souvenirs ---
+  document.getElementById("ajout-date")
+    .addEventListener("click", ajouterDate);
+  document.getElementById("btn-trier-dates")
+    .addEventListener("click", trierSouvenirsParDate);
+
+  // --- Enregistrements audio ---
+  document.getElementById("audio-enregistrer")
+    .addEventListener("click", basculerEnregistrementAudio);
+
+  // --- Filtre des souvenirs (mode visualisation) ---
+  document.getElementById("btn-filtrer")
+    .addEventListener("click", ouvrirPanneauFiltre);
+  document.getElementById("fermer-filtre")
+    .addEventListener("click", fermerPanneauFiltre);
+  document.getElementById("filtre-du")
+    .addEventListener("change", (e) => {
+      etat.filtre.du = e.target.value;
+      appliquerFiltreSouvenirs();
+    });
+  document.getElementById("filtre-au")
+    .addEventListener("change", (e) => {
+      etat.filtre.au = e.target.value;
+      appliquerFiltreSouvenirs();
+    });
+  document.getElementById("filtre-reset")
+    .addEventListener("click", reinitialiserFiltre);
+
+  // --- Mes carnets ---
+  document.getElementById("btn-carnets")
+    .addEventListener("click", ouvrirPanneauCarnets);
+  document.getElementById("fermer-carnets")
+    .addEventListener("click", fermerPanneauCarnets);
+  document.getElementById("carnet-nouveau")
+    .addEventListener("click", nouveauCarnet);
+
   // --- Réserve de souvenirs ---
   document.getElementById("btn-reserve")
     .addEventListener("click", ouvrirReserve);
@@ -2545,6 +4993,14 @@ function init() {
       planifierSauvegarde();
     });
 
+  // Style du cartouche de titre (classique, parchemin, pirate, sombre)
+  brancherSegment("titre-fond", "titrefond", (v) => {
+    etat.style.titreFond = TITRE_FONDS.includes(v) ? v : "classique";
+    majSegment("titre-fond", "titrefond", etat.style.titreFond);
+    appliquerTitre();
+    planifierSauvegarde();
+  });
+
   // Couleur personnalisée du tracé
   document.getElementById("trace-couleur-perso")
     .addEventListener("input", (e) => choisirCouleurTrace(e.target.value));
@@ -2570,6 +5026,7 @@ function init() {
     majSegment("fond-carte", "fond", v);
     basculerBlocPerso(v === "perso");
     basculerBlocVecteur(v === "vectoriel");
+    document.getElementById("fond-aide-vectoriel").hidden = v === "vectoriel";
     appliquerFond(v);
     planifierSauvegarde();
   });
@@ -2582,8 +5039,45 @@ function init() {
     });
   document.getElementById("zones-reset")
     .addEventListener("click", reinitialiserZonesVecteur);
-  document.getElementById("preset-ancienne")
-    .addEventListener("click", appliquerPresetAncienne);
+
+  // Styles médiévaux prêts à l'emploi.
+  brancherSegment("preset-fond", "preset", appliquerPresetFond);
+
+  // Couches géographiques affichées / masquées.
+  document.querySelectorAll(".couches-liste input[data-couche]").forEach((inp) => {
+    inp.addEventListener("change", () => {
+      etat.style.vecteur.couches[inp.dataset.couche] = inp.checked;
+      // On recharge le style pour ré-afficher proprement une couche recochée.
+      appliquerSimplificationVecteur();
+      planifierSauvegarde();
+    });
+  });
+
+  // Décor : rose des vents et bordure (case = afficher, bouton = choisir le style).
+  document.getElementById("decor-rose")
+    .addEventListener("change", (e) => {
+      etat.style.decor.rose = e.target.checked ? (lireCleDecor(etat.style.decor.rose, "classique") || "classique") : false;
+      appliquerDecor();
+      planifierSauvegarde();
+    });
+  document.getElementById("decor-bordure")
+    .addEventListener("change", (e) => {
+      etat.style.decor.bordure = e.target.checked ? (lireCleDecor(etat.style.decor.bordure, "double") || "double") : false;
+      appliquerDecor();
+      planifierSauvegarde();
+    });
+  document.getElementById("decor-rose-choisir")
+    .addEventListener("click", () => ouvrirDecorPicker("rose"));
+  document.getElementById("decor-bordure-choisir")
+    .addEventListener("click", () => ouvrirDecorPicker("bordure"));
+  document.getElementById("fermer-decor")
+    .addEventListener("click", fermerDecorPicker);
+  document.getElementById("decor-import")
+    .addEventListener("change", (e) => {
+      const fichier = e.target.files[0];
+      e.target.value = "";
+      importerDecorPerso(fichier);
+    });
 
   // Fond personnalisé : exemples + saisie d'adresse
   construireExemplesFond();
@@ -2598,34 +5092,42 @@ function init() {
       appliquerStyleLabels();
       planifierSauvegarde();
     });
-  brancherSegment("labels-police", "police", (v) => {
-    etat.style.labels.police = v;
-    majSegment("labels-police", "police", v);
-    appliquerStyleLabels();
-    planifierSauvegarde();
-  });
   brancherSegment("labels-taille", "taille", (v) => {
     etat.style.labels.taille = v;
     majSegment("labels-taille", "taille", v);
+    document.getElementById("labels-taille-valeur").value = parseInt(TAILLES[v], 10);
     appliquerStyleLabels();
     planifierSauvegarde();
   });
+  // Taille des noms : réglage fin numérique (en pixels).
+  document.getElementById("labels-taille-valeur")
+    .addEventListener("change", (e) => {
+      etat.style.labels.taille = lireTailleLabels(e.target.value, "moyen");
+      majSegment("labels-taille", "taille", String(etat.style.labels.taille));
+      appliquerStyleLabels();
+      planifierSauvegarde();
+    });
   brancherSegment("ambiance-carte", "ambiance", (v) => {
     etat.style.ambiance = v;
     majSegment("ambiance-carte", "ambiance", v);
     appliquerAmbiance(v);
     planifierSauvegarde();
   });
-  brancherSegment("lissage-carte", "lissage", (v) => {
-    etat.style.lissage = v;
-    majSegment("lissage-carte", "lissage", v);
-    appliquerFiltreFond();
+  // Arrondi des formes : préréglages + réglage fin numérique.
+  const choisirArrondi = (passes) => {
+    etat.style.arrondi = lireArrondi(passes);
+    majSegment("arrondi-carte", "arrondi", String(etat.style.arrondi));
+    document.getElementById("arrondi-valeur").value = etat.style.arrondi;
+    appliquerSimplificationVecteur(); // recharge les tuiles, arrondies
     planifierSauvegarde();
-  });
+  };
+  brancherSegment("arrondi-carte", "arrondi", choisirArrondi);
+  document.getElementById("arrondi-valeur")
+    .addEventListener("change", (e) => choisirArrondi(e.target.value));
   brancherSegment("vecteur-detail", "detail", (v) => {
     etat.style.vecteur.detail = v;
     majSegment("vecteur-detail", "detail", v);
-    appliquerNiveauDetail(v === "epure" || etat.style.vecteur.preset === "ancienne");
+    appliquerNiveauDetail(v === "epure" || !!PRESETS_FOND[etat.style.vecteur.preset]);
     planifierSauvegarde();
   });
 
@@ -2634,6 +5136,8 @@ function init() {
     .addEventListener("click", exporterCarnet);
   document.getElementById("btn-export-affiche")
     .addEventListener("click", ouvrirModalAffiche);
+  document.getElementById("btn-export-png")
+    .addEventListener("click", exporterImagePng);
   document.getElementById("btn-reinitialiser")
     .addEventListener("click", reinitialiserCarnet);
 
@@ -2654,10 +5158,6 @@ function init() {
     reglagesAffiche.orientation = v;
     majSegment("affiche-orientation", "orientation", v);
   });
-  brancherSegment("affiche-police", "police", (v) => {
-    reglagesAffiche.police = v;
-    majSegment("affiche-police", "police", v);
-  });
   document.getElementById("affiche-couleur")
     .addEventListener("input", (e) => { reglagesAffiche.couleur = e.target.value; });
   document.getElementById("btn-mode")
@@ -2673,8 +5173,9 @@ function init() {
       e.target.value = ""; // permet de réimporter le même fichier
     });
 
-  // Au démarrage, on tente de recharger le carnet sauvegardé localement.
-  chargerCarnetSauvegarde();
+  // Au démarrage : ressources partagées (polices, décors importés), puis
+  // l'index des carnets et le rechargement du carnet ouvert.
+  chargerRessourcesGlobales().then(demarrerCarnets);
 
   // On enregistre le service worker (pour l'installation et le hors-ligne).
   if ("serviceWorker" in navigator) {
@@ -2726,11 +5227,18 @@ function init() {
     // 2) Échap : annule l'ajout en cours, sinon ferme ce qui est ouvert.
     if (e.key === "Escape") {
       if (!document.getElementById("menu-actions").hidden) fermerMenu();
+      else if (!document.getElementById("modal-police").hidden) fermerPolicePicker();
+      else if (!document.getElementById("modal-decor").hidden) fermerDecorPicker();
       else if (!document.getElementById("modal-generer").hidden) fermerGenerer();
       else if (!document.getElementById("modal-affiche").hidden) fermerModalAffiche();
       else if (!document.getElementById("modal-picto").hidden) fermerPictoPicker();
       else if (!document.getElementById("modal-nom").hidden) fermerModalNom();
+      else if (etat.modeAnnotation) desarmerAjoutAnnotation();
       else if (etat.modeAjout) desarmerAjout();
+      else if (etat.annotationActive) deselectionnerAnnotation();
+      else if (!document.getElementById("panneau-fond-carte").hidden) fermerPanneauFond();
+      else if (!document.getElementById("panneau-filtre").hidden) fermerPanneauFiltre();
+      else if (!document.getElementById("panneau-carnets").hidden) fermerPanneauCarnets();
       else if (!document.getElementById("panneau-style").hidden) fermerPanneauStyle();
       else if (!document.getElementById("panneau").hidden) fermerPanneau();
       else if (!document.getElementById("panneau-reserve").hidden) fermerReserve();

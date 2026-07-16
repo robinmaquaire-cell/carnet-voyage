@@ -12,6 +12,12 @@
   <!-- MapLibre GL : moteur de carte "vectorielle" (fond personnalisable) -->
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
 
+  <!-- Polices médiévales (mêmes choix que dans l'application) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" crossorigin="anonymous"
+        href="https://fonts.googleapis.com/css2?family=UnifrakturMaguntia&family=Pirata+One&display=swap" />
+
   <!-- Nos styles à nous (partagés avec l'application principale) -->
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -22,9 +28,10 @@
   <div id="barre-impression" class="barre-impression">
     <span id="barre-texte">Préparation de l'affiche…</span>
     <span id="barre-reglages" class="barre-reglages" hidden>
-      <label>Zoom <input id="champ-zoom" type="number" step="0.01" min="1" value="100.00" /> %</label>
-      <label>Rotation <input id="champ-rotation" type="number" step="0.1" value="0" /> °</label>
+      <label>Zoom <input id="champ-zoom" type="number" step="1" min="1" value="100" /> %</label>
+      <label>Rotation <input id="champ-rotation" type="number" step="1" value="0" /> °</label>
     </span>
+    <button id="btn-image" class="barre-btn-imprimer" hidden>🖼️ Image PNG</button>
     <button id="btn-imprimer" class="barre-btn-imprimer" hidden>🖨️ Imprimer</button>
   </div>
 
@@ -33,6 +40,8 @@
     <div id="map" class="map"></div>
     <div id="parchemin" class="parchemin"></div>
     <div id="carte-titre" class="carte-titre" hidden></div>
+    <!-- Bordure décorative (activée via le panneau Fond de carte → Décor) -->
+    <div id="bordure-carte" class="bordure-carte" hidden></div>
     <!-- Rose des vents : indique le nord quand la carte est tournée (imprimée) -->
     <div id="rose-vents" class="rose-vents" hidden>
       <svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">

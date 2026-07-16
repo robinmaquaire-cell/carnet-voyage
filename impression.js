@@ -25,6 +25,7 @@
   const etatParent = parent.etat;
   const trace = etatParent.trace;
   const souvenirs = etatParent.souvenirs;
+  const annotations = etatParent.annotations || []; // pictogrammes/textes libres
   const style = etatParent.style || {};
   const pictosPerso = etatParent.pictosPerso || [];
   const reglages = parent.reglagesAffiche || {
@@ -56,7 +57,45 @@
     serif:   { css: 'Georgia, "Times New Roman", serif' },
     etroite: { css: '"Arial Narrow", "Roboto Condensed", sans-serif' },
     titre:   { css: '"Bricolage Grotesque", "Avenir Next", sans-serif' },
+    medievale: { css: '"UnifrakturMaguntia", "Luminari", fantasy' },
+    pirate:    { css: '"Pirata One", "Luminari", fantasy' },
   };
+
+  // Polices importées dans l'application : on les déclare aussi ici pour
+  // que l'affiche puisse les utiliser.
+  (etatParent.policesPerso || []).forEach((p) => {
+    try {
+      const face = new FontFace("PolicePerso" + p.id, `url(${p.data})`);
+      face.load().then((f) => document.fonts.add(f)).catch(() => {});
+    } catch (e) { /* la police restera en repli système */ }
+  });
+
+  // Familles Google déjà demandées dans CETTE fenêtre.
+  const famillesDemandees = new Set();
+
+  /** Traduit une clé de police (catalogue du parent, importée, ou repli). */
+  function cssPolice(cle) {
+    try {
+      if (typeof cle === "string" && cle.startsWith("fontperso:")) {
+        return `"PolicePerso${cle.slice("fontperso:".length)}", sans-serif`;
+      }
+      const catalogue = parent.CATALOGUE_POLICES || [];
+      const entree = catalogue.find((p) => p.cle === cle);
+      if (entree) {
+        if (entree.famille && !famillesDemandees.has(entree.famille)) {
+          famillesDemandees.add(entree.famille);
+          const lien = document.createElement("link");
+          lien.rel = "stylesheet";
+          lien.crossOrigin = "anonymous";
+          lien.href = "https://fonts.googleapis.com/css2?family=" +
+            encodeURIComponent(entree.famille).replace(/%20/g, "+") + "&display=swap";
+          document.head.appendChild(lien);
+        }
+        return entree.css;
+      }
+    } catch (e) { /* catalogue inaccessible : repli */ }
+    return (POLICES[cle] || POLICES.systeme).css;
+  }
   const PICTOS = [
     { cle: "souvenir", glyph: "" },
     { cle: "depart",   glyph: "🚩" },
@@ -73,6 +112,12 @@
     { cle: "ville",    glyph: "🏙️" },
   ];
   const PICTO_GLYPH = Object.fromEntries(PICTOS.map((p) => [p.cle, p.glyph]));
+
+  // "emoji:🦄" = émoji librement choisi ; sinon clé prédéfinie (ou rien).
+  function glyphDePicto(cle) {
+    if (typeof cle === "string" && cle.startsWith("emoji:")) return cle.slice("emoji:".length);
+    return PICTO_GLYPH[cle] || "";
+  }
   const STYLE_VECTORIEL_URL = "https://tiles.openfreemap.org/styles/liberty";
 
   // Marge de page réduite au minimum : la carte doit occuper la feuille
@@ -102,7 +147,7 @@
 
   function creerIconeSouvenir(numero, pictoCle) {
     const perso = obtenirPictoPerso(pictoCle);
-    const glyph = perso ? "" : PICTO_GLYPH[pictoCle];
+    const glyph = perso ? "" : glyphDePicto(pictoCle);
     const pin = `
       <svg class="pin-souvenir" width="34" height="44" viewBox="0 0 34 44" xmlns="http://www.w3.org/2000/svg">
         <path d="M17 1 C8 1 1 8 1 17 C1 29 17 43 17 43 C17 43 33 29 33 17 C33 8 26 1 17 1 Z"
@@ -152,7 +197,8 @@
     if (sl === "waterway" || /waterway|stream|canal/.test(id)) return "riviere";
     if (/ice|glacier|snow/.test(id)) return "glacier";
     if (sl === "water" || /water|ocean|sea|lake|river|bay/.test(id)) return "eau";
-    if (/wood|forest|park|golf|cemetery|orchard|vineyard/.test(id)) return "foret";
+    if (sl === "park" || /national_park|nature_reserve|protected|park/.test(id)) return "reserve";
+    if (/wood|forest|golf|cemetery|orchard|vineyard/.test(id)) return "foret";
     if (/grass|meadow|scrub|heath|wetland|farmland|landcover|landuse/.test(id)) return "prairie";
     if (sl === "building" || /building/.test(id)) return "bati";
     if (sl === "boundary" || /boundary|admin/.test(id)) return "frontiere";
@@ -174,20 +220,20 @@
 
   /* ---------- Carte principale ---------- */
 
-  // Teinte d'ambiance + lissage : mêmes filtres que dans app.js, composés en
-  // une seule variable CSS posée sur la carte.
+  // Teinte d'ambiance + arrondi des contours : mêmes filtres que dans app.js,
+  // composés en une seule variable CSS posée sur la carte.
   const AMBIANCE_FILTRES = {
     naturel: "",
     ancien: "sepia(0.35) saturate(0.8) brightness(1.03)",
     doux: "saturate(0.55) brightness(1.06)",
     medieval: "sepia(0.78) saturate(0.6) contrast(1.08) brightness(1.07)",
   };
-  const LISSAGE_FILTRES = {
-    aucun: "",
-    leger: "blur(0.6px)",
-    moyen: "blur(1.3px)",
-    fort: "blur(2.4px)",
-  };
+
+  /** Nombre de passes d'arrondi des formes (0 à 4), comme dans app.js. */
+  function lireArrondi(valeur) {
+    const n = Number(valeur);
+    return (Number.isFinite(n) && n >= 0 && n <= 4) ? Math.round(n) : 0;
+  }
 
   // La carte principale, gardée accessible pour recaler ses tuiles juste
   // avant l'impression (sinon Firefox peut imprimer une vue décalée).
@@ -211,25 +257,144 @@
     const attentes = [];
 
     if (style.fond === "vectoriel" && L.maplibreGL) {
-      const coucheGl = L.maplibreGL({
-        pane: "tilePane",
-        style: STYLE_VECTORIEL_URL,
-        attribution:
-          '© <a href="https://openfreemap.org">OpenFreeMap</a> · © OpenMapTiles · ' +
-          '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-        // Sans ça, le tampon WebGL est effacé juste après chaque image
-        // affichée : le fond disparaîtrait à l'impression.
-        preserveDrawingBuffer: true,
-      }).addTo(carte);
+      // Simplification des tracés (même logique que dans app.js) : on
+      // plafonne le zoom des DONNÉES vectorielles pour afficher des
+      // contours généralisés. Si le téléchargement du style échoue, on
+      // retombe simplement sur le fond vectoriel standard.
+      const ANCIENS_NIVEAUX = { aucune: 14, legere: 12, moyenne: 10, forte: 8 };
+      let maxzoomSimplification = (style.vecteur && style.vecteur.simplification);
+      if (typeof maxzoomSimplification === "string") {
+        maxzoomSimplification = ANCIENS_NIVEAUX[maxzoomSimplification] || 14;
+      }
+      maxzoomSimplification = Number(maxzoomSimplification) || 14;
+      const passesArrondi = lireArrondi(style.arrondi);
+
+      // Arrondi des formes : mêmes outils que dans app.js (tuiles décodées,
+      // lissées par l'algorithme de Chaikin, ré-encodées via un protocole).
+      let modulesMvt = null;
+      const chargerModulesMvt = async () => {
+        if (modulesMvt) return modulesMvt;
+        const [vt, pbf, vtpbf] = await Promise.all([
+          import("https://esm.sh/@mapbox/vector-tile@1.3.1"),
+          import("https://esm.sh/pbf@3.2.1"),
+          import("https://esm.sh/vt-pbf@3.1.3"),
+        ]);
+        modulesMvt = { VectorTile: vt.VectorTile, Pbf: pbf.default || pbf, vtpbf: vtpbf.default || vtpbf };
+        return modulesMvt;
+      };
+      const lisserChaikin = (points, passes, fermee) => {
+        for (let p = 0; p < passes; p++) {
+          const n = points.length;
+          if (n < 3) break;
+          const res = [];
+          if (!fermee) res.push(points[0]);
+          const fin = fermee ? n : n - 1;
+          for (let i = 0; i < fin; i++) {
+            const a = points[i], b = points[(i + 1) % n];
+            res.push({ x: 0.75 * a.x + 0.25 * b.x, y: 0.75 * a.y + 0.25 * b.y });
+            res.push({ x: 0.25 * a.x + 0.75 * b.x, y: 0.25 * a.y + 0.75 * b.y });
+          }
+          if (!fermee) res.push(points[n - 1]);
+          points = res;
+        }
+        return points;
+      };
+      const tuileArrondie = (brut, passes) => {
+        const { VectorTile, Pbf, vtpbf } = modulesMvt;
+        const tuile = new VectorTile(new Pbf(new Uint8Array(brut)));
+        const couches = {};
+        Object.keys(tuile.layers).forEach((nom) => {
+          const src = tuile.layers[nom];
+          couches[nom] = {
+            version: src.version || 2, name: nom, extent: src.extent, length: src.length,
+            feature: (i) => {
+              const f = src.feature(i);
+              const geometrie = f.loadGeometry().map((ligne) => {
+                if (f.type === 1) return ligne;
+                if (f.type === 3) {
+                  const ouvert = ligne.slice(0, ligne.length - 1);
+                  const lisse = lisserChaikin(ouvert, passes, true);
+                  lisse.push({ x: lisse[0].x, y: lisse[0].y });
+                  return lisse;
+                }
+                return lisserChaikin(ligne, passes, false);
+              });
+              return { id: f.id, type: f.type, properties: f.properties, loadGeometry: () => geometrie };
+            },
+          };
+        });
+        return vtpbf.fromVectorTileJs({ layers: couches });
+      };
+      if (passesArrondi > 0 && typeof maplibregl !== "undefined" && maplibregl.addProtocol) {
+        maplibregl.addProtocol("lisse", async (params) => {
+          const m = params.url.match(/^lisse:\/\/(\d+)\/(.+)$/);
+          if (!m) throw new Error("adresse invalide");
+          const reponse = await fetch("https://" + m[2]);
+          if (!reponse.ok) throw new Error("tuile indisponible");
+          const brut = await reponse.arrayBuffer();
+          try {
+            await chargerModulesMvt();
+            const d = tuileArrondie(brut, Number(m[1]));
+            return { data: d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength) };
+          } catch (e) {
+            return { data: brut };
+          }
+        });
+      }
+
+      const obtenirStyleGl = async () => {
+        if (maxzoomSimplification >= 14 && passesArrondi === 0) return STYLE_VECTORIEL_URL;
+        try {
+          const reponse = await fetch(STYLE_VECTORIEL_URL);
+          const json = await reponse.json();
+          for (const src of Object.values(json.sources || {})) {
+            if (src.type !== "vector") continue;
+            if (maxzoomSimplification < 14) src.maxzoom = Math.min(src.maxzoom || 14, maxzoomSimplification);
+            if (passesArrondi > 0) {
+              let tuiles = src.tiles;
+              if (!tuiles && src.url) {
+                const infos = await (await fetch(src.url)).json();
+                tuiles = infos.tiles;
+                if (!src.maxzoom && infos.maxzoom) {
+                  src.maxzoom = maxzoomSimplification < 14
+                    ? Math.min(infos.maxzoom, maxzoomSimplification) : infos.maxzoom;
+                }
+                if (infos.minzoom !== undefined) src.minzoom = infos.minzoom;
+              }
+              if (Array.isArray(tuiles)) {
+                src.tiles = tuiles.map((u) => "lisse://" + passesArrondi + "/" + u.replace(/^https?:\/\//, ""));
+                delete src.url;
+              }
+            }
+          }
+          return json;
+        } catch (e) {
+          return STYLE_VECTORIEL_URL;
+        }
+      };
 
       // Toute cette partie (couleurs des zones, préréglage "ancienne") est du
       // pur embellissement : si elle échoue pour une raison quelconque, la
       // carte doit quand même s'imprimer avec le fond vectoriel standard,
       // plutôt que de faire échouer TOUTE l'affiche (souvenirs compris).
-      attentes.push(new Promise((resolve) => {
+      attentes.push(obtenirStyleGl().then((styleGl) => {
+        const coucheGl = L.maplibreGL({
+          pane: "tilePane",
+          style: styleGl,
+          attribution:
+            '© <a href="https://openfreemap.org">OpenFreeMap</a> · © OpenMapTiles · ' +
+            '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+          // Sans ça, le tampon WebGL est effacé juste après chaque image
+          // affichée : le fond disparaîtrait à l'impression.
+          preserveDrawingBuffer: true,
+        }).addTo(carte);
+
+        return new Promise((resolve) => {
         let fini = false;
         const terminer = () => { if (!fini) { fini = true; resolve(); } };
-        setTimeout(terminer, 6000);
+        // Avec l'arrondi des formes, les tuiles mettent plus de temps :
+        // on laisse jusqu'à 20 s avant d'abandonner la mise en beauté.
+        setTimeout(terminer, 20000);
 
         try {
           const appliquerStyleVecteur = (glMap) => {
@@ -262,7 +427,18 @@
                   if (masquerDetail(l)) { try { glMap.setLayoutProperty(l.id, "visibility", "none"); } catch (e) {} }
                 });
               }
-              if (style.vecteur && style.vecteur.preset === "ancienne") {
+              // Préréglages médiévaux (carte ancienne, parchemins, pirate) :
+              // grosse maille + noms de lieux stylisés + grain de parchemin,
+              // aux couleurs propres au préréglage choisi (mêmes valeurs
+              // que PRESETS_FOND dans app.js).
+              const PRESETS_IMPRESSION = {
+                ancienne: { noms: "#5a4632", halo: "#e9e0c4", teinte: "ancienne" },
+                clair:    { noms: "#6b5233", halo: "#f4ecd6", teinte: "claire" },
+                sombre:   { noms: "#4a3620", halo: "#d8c49a", teinte: "sombre" },
+                pirate:   { noms: "#5a3a22", halo: "#e7d7b1", teinte: "pirate" },
+              };
+              const preset = style.vecteur && PRESETS_IMPRESSION[style.vecteur.preset];
+              if (preset) {
                 glMap.getStyle().layers.forEach((l) => {
                   if (masquerDetail(l)) { try { glMap.setLayoutProperty(l.id, "visibility", "none"); } catch (e) {} }
                 });
@@ -270,12 +446,21 @@
                   if (l.type !== "symbol" || !(l.layout && l.layout["text-field"])) return;
                   try { if (glMap.getLayoutProperty(l.id, "visibility") === "none") return; } catch (e) {}
                   try { glMap.setLayoutProperty(l.id, "text-font", ["Noto Sans Italic"]); } catch (e) {}
-                  try { glMap.setPaintProperty(l.id, "text-color", "#5a4632"); } catch (e) {}
-                  try { glMap.setPaintProperty(l.id, "text-halo-color", "#e9e0c4"); } catch (e) {}
+                  try { glMap.setPaintProperty(l.id, "text-color", preset.noms); } catch (e) {}
+                  try { glMap.setPaintProperty(l.id, "text-halo-color", preset.halo); } catch (e) {}
                   try { glMap.setPaintProperty(l.id, "text-halo-width", 1.4); } catch (e) {}
                 });
                 document.getElementById("map").classList.add("vecteur-ancienne");
+                document.getElementById("parchemin").classList.add("teinte-" + preset.teinte);
               }
+              // Couches décochées dans l'application (noms, frontières…).
+              const couchesMasquees = (style.vecteur && style.vecteur.couches) || {};
+              glMap.getStyle().layers.forEach((l) => {
+                let cat = classeZone(l);
+                if (l.type === "symbol") cat = "noms";
+                if (!cat || couchesMasquees[cat] !== false) return;
+                try { glMap.setLayoutProperty(l.id, "visibility", "none"); } catch (e) {}
+              });
             } catch (e) { /* embellissement seulement : on continue quand même */ }
             terminer();
           };
@@ -288,7 +473,16 @@
           const tenter = () => {
             if (appliquee) return;
             const glMap = coucheGl.getMaplibreMap();
-            if (!glMap || !glMap.isStyleLoaded()) return;
+            if (!glMap) return;
+            // isStyleLoaded() peut rester faux longtemps (tuiles en cours,
+            // surtout avec l'arrondi) : il suffit que la LISTE des couches
+            // soit disponible pour pouvoir repeindre les couleurs.
+            let pret = false;
+            try {
+              const st = glMap.getStyle();
+              pret = !!(st && st.layers && st.layers.length > 0);
+            } catch (e) { pret = false; }
+            if (!pret) return;
             appliquee = true;
             clearInterval(sondage);
             appliquerStyleVecteur(glMap);
@@ -298,6 +492,7 @@
         } catch (e) {
           terminer();
         }
+        });
       }));
     } else {
       const fond = FONDS[style.fond] || FONDS.topo;
@@ -310,12 +505,31 @@
       }));
     }
 
-    // Ambiance (classe pour le parchemin) + filtre combiné ambiance/lissage.
+    // Ambiance : classe (pour le parchemin) + teinte posée en variable CSS.
+    // (L'arrondi des formes est géré en amont, dans les tuiles vectorielles.)
     const mapEl = document.getElementById("map");
     mapEl.classList.add("ambiance-" + (style.ambiance || "naturel"));
     const fa = AMBIANCE_FILTRES[style.ambiance] || "";
-    const fl = LISSAGE_FILTRES[style.lissage] || "";
-    mapEl.style.setProperty("--filtre-fond", [fa, fl].filter(Boolean).join(" ") || "none");
+    mapEl.style.setProperty("--filtre-fond", fa || "none");
+
+    // Décor choisi dans l'application : on recopie tel quel la bordure et la
+    // rose des vents affichées dans la fenêtre principale (même variante,
+    // même image importée), en lisant leur rendu chez window.opener.
+    try {
+      if (style.decor && style.decor.bordure) {
+        const source = parent.document.getElementById("bordure-carte");
+        const cible = document.getElementById("bordure-carte");
+        cible.className = source.className;
+        cible.style.borderImageSource = source.style.borderImageSource;
+        cible.hidden = false;
+      }
+      if (style.decor && style.decor.rose) {
+        const roseSource = parent.document.getElementById("rose-carte");
+        const roseCible = document.getElementById("rose-vents");
+        if (roseSource && roseSource.innerHTML.trim()) roseCible.innerHTML = roseSource.innerHTML;
+        roseCible.hidden = false;
+      }
+    } catch (e) { /* décor inaccessibles : l'affiche reste imprimable */ }
 
     const t = style.trace || { couleur: "#c8893d", epaisseur: 4, type: "plein" };
     trace.segments.forEach((seg) => {
@@ -329,6 +543,41 @@
       points.push([s.lat, s.lng]);
     });
 
+    // Pictogrammes et textes posés librement sur le fond de carte
+    // (même rendu que dans l'application, mais figés).
+    const ALIGN_CSS = { gauche: "left", centre: "center", droite: "right" };
+    annotations.forEach((a) => {
+      if (typeof a.lat !== "number" || typeof a.lng !== "number") return;
+      let contenu;
+      if (a.type === "picto") {
+        const perso = obtenirPictoPerso(a.picto);
+        contenu = perso
+          ? `<img class="annot-picto-img" src="${perso.src}" style="height:${a.taille}px" alt="">`
+          : `<span class="annot-picto" style="font-size:${a.taille}px">${glyphDePicto(a.picto) || "⛰️"}</span>`;
+      } else {
+        const css = [
+          `font-family:${cssPolice(a.police)}`,
+          `color:${a.couleur}`,
+          `font-size:${a.taille}px`,
+          `text-align:${ALIGN_CSS[a.align] || "center"}`,
+          `font-weight:${a.gras ? "800" : "400"}`,
+          `font-style:${a.italique ? "italic" : "normal"}`,
+        ].join(";");
+        const html = echapperHtml(a.texte || "").replace(/\n/g, "<br>");
+        // Les noms de polices contiennent des guillemets : on les échappe.
+        contenu = `<div class="annot-texte" style="${css.replace(/"/g, "&quot;")}">${html}</div>`;
+      }
+      L.marker([a.lat, a.lng], {
+        icon: L.divIcon({
+          className: "",
+          html: `<div class="annot-wrap">${contenu}</div>`,
+          iconSize: [0, 0],
+        }),
+        interactive: false,
+      }).addTo(carte);
+      points.push([a.lat, a.lng]);
+    });
+
     carte.invalidateSize();
     if (points.length) carte.fitBounds(points, { padding: [20, 20], animate: false });
 
@@ -336,6 +585,11 @@
     if (titre) {
       const titreEl = document.getElementById("carte-titre");
       titreEl.textContent = titre;
+      titreEl.style.fontFamily = cssPolice(style.titrePolice || "titre");
+      // Même habillage du cartouche que dans l'application (classes CSS partagées).
+      const fondsTitre = ["classique", "parchemin", "pirate", "sombre"];
+      const fondTitre = fondsTitre.includes(style.titreFond) ? style.titreFond : "classique";
+      titreEl.className = "carte-titre" + (fondTitre === "classique" ? "" : " titre-" + fondTitre);
       titreEl.hidden = false;
     }
 
@@ -520,7 +774,7 @@
     styleDyn.textContent = `@media print { @page { size: ${largeur}mm ${hauteur}mm; margin: ${MARGE_MM}mm; } }`;
     document.head.appendChild(styleDyn);
 
-    document.documentElement.style.setProperty("--impression-police", (POLICES[reglages.police] || POLICES.systeme).css);
+    document.documentElement.style.setProperty("--impression-police", cssPolice(reglages.police));
     document.documentElement.style.setProperty("--impression-couleur-texte", reglages.couleur || "#2f3b34");
 
     const largeurUtileMm = largeur - MARGE_MM * 2;
@@ -658,7 +912,9 @@
         mapEl.style.marginTop = "";
         mapEl.style.transform = "";
         mapEl.style.setProperty("--contre-rotation", "0deg");
-        rose.hidden = true;
+        // La rose reste affichée si le décor l'a demandée dans l'application.
+        rose.hidden = !(style.decor && style.decor.rose);
+        rose.style.transform = "";
       } else {
         // Pour tourner sans coins vides : la carte devient un carré plus
         // grand que la page (sa diagonale), centré puis tourné — la page
@@ -688,6 +944,50 @@
     });
     window.addEventListener("beforeprint", () => {
       if (cartePrincipale) cartePrincipale.invalidateSize();
+    });
+
+    // --- Enregistrer la page carte en image PNG (au lieu d'un PDF) ---
+    // On utilise dom-to-image-more (fidèle avec Leaflet/MapLibre), et le
+    // canvas WebGL du fond vectoriel est d'abord figé en image.
+    const btnImage = document.getElementById("btn-image");
+    btnImage.hidden = false;
+    btnImage.addEventListener("click", async () => {
+      btnImage.disabled = true;
+      btnImage.textContent = "⏳ Capture…";
+      const zone = document.getElementById("zone-carte");
+      let liberer = () => {};
+      try {
+        if (!window.domtoimage) {
+          await new Promise((resolve, reject) => {
+            const s = document.createElement("script");
+            s.src = "https://unpkg.com/dom-to-image-more@3.5.0/dist/dom-to-image-more.min.js";
+            s.onload = resolve;
+            s.onerror = () => reject(new Error("bibliothèque indisponible"));
+            document.head.appendChild(s);
+          });
+        }
+        // La composition couche par couche vit dans l'application principale
+        // (fond, trace, épingles, décor) : on la réutilise sur NOTRE page.
+        const canvas = await parent.composerImageCarte(zone, 2, window.domtoimage);
+        const dataUrl = canvas.toDataURL("image/png");
+        liberer();
+        const lien = document.createElement("a");
+        let nomCarnet = "carte";
+        try {
+          const c = (etatParent.carnets || []).find((x) => x.id === etatParent.carnetActifId);
+          nomCarnet = (c && c.nom) || trace.name || "carte";
+        } catch (e) {}
+        lien.download = "affiche-" + nomCarnet.replace(/[^\w\-]+/g, "_") + ".png";
+        lien.href = dataUrl;
+        lien.click();
+        btnImage.textContent = "✓ Image enregistrée";
+        setTimeout(() => { btnImage.textContent = "🖼️ Image PNG"; btnImage.disabled = false; }, 2500);
+      } catch (e) {
+        liberer();
+        btnImage.textContent = "🖼️ Image PNG";
+        btnImage.disabled = false;
+        alert("Capture impossible ici. Utilise plutôt 🖨️ Imprimer (choisis « Enregistrer en PDF »).");
+      }
     });
   }
 

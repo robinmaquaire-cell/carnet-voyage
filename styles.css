@@ -936,6 +936,158 @@ body {
 }
 #labels-reglages[hidden] { display: none; }
 
+/* ---------- Pictogrammes et textes posés sur le fond de carte ---------- */
+
+/* Le contenu se centre lui-même sur le point GPS du marqueur. */
+.annot-wrap {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+}
+.annot-picto {
+  display: block;
+  line-height: 1;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+.annot-picto-img { display: block; }
+.annot-texte {
+  white-space: nowrap; /* les retours à la ligne passent par <br> */
+  line-height: 1.25;
+  /* Léger halo clair pour rester lisible sur n'importe quel fond. */
+  text-shadow:
+    0 0 4px rgba(255, 255, 255, 0.9),
+    0 0 2px rgba(255, 255, 255, 0.9);
+}
+/* Cadre en pointillés autour de l'élément sélectionné. */
+.annot-actif {
+  outline: 2px dashed var(--foret);
+  outline-offset: 5px;
+  border-radius: 4px;
+}
+
+/* Boutons "+ Pictogramme" / "+ Texte" côte à côte. */
+.annot-btns {
+  display: flex;
+  gap: 6px;
+}
+.annot-btns .btn { flex: 1; }
+
+/* Éditeur de l'élément sélectionné, encadré dans le panneau. */
+.annot-editeur {
+  margin-top: 12px;
+  border: 1.5px solid var(--ligne);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.55);
+}
+.annot-editeur[hidden] { display: none; }
+.annot-editeur-tete {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 800;
+  font-size: 14px;
+}
+.annot-texte-input {
+  resize: vertical;
+  min-height: 44px;
+}
+.annot-editeur .btn-danger { margin-top: 10px; width: 100%; }
+
+/* Champs numériques de réglage fin (arrondi, simplification, tailles). */
+.style-nombre { max-width: 110px; }
+.style-unite { font-weight: 400; font-size: 12px; color: var(--encre-douce, #55655e); }
+
+/* Champ "émoji libre" de la fenêtre de choix d'un pictogramme. */
+.picto-emoji-ligne {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.picto-emoji-input {
+  flex: 1;
+  font-size: 18px; /* les émojis se voient mieux en un peu plus grand */
+}
+
+/* ---------- Grappe d'épingles (souvenirs regroupés) ---------- */
+.grappe-wrap { cursor: pointer; }
+.grappe-nombre {
+  position: absolute;
+  top: 6px;
+  left: 0;
+  width: 38px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 14px;
+  color: #b23c28;
+  pointer-events: none;
+}
+
+/* ---------- Dates d'un souvenir (fiche) ---------- */
+.dates-liste { display: flex; flex-direction: column; gap: 6px; }
+.date-ligne { display: flex; align-items: center; gap: 6px; }
+.date-champ { flex: 1; }
+.date-texte { font-size: 14px; font-weight: 700; }
+.date-suppr { flex: none; }
+
+/* ---------- Enregistrements audio d'un souvenir (fiche) ---------- */
+.audios-liste { display: flex; flex-direction: column; gap: 10px; }
+.audio-ligne { display: flex; flex-direction: column; gap: 5px; }
+.audio-ligne audio { width: 100%; height: 38px; }
+.audio-ligne-bas { display: flex; align-items: center; gap: 6px; }
+.audio-legende { flex: 1; font-size: 13px; }
+.audio-legende-texte { margin: 0; font-size: 13px; color: var(--encre-douce, #55655e); }
+.audio-suppr { flex: none; }
+/* Bouton d'enregistrement en cours : rouge qui pulse doucement. */
+#audio-enregistrer.enregistre {
+  background: #c0533e;
+  border-color: #c0533e;
+  color: #fff;
+  animation: pulse-enregistre 1.2s ease-in-out infinite;
+}
+@keyframes pulse-enregistre {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.72; }
+}
+
+/* ---------- Panneau Mes carnets ---------- */
+.carnets-liste { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.carnet-ligne {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1.5px solid var(--ligne);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #fff;
+}
+.carnet-ligne-actif { border-color: var(--foret); background: rgba(63, 125, 82, 0.07); }
+.carnet-ligne input[type="checkbox"] { width: 17px; height: 17px; accent-color: var(--ocre); }
+.carnet-nom { flex: 1; font-weight: 700; font-size: 14px; overflow-wrap: anywhere; }
+.carnet-actions { display: flex; align-items: center; gap: 2px; }
+
+/* ---------- Panneau Filtrer (mode visualisation) ---------- */
+.filtre-pictos { display: flex; flex-wrap: wrap; gap: 8px; }
+.filtre-picto {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1.5px solid var(--ligne);
+  border-radius: 10px;
+  padding: 6px 10px;
+  cursor: pointer;
+  background: #fff;
+}
+.filtre-picto input { width: 16px; height: 16px; accent-color: var(--ocre); cursor: pointer; }
+.filtre-picto-glyphe { font-size: 18px; line-height: 1; }
+.filtre-picto-glyphe img { width: 20px; height: 20px; object-fit: contain; display: block; }
+.filtre-picto-nb { font-size: 12px; color: var(--encre-douce, #55655e); }
+
 /* ---------- Étiquette de nom d'un souvenir sur la carte ---------- */
 .leaflet-tooltip.label-souvenir {
   background: rgba(255, 255, 255, 0.82);
@@ -973,6 +1125,35 @@ body {
   pointer-events: none;
 }
 .carte-titre[hidden] { display: none; }
+
+/* Habillages du cartouche de titre (choisis dans le panneau Style). */
+.carte-titre.titre-parchemin,
+.carte-titre.titre-pirate,
+.carte-titre.titre-sombre {
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.1'/%3E%3C/svg%3E");
+  background-size: 140px 140px;
+  /* Coins légèrement irréguliers, comme un papier découpé à la main. */
+  border-radius: 12px 18px 10px 16px / 16px 10px 18px 12px;
+}
+.carte-titre.titre-parchemin {
+  background-color: #f4ecd6;
+  border: 2px solid #8a6b45;
+  color: #5a4632;
+  box-shadow: 0 2px 8px rgba(60, 40, 20, 0.35), inset 0 0 14px rgba(138, 107, 69, 0.25);
+}
+.carte-titre.titre-pirate {
+  background-color: #e7d7b1;
+  border: 3px double #5a3a22;
+  color: #4a2f1d;
+  box-shadow: 0 2px 8px rgba(50, 30, 12, 0.45), inset 0 0 18px rgba(90, 58, 34, 0.35);
+}
+.carte-titre.titre-sombre {
+  background-color: #d8c49a;
+  border: 2px solid #6f5636;
+  color: #3d2c18;
+  box-shadow: 0 2px 8px rgba(45, 30, 12, 0.5), inset 0 0 16px rgba(111, 86, 54, 0.4);
+}
 
 /* ---------- Petite fenêtre modale (saisie du nom) ---------- */
 .modal-overlay {
@@ -1053,6 +1234,171 @@ body {
 }
 .map.ambiance-medieval ~ .parchemin,
 .map.vecteur-ancienne ~ .parchemin { display: block; }
+
+/* Teintes du parchemin selon le style médiéval choisi. */
+.parchemin.teinte-claire  { background-color: #f4ead0; }
+.parchemin.teinte-sombre  { background-color: #d3ba86; }
+.parchemin.teinte-pirate  {
+  background-color: #e5d2a4;
+  background-image:
+    radial-gradient(ellipse at center, rgba(90,60,25,0) 38%, rgba(60,38,14,0.68) 100%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.13'/%3E%3C/svg%3E");
+}
+
+/* ---------- Décor : bordure stylisée et rose des vents ---------- */
+.bordure-carte {
+  position: absolute;
+  inset: 10px;
+  z-index: 650; /* au-dessus du parchemin, sous le cartouche de titre */
+  pointer-events: none;
+  border-radius: 3px;
+}
+.bordure-carte[hidden] { display: none; }
+
+/* Les variantes de bordure (aussi utilisées pour les aperçus de la pop up). */
+.bordure-double {
+  border: 3px double #5a4632;
+  box-shadow:
+    inset 0 0 0 3px rgba(244, 236, 215, 0.35),
+    inset 0 0 0 4.5px rgba(90, 70, 50, 0.75);
+}
+.bordure-epaisse { border: 6px solid #5a4632; }
+.bordure-pointillee { border: 3px dashed #5a4632; }
+.bordure-corde {
+  border: 9px solid transparent;
+  border-image: repeating-linear-gradient(45deg, #8a6b45 0 6px, #e9dcc0 6px 12px) 9 round;
+}
+.bordure-ornee {
+  border: 3px double #5a4632;
+  box-shadow: inset 0 0 0 5px rgba(90, 70, 50, 0.35);
+}
+.bordure-ornee::before,
+.bordure-ornee::after {
+  content: "❦";
+  position: absolute;
+  font-size: 26px;
+  color: #5a4632;
+  line-height: 1;
+}
+.bordure-ornee::before { top: 4px; left: 6px; }
+.bordure-ornee::after { bottom: 4px; right: 6px; transform: rotate(180deg); }
+/* Bordure importée : l'image fournit les bords (découpe en 9 morceaux). */
+.bordure-perso {
+  border: 30px solid transparent;
+  border-image-slice: 33%;
+  border-image-repeat: round;
+}
+
+/* Lignes du panneau Décor (case + bouton Choisir…). */
+.decor-ligne {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+/* Pop up de choix du décor. */
+.decor-liste {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 10px;
+  margin: 10px 0;
+  max-height: 45vh;
+  overflow: auto;
+}
+.decor-choix-wrap { position: relative; }
+.decor-choix {
+  width: 100%;
+  border: 1.5px solid var(--ligne);
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.decor-choix.actif { border-color: var(--foret); box-shadow: 0 0 0 2px rgba(63,125,82,0.25); }
+.decor-apercu {
+  width: 72px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.decor-apercu svg { width: 100%; height: 100%; }
+.decor-apercu img { max-width: 100%; max-height: 100%; }
+.apercu-bordure {
+  display: block;
+  width: 64px;
+  height: 64px;
+  position: relative;
+  background: #f6f1e4;
+}
+.decor-nom { font-size: 12px; font-weight: 700; text-align: center; }
+
+/* Pop up de choix de police. */
+.police-btn { width: 100%; font-size: 15px; }
+.police-liste {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+  max-height: 50vh;
+  overflow: auto;
+}
+.police-ligne { display: flex; align-items: center; gap: 6px; }
+.police-choix {
+  flex: 1;
+  text-align: left;
+  border: 1.5px solid var(--ligne);
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  padding: 9px 12px;
+  font-size: 17px;
+  color: var(--encre);
+}
+.police-choix:hover { background: var(--papier); }
+.police-choix.actif { border-color: var(--foret); box-shadow: 0 0 0 2px rgba(63,125,82,0.25); }
+
+/* La grille des pictos devient une liste de groupes défilante. */
+#souvenir-pictos { display: block; max-height: 45vh; overflow: auto; }
+#souvenir-pictos > .picto-btn,
+#souvenir-pictos > .picto-perso-wrap { display: inline-flex; margin: 2px; }
+
+/* Groupes du catalogue de pictogrammes. */
+.picto-groupe-titre {
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--encre-douce, #55655e);
+  margin: 10px 0 4px;
+}
+.picto-grille-groupe {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+  gap: 6px;
+}
+
+.rose-carte {
+  position: absolute;
+  right: 22px;
+  bottom: 26px;
+  z-index: 650;
+  width: 92px;
+  height: 92px;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px rgba(60, 40, 20, 0.35));
+}
+.rose-carte[hidden] { display: none; }
+.rose-carte svg { width: 100%; height: 100%; }
+
+/* Liste des couches affichées (panneau Fond de carte). */
+.couches-liste { display: flex; flex-direction: column; gap: 6px; }
 
 /* ---------- Bandeau d'infos sur la trace ---------- */
 .trace-info {
@@ -1272,6 +1618,8 @@ body {
 /* ---------- Mode visualisation (lecture seule) ---------- */
 /* Tout ce qui sert à éditer disparaît. */
 body.mode-visualisation .edition-seule { display: none !important; }
+/* .visu-seule : visible uniquement en mode visualisation. */
+body:not(.mode-visualisation) .visu-seule { display: none !important; }
 
 /* Mini-carte de situation en haut de la fiche (édition ou pop up visualisation). */
 .mini-map {
