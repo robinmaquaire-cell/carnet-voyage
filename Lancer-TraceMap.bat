@@ -1,11 +1,11 @@
 @echo off
 chcp 65001 >nul
-title Carnet de voyage
+title TraceMap
 echo ============================================
-echo   Carnet de voyage - demarrage du serveur
+echo   TraceMap - demarrage du serveur
 echo ============================================
 echo.
-echo Le carnet va s'ouvrir dans ton navigateur.
+echo TraceMap va s'ouvrir dans ton navigateur.
 echo Garde cette fenetre noire OUVERTE pendant que tu utilises l'app.
 echo Pour arreter : ferme cette fenetre.
 echo.

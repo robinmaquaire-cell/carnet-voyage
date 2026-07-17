@@ -1,7 +1,7 @@
 {
-  "name": "Carnet de voyage",
-  "short_name": "Carnet",
-  "description": "Transforme ta trace GPS en carnet de voyage interactif.",
+  "name": "TraceMap",
+  "short_name": "TraceMap",
+  "description": "TraceMap — transforme ta trace GPS en carnet de voyage interactif.",
   "lang": "fr",
   "start_url": "./",
   "scope": "./",

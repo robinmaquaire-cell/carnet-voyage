@@ -1,9 +1,9 @@
 @echo off
 chcp 65001 >nul
-title Publier le carnet sur GitHub
+title Publier TraceMap sur GitHub
 cd /d "%~dp0"
 echo ============================================
-echo   Envoi du carnet vers GitHub
+echo   Envoi de TraceMap vers GitHub
 echo ============================================
 echo.
 echo Si une fenetre de connexion GitHub s'ouvre,
