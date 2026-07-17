@@ -1445,6 +1445,30 @@ function brancherUI() {
   document.getElementById("annot-remplir")
     .addEventListener("change", (e) => majAnnotationActive({ remplir: e.target.checked }));
 
+  /* --- Fond de carte : épingles des souvenirs --- */
+  construireNuancier("epingle-couleurs", choisirCouleurEpingle);
+  brancherSegment("epingle-forme", "forme", (v) => {
+    etat.style.epingles.forme = EPINGLE_FORMES.includes(v) ? v : "goutte";
+    majSegment("epingle-forme", "forme", etat.style.epingles.forme);
+    appliquerStyleEpingles();
+    planifierSauvegarde();
+  });
+  document.getElementById("epingle-couleur-perso")
+    .addEventListener("input", (e) => choisirCouleurEpingle(e.target.value));
+  document.getElementById("epingle-taille")
+    .addEventListener("input", (e) => {
+      etat.style.epingles.taille = parseInt(e.target.value, 10);
+      document.getElementById("epingle-taille-val").textContent = e.target.value;
+      appliquerStyleEpingles();
+      planifierSauvegarde();
+    });
+  document.getElementById("epingle-numero")
+    .addEventListener("change", (e) => {
+      etat.style.epingles.numero = e.target.checked;
+      appliquerStyleEpingles();
+      planifierSauvegarde();
+    });
+
   /* --- Onglet Importer --- */
   document.getElementById("importer-photo-input")
     .addEventListener("change", (e) => {
@@ -1511,6 +1535,15 @@ function brancherUI() {
   // Les réglages d'impression par défaut : tout imprimer, dans l'ordre.
   reglagesAffiche.ordre = null;
   reglagesAffiche.exclusions = [];
+}
+
+/** Change la couleur des épingles (nuancier ou sélecteur personnalisé). */
+function choisirCouleurEpingle(couleur) {
+  etat.style.epingles.couleur = couleur;
+  document.getElementById("epingle-couleur-perso").value = couleur;
+  majPastillesActives("epingle-couleurs", couleur);
+  appliquerStyleEpingles();
+  planifierSauvegarde();
 }
 
 /** Crée un nouveau carnet à partir d'un GPX choisi depuis l'accueil. */

@@ -160,6 +160,20 @@
   }
 
   function creerIconeSouvenir(numero, pictoCle) {
+    // L'application fabrique les épingles (avec le style choisi : forme,
+    // couleur, taille, numéro) — on lui demande le même rendu pour le papier.
+    try {
+      if (parent.fabriquerEpingle) {
+        const ep = parent.fabriquerEpingle(numero, pictoCle, pictosPerso, style.epingles);
+        return L.divIcon({
+          className: "",
+          html: ep.html,
+          iconSize: ep.iconSize,
+          iconAnchor: ep.iconAnchor,
+          popupAnchor: ep.popupAnchor,
+        });
+      }
+    } catch (e) { /* repli : l'épingle classique ci-dessous */ }
     const perso = obtenirPictoPerso(pictoCle);
     const glyph = perso ? "" : glyphDePicto(pictoCle);
     const pin = `

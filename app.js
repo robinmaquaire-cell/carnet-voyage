@@ -58,6 +58,9 @@ const STYLE_DEFAUT = {
   // Affichage des noms des souvenirs sur la carte.
   // taille : "petit" | "moyen" | "grand" OU un nombre de pixels (réglage fin).
   labels: { afficher: false, police: "systeme", couleur: "#2f3b34", taille: "moyen" },
+  // Style des épingles de souvenirs : forme (goutte | rond | carre | minimal),
+  // couleur, largeur en pixels, et affichage du numéro.
+  epingles: { forme: "goutte", couleur: "#d35438", taille: 34, numero: true },
   // Arrondi des contours du fond (rayon en pixels, 0 = aucun). Contrairement
   // à l'ancien "lissage" (un simple flou), c'est un vrai arrondi des angles.
   arrondi: 0,
@@ -766,15 +769,25 @@ function chargerFichierGpx(fichier) {
    ÉTAPE 2 — Les points souvenirs
    ========================================================= */
 
+// Formes d'épingles proposées (onglet Fond de carte → Épingles des souvenirs).
+const EPINGLE_FORMES = ["goutte", "rond", "carre", "minimal"];
+
 /**
- * Crée l'icône "épingle souvenir" (dessinée en SVG), portant son numéro
- * d'ordre dans le carnet. On la fabrique en JavaScript pour pouvoir, plus
- * tard, varier la couleur ou le pictogramme selon le type de souvenir.
- * @param {number} numero  Le rang du souvenir (1, 2, 3...).
+ * Fabrique le HTML et les dimensions d'une épingle de souvenir, selon le
+ * style du carnet (forme, couleur, taille, numéro). Utilisée par la carte,
+ * les carnets affichés sur l'accueil ET la fenêtre d'impression.
  */
-function creerIconeSouvenir(numero, pictoCle, pictosPerso) {
+function fabriquerEpingle(numero, pictoCle, pictosPerso, styleEpingles) {
+  const ep = {
+    ...STYLE_DEFAUT.epingles,
+    ...(styleEpingles || (etat.style && etat.style.epingles) || {}),
+  };
+  const forme = EPINGLE_FORMES.includes(ep.forme) ? ep.forme : "goutte";
+  const couleur = typeof ep.couleur === "string" ? ep.couleur : "#d35438";
+  const t = Math.max(20, Math.min(72, Number(ep.taille) || 34)); // largeur en px
+
   // Par défaut on cherche dans les pictos du carnet ouvert ; un carnet
-  // affiché "en plus" (visualisation) fournit sa propre bibliothèque.
+  // affiché "en plus" (accueil) fournit sa propre bibliothèque.
   const perso = pictosPerso
     ? (pictoCle && pictoCle.startsWith("perso:")
         ? pictosPerso.find((p) => p.id === Number(pictoCle.slice("perso:".length))) || null
@@ -782,27 +795,86 @@ function creerIconeSouvenir(numero, pictoCle, pictosPerso) {
     : obtenirPictoPerso(pictoCle);
   const glyph = perso ? "" : glyphDePicto(pictoCle); // vide pour la pastille par défaut
 
-  // La forme de l'épingle (goutte + pastille blanche).
-  const pin = `
-    <svg class="pin-souvenir" width="34" height="44" viewBox="0 0 34 44" xmlns="http://www.w3.org/2000/svg">
+  // La forme de fond, ses dimensions, son point d'ancrage sur la carte, et
+  // le centre de la pastille claire (où se place le contenu).
+  let w, h, ancre, fond, cx, cy, rInterieur;
+  if (forme === "goutte") {
+    w = t;
+    h = Math.round((t * 44) / 34);
+    ancre = [w / 2, h - 1]; // la pointe touche le point GPS
+    fond = `<svg class="pin-souvenir" width="${w}" height="${h}" viewBox="0 0 34 44" xmlns="http://www.w3.org/2000/svg">
       <path d="M17 1 C8 1 1 8 1 17 C1 29 17 43 17 43 C17 43 33 29 33 17 C33 8 26 1 17 1 Z"
-            fill="#d35438" stroke="#ffffff" stroke-width="2"/>
+            fill="${couleur}" stroke="#ffffff" stroke-width="2"/>
       <circle cx="17" cy="16" r="8.5" fill="#ffffff"/>
     </svg>`;
+    cx = w / 2;
+    cy = (16 / 44) * h;
+    rInterieur = (8.5 / 34) * w;
+  } else if (forme === "rond" || forme === "carre") {
+    w = t;
+    h = t;
+    ancre = [w / 2, h / 2]; // centré sur le point GPS
+    const dessin = forme === "rond"
+      ? `<circle cx="17" cy="17" r="16" fill="${couleur}" stroke="#ffffff" stroke-width="2"/>`
+      : `<rect x="1" y="1" width="32" height="32" rx="8" fill="${couleur}" stroke="#ffffff" stroke-width="2"/>`;
+    fond = `<svg class="pin-souvenir" width="${w}" height="${h}" viewBox="0 0 34 34" xmlns="http://www.w3.org/2000/svg">
+      ${dessin}<circle cx="17" cy="17" r="11" fill="#ffffff"/>
+    </svg>`;
+    cx = w / 2;
+    cy = h / 2;
+    rInterieur = (11 / 34) * w;
+  } else {
+    // "minimal" : une pastille claire cerclée de la couleur, discrète.
+    w = Math.max(18, Math.round(t * 0.8));
+    h = w;
+    ancre = [w / 2, h / 2];
+    fond = `<svg class="pin-souvenir" width="${w}" height="${h}" viewBox="0 0 34 34" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="17" cy="17" r="15" fill="rgba(255,255,255,0.92)" stroke="${couleur}" stroke-width="3"/>
+    </svg>`;
+    cx = w / 2;
+    cy = h / 2;
+    rInterieur = (15 / 34) * w;
+  }
 
-  // Contenu : image perso, ou pictogramme prédéfini, ou simple numéro (pastille).
-  const contenu = perso
-    ? `<img class="pin-image" src="${perso.src}" alt=""><span class="pin-num">${numero}</span>`
-    : glyph
-      ? `<span class="pin-glyph">${glyph}</span><span class="pin-num">${numero}</span>`
-      : `<span class="pin-chiffre">${numero}</span>`;
+  // Contenu centré dans la pastille : image importée, émoji, ou numéro.
+  const centre = `position:absolute;left:${cx}px;top:${cy}px;transform:translate(-50%,-50%);pointer-events:none;`;
+  let contenu = "";
+  if (perso) {
+    const d = Math.round(rInterieur * 2.1);
+    contenu = `<img src="${perso.src}" alt="" style="${centre}width:${d}px;height:${d}px;border-radius:50%;object-fit:cover;">`;
+  } else if (glyph) {
+    contenu = `<span style="${centre}font-size:${Math.round(rInterieur * 1.5)}px;line-height:1;">${glyph}</span>`;
+  } else if (ep.numero !== false) {
+    contenu = `<span style="${centre}font:700 ${Math.max(9, Math.round(rInterieur * 1.15))}px Arial,sans-serif;color:${couleur};">${numero}</span>`;
+  }
+  // Badge numéro en coin quand un pictogramme occupe déjà la pastille.
+  if ((perso || glyph) && ep.numero !== false) {
+    contenu += `<span class="pin-num">${numero}</span>`;
+  }
 
+  return {
+    html: `<div class="pin-wrap" style="width:${w}px;height:${h}px">${fond}${contenu}</div>`,
+    iconSize: [w, h],
+    iconAnchor: ancre,
+    popupAnchor: [0, -h + 4],
+  };
+}
+// La fenêtre d'impression fabrique les mêmes épingles via window.opener.
+window.fabriquerEpingle = fabriquerEpingle;
+
+/**
+ * Crée l'icône Leaflet "épingle souvenir", portant son numéro d'ordre dans
+ * le carnet, au style d'épingles du carnet (ou de celui fourni).
+ * @param {number} numero  Le rang du souvenir (1, 2, 3...).
+ */
+function creerIconeSouvenir(numero, pictoCle, pictosPerso, styleEpingles) {
+  const ep = fabriquerEpingle(numero, pictoCle, pictosPerso, styleEpingles);
   return L.divIcon({
     className: "",
-    html: `<div class="pin-wrap">${pin}${contenu}</div>`,
-    iconSize: [34, 44],
-    iconAnchor: [17, 43],          // la pointe de l'épingle touche le point GPS
-    popupAnchor: [0, -40],
+    html: ep.html,
+    iconSize: ep.iconSize,
+    iconAnchor: ep.iconAnchor,
+    popupAnchor: ep.popupAnchor,
   });
 }
 
@@ -810,20 +882,43 @@ function creerIconeSouvenir(numero, pictoCle, pictosPerso) {
  * Icône d'une grappe : même forme d'épingle que les souvenirs, avec le
  * nombre de souvenirs regroupés à la place du numéro.
  */
+/** Assombrit une couleur hex (#rrggbb) — pour les grappes d'épingles. */
+function assombrirCouleur(hex, facteur = 0.78) {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex || "");
+  if (!m) return "#b23c28";
+  const n = parseInt(m[1], 16);
+  const c = (v) => Math.round(v * facteur);
+  return "#" + [c(n >> 16), c((n >> 8) & 255), c(n & 255)]
+    .map((v) => v.toString(16).padStart(2, "0")).join("");
+}
+
 function creerIconeGrappe(grappe) {
   const n = grappe.getChildCount();
+  // La grappe reprend la couleur des épingles du carnet, en plus foncé.
+  const ep = (etat.style && etat.style.epingles) || STYLE_DEFAUT.epingles;
+  const couleur = assombrirCouleur(ep.couleur);
   const pin = `
     <svg class="pin-souvenir" width="38" height="48" viewBox="0 0 34 44" xmlns="http://www.w3.org/2000/svg">
       <path d="M17 1 C8 1 1 8 1 17 C1 29 17 43 17 43 C17 43 33 29 33 17 C33 8 26 1 17 1 Z"
-            fill="#b23c28" stroke="#ffffff" stroke-width="2"/>
+            fill="${couleur}" stroke="#ffffff" stroke-width="2"/>
       <circle cx="17" cy="16" r="9.5" fill="#ffffff"/>
     </svg>`;
   return L.divIcon({
     className: "",
-    html: `<div class="pin-wrap grappe-wrap">${pin}<span class="grappe-nombre">${n}</span></div>`,
+    html: `<div class="pin-wrap grappe-wrap">${pin}<span class="grappe-nombre" style="color:${couleur}">${n}</span></div>`,
     iconSize: [38, 48],
     iconAnchor: [19, 47],
   });
+}
+
+/** Applique le style des épingles : redessine toutes les épingles et grappes. */
+function appliquerStyleEpingles() {
+  renumeroterSouvenirs();
+  if (etat.grappe && typeof etat.grappe.refreshClusters === "function") {
+    etat.grappe.refreshClusters();
+  }
+  // La mini-carte de la fiche ouverte suit aussi.
+  if (etat.souvenirActif && etat.miniCarte) majMiniCarte(etat.souvenirActif);
 }
 
 /**
@@ -2988,6 +3083,16 @@ function fusionnerStyle(s) {
       couleur: (s.labels && s.labels.couleur) || base.labels.couleur,
       taille: lireTailleLabels(s.labels && s.labels.taille, base.labels.taille),
     },
+    // Style des épingles (les carnets d'avant gardent l'épingle classique).
+    epingles: {
+      forme: (s.epingles && EPINGLE_FORMES.includes(s.epingles.forme))
+        ? s.epingles.forme : base.epingles.forme,
+      couleur: (s.epingles && typeof s.epingles.couleur === "string")
+        ? s.epingles.couleur : base.epingles.couleur,
+      taille: (s.epingles && Number.isFinite(Number(s.epingles.taille)))
+        ? Math.max(20, Math.min(72, Number(s.epingles.taille))) : base.epingles.taille,
+      numero: s.epingles ? s.epingles.numero !== false : true,
+    },
     // L'ancien "lissage" (flou) n'existe plus : on lit le nouvel "arrondi".
     arrondi: lireArrondi(s.arrondi),
     vecteur: {
@@ -3110,6 +3215,15 @@ function synchroniserControlesStyle() {
   });
   document.getElementById("decor-rose").checked = !!(s.decor && s.decor.rose);
   document.getElementById("decor-bordure").checked = !!(s.decor && s.decor.bordure);
+
+  // Réglages des épingles de souvenirs.
+  const ep = s.epingles || STYLE_DEFAUT.epingles;
+  majSegment("epingle-forme", "forme", ep.forme);
+  majPastillesActives("epingle-couleurs", ep.couleur);
+  document.getElementById("epingle-couleur-perso").value = ep.couleur;
+  document.getElementById("epingle-taille").value = ep.taille;
+  document.getElementById("epingle-taille-val").textContent = ep.taille;
+  document.getElementById("epingle-numero").checked = ep.numero !== false;
   const simplification = lireSimplification(s.vecteur.simplification, 14);
   majSegment("vecteur-simplification", "simplification", String(simplification));
   document.getElementById("simplification-valeur").value = simplification;
@@ -3970,7 +4084,9 @@ async function afficherFantome(id) {
   souvenirs.forEach((sv, i) => {
     if (typeof sv.lat !== "number" || typeof sv.lng !== "number") return;
     const m = L.marker([sv.lat, sv.lng], {
-      icon: creerIconeSouvenir(i + 1, sv.pictogramme, pictosPerso),
+      // Chaque carnet garde son propre style d'épingles sur l'accueil.
+      icon: creerIconeSouvenir(i + 1, sv.pictogramme, pictosPerso,
+        donnees.style && donnees.style.epingles),
     })
       .bindTooltip(libelleTooltip(sv), {
         direction: "top",

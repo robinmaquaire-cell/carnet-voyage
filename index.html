@@ -421,6 +421,36 @@
             </div>
           </section>
 
+          <!-- Épingles des souvenirs (forme, couleur, taille, numéro) -->
+          <section class="style-section">
+            <h3>Épingles des souvenirs</h3>
+
+            <label class="style-label">Forme</label>
+            <div id="epingle-forme" class="segment segment-grille" role="group">
+              <button class="segment-btn" data-forme="goutte">📍 Goutte</button>
+              <button class="segment-btn" data-forme="rond">⭕ Rond</button>
+              <button class="segment-btn" data-forme="carre">🔲 Carré</button>
+              <button class="segment-btn" data-forme="minimal">◦ Minimal</button>
+            </div>
+
+            <label class="style-label">Couleur</label>
+            <div id="epingle-couleurs" class="nuancier"></div>
+            <label class="style-label-couleur">
+              Personnalisée
+              <input id="epingle-couleur-perso" type="color" value="#d35438" />
+            </label>
+
+            <label class="style-label">Taille : <span id="epingle-taille-val">34</span> px</label>
+            <input id="epingle-taille" class="style-range" type="range" min="20" max="72" step="2" value="34" />
+
+            <label class="style-switch">
+              <input id="epingle-numero" type="checkbox" checked />
+              <span>Afficher le numéro sur l'épingle</span>
+            </label>
+            <p class="style-aide">Chaque souvenir peut en plus porter son propre pictogramme
+               (émoji ou image) : ouvre sa fiche et clique « Choisir un pictogramme ».</p>
+          </section>
+
           <!-- Noms des souvenirs affichés sur la carte -->
           <section class="style-section">
             <h3>Noms des souvenirs</h3>
