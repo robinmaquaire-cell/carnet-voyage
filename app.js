@@ -524,7 +524,10 @@ const ANNOT_PICTO_DEFAUT = { picto: "montagne", taille: 36 };
 const ANNOT_TEXTE_DEFAUT = {
   texte: "Nouveau texte", police: "serif", couleur: "#2f3b34",
   taille: 18, align: "centre", gras: false, italique: false,
+  souligne: false, barre: false,
 };
+// Photo posée sur la carte : taille = largeur en pixels.
+const ANNOT_IMAGE_DEFAUT = { src: "", legende: "", taille: 170 };
 
 // Alignement (mot français enregistré) → valeur CSS correspondante.
 const ANNOT_ALIGN_CSS = { gauche: "left", centre: "center", droite: "right" };
@@ -544,6 +547,7 @@ const PICTO_CATALOGUE = [
 const ANNOT_TAILLES = {
   texte: { min: 10, max: 48 },
   picto: { min: 16, max: 96 },
+  image: { min: 60, max: 440 },
 };
 
 /**
@@ -2182,6 +2186,10 @@ function appliquerFond(cle) {
   // Fond vectoriel : moteur MapLibre intégré dans Leaflet (sous nos calques).
   if (cle === "vectoriel" && L.maplibreGL) {
     if (etat.coucheFond) etat.coucheFond.remove();
+    // La couche vectorielle ne déclare pas de zoom maximal à Leaflet (ce
+    // n'est pas une couche de tuiles classique) : on le pose sur la carte
+    // elle-même, sinon le regroupement d'épingles (markercluster) plante.
+    etat.carte.setMaxZoom(19);
     etat.coucheFond = L.maplibreGL({
       pane: "tilePane", // sous le tracé et les marqueurs
       style: STYLE_VECTORIEL_URL,
@@ -2226,6 +2234,8 @@ function appliquerFond(cle) {
   }
 
   if (etat.coucheFond) etat.coucheFond.remove();
+  // Le zoom maximal de la carte suit celui du fond choisi (voir plus haut).
+  etat.carte.setMaxZoom(options.maxZoom || 19);
   // Les tuiles vont sur le calque du fond : la trace et les marqueurs
   // restent automatiquement au-dessus.
   etat.coucheFond = L.tileLayer(url, options).addTo(etat.carte);
@@ -3248,7 +3258,17 @@ function creerIconeAnnotation(a) {
     contenu = perso
       ? `<img class="annot-picto-img" src="${perso.src}" style="height:${a.taille}px" alt="">`
       : `<span class="annot-picto" style="font-size:${a.taille}px">${glyphDePicto(a.picto) || "⛰️"}</span>`;
+  } else if (a.type === "image") {
+    // Photo posée sur la carte, façon polaroid, avec sa légende.
+    const legende = a.legende
+      ? `<figcaption>${echapperHtml(a.legende)}</figcaption>`
+      : "";
+    contenu = `<figure class="annot-image" style="width:${a.taille}px">` +
+      `<img src="${a.src}" alt="">${legende}</figure>`;
   } else {
+    // Souligné et barré se combinent dans la même propriété CSS.
+    const deco = [a.souligne ? "underline" : "", a.barre ? "line-through" : ""]
+      .filter(Boolean).join(" ") || "none";
     const css = [
       `font-family:${cssDePolice(a.police)}`,
       `color:${a.couleur}`,
@@ -3256,6 +3276,7 @@ function creerIconeAnnotation(a) {
       `text-align:${ANNOT_ALIGN_CSS[a.align] || "center"}`,
       `font-weight:${a.gras ? "800" : "400"}`,
       `font-style:${a.italique ? "italic" : "normal"}`,
+      `text-decoration:${deco}`,
     ].join(";");
     const html = echapperHtml(a.texte || "").replace(/\n/g, "<br>");
     // Les noms de polices contiennent des guillemets : on les échappe pour
@@ -3292,9 +3313,21 @@ function attacherMarqueurAnnotation(a) {
   return marker;
 }
 
-/** Redessine l'icône d'une annotation après un changement de réglage. */
+/** Vrai pour un élément dessiné (trait, forme, dessin) plutôt qu'une épingle. */
+function estAnnotationVecteur(a) {
+  return a && (a.type === "trait" || a.type === "forme" || a.type === "dessin");
+}
+
+/** Redessine une annotation après un changement de réglage. */
 function redessinerAnnotation(a) {
-  if (a && a.marker) a.marker.setIcon(creerIconeAnnotation(a));
+  if (!a || !a.marker) return;
+  // Les traits, formes et dessins sont des calques Leaflet (pas des icônes) :
+  // leur mise à jour est gérée par ui.js.
+  if (estAnnotationVecteur(a)) {
+    if (typeof majStyleAnnotationVecteur === "function") majStyleAnnotationVecteur(a);
+    return;
+  }
+  a.marker.setIcon(creerIconeAnnotation(a));
 }
 
 /** Retire toutes les annotations de la carte et de l'état. */
@@ -3305,18 +3338,109 @@ function effacerAnnotations() {
   majEditeurAnnotation();
 }
 
+/**
+ * Pose une annotation sur la carte, selon son type : épingle (picto, texte,
+ * photo) ou calque dessiné (trait, forme, dessin — géré par ui.js).
+ */
+function attacherAnnotation(a) {
+  if (estAnnotationVecteur(a)) {
+    if (typeof attacherAnnotationVecteur === "function") {
+      return attacherAnnotationVecteur(a);
+    }
+    return null;
+  }
+  return attacherMarqueurAnnotation(a);
+}
+
+/**
+ * Reconstruit une annotation à partir de sa forme sauvegardée (en validant
+ * chaque champ). Renvoie null si les données sont inutilisables.
+ */
+function lireAnnotationSauvee(sa) {
+  if (!sa) return null;
+  const TYPES = ["picto", "texte", "image", "trait", "forme", "dessin"];
+  const type = TYPES.includes(sa.type) ? sa.type : "texte";
+
+  // Traits et dessins : une liste de points [lat, lng] suffit.
+  if (type === "trait" || type === "dessin") {
+    const points = Array.isArray(sa.points)
+      ? sa.points.filter((p) => Array.isArray(p) && typeof p[0] === "number" && typeof p[1] === "number")
+      : [];
+    if (points.length < 2) return null;
+    return {
+      id: sa.id,
+      type,
+      points,
+      couleur: typeof sa.couleur === "string" ? sa.couleur : "#b4452f",
+      epaisseur: typeof sa.epaisseur === "number" ? sa.epaisseur : 4,
+      marker: null,
+    };
+  }
+
+  // Formes : deux coins (lat/lng et lat2/lng2) + le type de forme.
+  if (type === "forme") {
+    if ([sa.lat, sa.lng, sa.lat2, sa.lng2].some((v) => typeof v !== "number")) return null;
+    return {
+      id: sa.id,
+      type,
+      forme: ["rect", "cercle", "fleche"].includes(sa.forme) ? sa.forme : "rect",
+      lat: sa.lat, lng: sa.lng, lat2: sa.lat2, lng2: sa.lng2,
+      couleur: typeof sa.couleur === "string" ? sa.couleur : "#b4452f",
+      epaisseur: typeof sa.epaisseur === "number" ? sa.epaisseur : 4,
+      remplir: !!sa.remplir,
+      marker: null,
+    };
+  }
+
+  // Épingles (picto, texte, photo) : un point + le contenu.
+  if (typeof sa.lat !== "number" || typeof sa.lng !== "number") return null;
+  if (type === "image") {
+    if (typeof sa.src !== "string" || !sa.src) return null;
+    return {
+      id: sa.id,
+      type,
+      lat: sa.lat, lng: sa.lng,
+      src: sa.src,
+      legende: typeof sa.legende === "string" ? sa.legende : "",
+      taille: typeof sa.taille === "number" ? sa.taille : ANNOT_IMAGE_DEFAUT.taille,
+      marker: null,
+    };
+  }
+  const base = type === "picto" ? ANNOT_PICTO_DEFAUT : ANNOT_TEXTE_DEFAUT;
+  return {
+    id: sa.id,
+    type,
+    lat: sa.lat, lng: sa.lng,
+    picto: typeof sa.picto === "string" ? sa.picto : ANNOT_PICTO_DEFAUT.picto,
+    texte: typeof sa.texte === "string" ? sa.texte : ANNOT_TEXTE_DEFAUT.texte,
+    police: typeof sa.police === "string" ? sa.police : ANNOT_TEXTE_DEFAUT.police,
+    couleur: typeof sa.couleur === "string" ? sa.couleur : ANNOT_TEXTE_DEFAUT.couleur,
+    taille: typeof sa.taille === "number" ? sa.taille : base.taille,
+    align: ANNOT_ALIGN_CSS[sa.align] ? sa.align : ANNOT_TEXTE_DEFAUT.align,
+    gras: !!sa.gras,
+    italique: !!sa.italique,
+    souligne: !!sa.souligne,
+    barre: !!sa.barre,
+    marker: null,
+  };
+}
+
 /* ---------- Pose d'une nouvelle annotation ---------- */
 
 /** Passe en mode "pose d'un élément" : le prochain clic sur la carte le place. */
 function armerAjoutAnnotation(type) {
   if (etat.mode === "visualisation") return;
   desarmerAjout(); // on ne pose pas un souvenir ET un élément en même temps
+  if (typeof desarmerOutil === "function") desarmerOutil(); // ni un dessin
   etat.modeAnnotation = type;
   document.getElementById("map").classList.add("mode-ajout");
+  const libelles = {
+    picto: "🖌️ Clique sur la carte pour placer le pictogramme.",
+    texte: "🖌️ Clique sur la carte pour placer le texte.",
+    image: "🖼️ Clique sur la carte pour poser la photo.",
+  };
   document.getElementById("banniere-annot-texte").textContent =
-    type === "picto"
-      ? "🖌️ Clique sur la carte pour placer le pictogramme."
-      : "🖌️ Clique sur la carte pour placer le texte.";
+    libelles[type] || libelles.texte;
   document.getElementById("banniere-annot").hidden = false;
 }
 
@@ -3327,17 +3451,25 @@ function desarmerAjoutAnnotation() {
   if (!etat.modeAjout) document.getElementById("map").classList.remove("mode-ajout");
 }
 
+// Réglages à appliquer au PROCHAIN élément posé (préréglages des onglets
+// Textes et Importer : gros titre, texte de lieu, photo importée…).
+let annotationPreset = null;
+
 /** Crée une annotation à l'endroit cliqué, puis ouvre son éditeur. */
 function creerAnnotation(type, latlng) {
-  const base = type === "picto" ? ANNOT_PICTO_DEFAUT : ANNOT_TEXTE_DEFAUT;
+  const base = type === "picto" ? ANNOT_PICTO_DEFAUT
+    : type === "image" ? ANNOT_IMAGE_DEFAUT
+    : ANNOT_TEXTE_DEFAUT;
   const a = {
     id: prochainIdSouvenir++,
     type,
     lat: latlng.lat,
     lng: latlng.lng,
     ...JSON.parse(JSON.stringify(base)),
+    ...(annotationPreset || {}),
     marker: null,
   };
+  annotationPreset = null;
   etat.annotations.push(a);
   attacherMarqueurAnnotation(a);
   desarmerAjoutAnnotation();
@@ -3359,7 +3491,9 @@ function selectionnerAnnotation(a) {
   etat.annotationActive = a;
   if (precedente && precedente !== a) redessinerAnnotation(precedente);
   redessinerAnnotation(a);
-  ouvrirPanneauFond();
+  // L'éditeur de l'élément vit dans le tiroir « Élément sélectionné » (ui.js).
+  if (typeof ouvrirPanneauElement === "function") ouvrirPanneauElement();
+  majEditeurAnnotation();
 }
 
 /** Désélectionne l'annotation en cours (referme l'éditeur). */
@@ -3376,20 +3510,38 @@ function majEditeurAnnotation() {
   const a = etat.annotationActive;
   const editeur = document.getElementById("annot-editeur");
   editeur.hidden = !a;
+  const vide = document.getElementById("element-vide");
+  if (vide) vide.hidden = !!a;
   if (!a) return;
 
+  const titres = {
+    picto: "Pictogramme sélectionné",
+    texte: "Texte sélectionné",
+    image: "Photo sélectionnée",
+    trait: "Trait sélectionné",
+    forme: "Forme sélectionnée",
+    dessin: "Dessin sélectionné",
+  };
   document.getElementById("annot-editeur-titre").textContent =
-    a.type === "picto" ? "Pictogramme sélectionné" : "Texte sélectionné";
+    titres[a.type] || "Élément sélectionné";
   document.getElementById("annot-bloc-texte").hidden = a.type !== "texte";
   document.getElementById("annot-bloc-picto").hidden = a.type !== "picto";
+  const blocImage = document.getElementById("annot-bloc-image");
+  if (blocImage) blocImage.hidden = a.type !== "image";
+  const blocVecteur = document.getElementById("annot-bloc-vecteur");
+  if (blocVecteur) blocVecteur.hidden = !estAnnotationVecteur(a);
 
-  // Curseur de taille, borné selon le type d'élément.
-  const bornes = ANNOT_TAILLES[a.type] || ANNOT_TAILLES.texte;
-  const curseur = document.getElementById("annot-taille");
-  curseur.min = bornes.min;
-  curseur.max = bornes.max;
-  curseur.value = a.taille;
-  document.getElementById("annot-taille-val").textContent = a.taille;
+  // Curseur de taille (texte, picto, photo) — sans objet pour les dessins.
+  const blocTaille = document.getElementById("annot-bloc-taille");
+  if (blocTaille) blocTaille.hidden = estAnnotationVecteur(a);
+  if (!estAnnotationVecteur(a)) {
+    const bornes = ANNOT_TAILLES[a.type] || ANNOT_TAILLES.texte;
+    const curseur = document.getElementById("annot-taille");
+    curseur.min = bornes.min;
+    curseur.max = bornes.max;
+    curseur.value = a.taille;
+    document.getElementById("annot-taille-val").textContent = a.taille;
+  }
 
   if (a.type === "texte") {
     document.getElementById("annot-texte").value = a.texte || "";
@@ -3398,8 +3550,23 @@ function majEditeurAnnotation() {
     majSegment("annot-align", "align", a.align);
     document.getElementById("annot-gras").classList.toggle("actif", !!a.gras);
     document.getElementById("annot-italique").classList.toggle("actif", !!a.italique);
-  } else {
+    const soul = document.getElementById("annot-souligne");
+    if (soul) soul.classList.toggle("actif", !!a.souligne);
+    const barre = document.getElementById("annot-barre");
+    if (barre) barre.classList.toggle("actif", !!a.barre);
+  } else if (a.type === "picto") {
     majAnnotPictoBouton(a.picto);
+  } else if (a.type === "image") {
+    const champ = document.getElementById("annot-legende");
+    if (champ) champ.value = a.legende || "";
+  } else if (estAnnotationVecteur(a)) {
+    document.getElementById("annot-trait-couleur").value = a.couleur || "#b4452f";
+    const ep = document.getElementById("annot-trait-epaisseur");
+    ep.value = a.epaisseur || 4;
+    document.getElementById("annot-trait-epaisseur-val").textContent = ep.value;
+    const remplirLigne = document.getElementById("annot-remplir-ligne");
+    remplirLigne.hidden = a.type !== "forme" || a.forme === "fleche";
+    document.getElementById("annot-remplir").checked = !!a.remplir;
   }
 }
 
@@ -3432,7 +3599,7 @@ function supprimerAnnotationActive() {
   toastAvecAction("Élément supprimé.", "Annuler", () => {
     a.marker = null;
     etat.annotations.push(a);
-    attacherMarqueurAnnotation(a);
+    attacherAnnotation(a);
     planifierSauvegarde();
   });
 }
@@ -3452,15 +3619,61 @@ function carnetActif() {
   return etat.carnets.find((c) => c.id === etat.carnetActifId) || null;
 }
 
+/**
+ * Identifiant universel d'un carnet : contrairement au petit numéro local
+ * (1, 2, 3…), il est unique entre appareils — c'est lui qui sert de clé
+ * pour la sauvegarde en ligne.
+ */
+function genUuid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  // Repli pour les très vieux navigateurs.
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
 // Garde-fou : tant que l'index n'a pas été lu correctement au démarrage,
 // on n'écrit RIEN (sinon un raté de lecture écraserait la liste des carnets).
 let indexCarnetsPret = false;
 
+/**
+ * Plage de dates du carnet OUVERT (du plus ancien au plus récent souvenir).
+ * Rangée dans l'index pour que l'accueil puisse filtrer sans tout charger.
+ */
+function calculerPlageDates() {
+  const dates = [];
+  [...etat.souvenirs, ...etat.stock].forEach((s) => {
+    (s.dates || []).forEach((d) => { if (typeof d === "string" && d) dates.push(d); });
+  });
+  if (dates.length === 0) return { du: "", au: "" };
+  dates.sort(); // les dates ISO (AAAA-MM-JJ) se trient par ordre alphabétique
+  return { du: dates[0], au: dates[dates.length - 1] };
+}
+
 /** Enregistre l'index des carnets (liste + carnet ouvert). */
 async function sauverIndexCarnets() {
   if (!indexCarnetsPret) return;
+  // On rafraîchit la plage de dates du carnet ouvert au passage.
+  const actif = carnetActif();
+  if (actif && etat.trace) {
+    const plage = calculerPlageDates();
+    actif.du = plage.du;
+    actif.au = plage.au;
+  }
   await dbSauverCle("index", {
-    carnets: etat.carnets.map((c) => ({ id: c.id, nom: c.nom, visible: !!c.visible })),
+    carnets: etat.carnets.map((c) => ({
+      id: c.id,
+      uuid: c.uuid || "",
+      nom: c.nom,
+      visible: !!c.visible,
+      logo: c.logo || "",
+      categorie: c.categorie || "",
+      description: c.description || "",
+      du: c.du || "",
+      au: c.au || "",
+      modifieLe: c.modifieLe || "",
+    })),
     actifId: etat.carnetActifId,
   });
 }
@@ -3489,7 +3702,7 @@ async function demarrerCarnets() {
 
     if (!index || !Array.isArray(index.carnets) || index.carnets.length === 0) {
       // Tout premier démarrage : un carnet vide, prêt à recevoir un GPX.
-      etat.carnets = [{ id: 1, nom: "Mon carnet", visible: true }];
+      etat.carnets = [{ id: 1, uuid: genUuid(), nom: "Mon carnet", visible: true }];
       etat.carnetActifId = 1;
       indexCarnetsPret = true; // lecture réussie (il n'y avait rien) : on peut écrire
       await sauverIndexCarnets();
@@ -3498,8 +3711,17 @@ async function demarrerCarnets() {
 
     etat.carnets = index.carnets.map((c) => ({
       id: c.id,
+      // Les carnets d'avant la sauvegarde en ligne reçoivent leur identifiant
+      // universel au premier démarrage.
+      uuid: (typeof c.uuid === "string" && c.uuid) ? c.uuid : genUuid(),
       nom: c.nom || "Carnet",
       visible: c.visible !== false,
+      logo: typeof c.logo === "string" ? c.logo : "",
+      categorie: typeof c.categorie === "string" ? c.categorie : "",
+      description: typeof c.description === "string" ? c.description : "",
+      du: typeof c.du === "string" ? c.du : "",
+      au: typeof c.au === "string" ? c.au : "",
+      modifieLe: typeof c.modifieLe === "string" ? c.modifieLe : "",
     }));
     etat.carnetActifId = etat.carnets.some((c) => c.id === index.actifId)
       ? index.actifId
@@ -3514,7 +3736,7 @@ async function demarrerCarnets() {
   } catch (e) {
     // IndexedDB indisponible : on démarre à vide, sans bruit.
     if (etat.carnets.length === 0) {
-      etat.carnets = [{ id: 1, nom: "Mon carnet", visible: true }];
+      etat.carnets = [{ id: 1, uuid: genUuid(), nom: "Mon carnet", visible: true }];
       etat.carnetActifId = 1;
     }
   }
@@ -3585,7 +3807,7 @@ async function nouveauCarnet() {
   retirerTousFantomes();
 
   const id = Math.max(0, ...etat.carnets.map((c) => c.id)) + 1;
-  etat.carnets.push({ id, nom, visible: true });
+  etat.carnets.push({ id, uuid: genUuid(), nom, visible: true, logo: "", categorie: "", description: "", modifieLe: new Date().toISOString() });
   etat.carnetActifId = id;
   viderCarnetCourant();
   await sauverIndexCarnets();
@@ -3616,12 +3838,14 @@ async function supprimerCarnet(carnet) {
 
   retirerFantome(carnet.id);
   try { await dbEffacerCle("carnet-" + carnet.id); } catch (e) {}
+  // S'il est aussi sauvegardé en ligne, on l'y supprime également.
+  if (typeof supprimerCarnetNuage === "function") supprimerCarnetNuage(carnet);
   etat.carnets = etat.carnets.filter((c) => c.id !== carnet.id);
 
   // Si on vient de supprimer le carnet ouvert, on bascule sur un autre.
   if (carnet.id === etat.carnetActifId) {
     if (etat.carnets.length === 0) {
-      etat.carnets = [{ id: 1, nom: "Mon carnet", visible: true }];
+      etat.carnets = [{ id: 1, uuid: genUuid(), nom: "Mon carnet", visible: true }];
       etat.carnetActifId = 1;
       viderCarnetCourant();
     } else {
@@ -3651,63 +3875,44 @@ function fermerPanneauCarnets() {
   document.getElementById("panneau-carnets").hidden = true;
 }
 
-/** (Re)construit la liste des carnets dans le panneau. */
+/** (Re)construit la liste des carnets dans l'onglet Carnets. */
 function renderCarnets() {
   const liste = document.getElementById("carnets-liste");
   liste.innerHTML = "";
-  const enVisu = etat.mode === "visualisation";
 
   etat.carnets.forEach((c) => {
     const actif = c.id === etat.carnetActifId;
     const ligne = document.createElement("div");
     ligne.className = "carnet-ligne" + (actif ? " carnet-ligne-actif" : "");
 
-    // En visualisation : case à cocher « afficher sur la carte ».
-    if (enVisu) {
-      const caseACocher = document.createElement("input");
-      caseACocher.type = "checkbox";
-      caseACocher.title = "Afficher sur la carte";
-      caseACocher.checked = actif ? true : !!c.visible;
-      caseACocher.disabled = actif; // le carnet ouvert est toujours affiché
-      caseACocher.addEventListener("change", () =>
-        basculerVisibiliteCarnet(c, caseACocher.checked));
-      ligne.appendChild(caseACocher);
-    }
-
     const nom = document.createElement("span");
     nom.className = "carnet-nom";
-    nom.textContent = c.nom + (actif ? " — ouvert" : "");
+    nom.textContent = (c.logo ? c.logo + " " : "") + c.nom + (actif ? " — ouvert" : "");
     ligne.appendChild(nom);
 
-    // En édition : ouvrir / renommer / supprimer.
-    if (!enVisu) {
-      const actions = document.createElement("span");
-      actions.className = "carnet-actions";
-      if (!actif) {
-        const ouvrir = document.createElement("button");
-        ouvrir.className = "btn btn-ghost btn-petit";
-        ouvrir.textContent = "Ouvrir";
-        ouvrir.addEventListener("click", () => ouvrirCarnet(c.id));
-        actions.appendChild(ouvrir);
-      }
-      const renommer = document.createElement("button");
-      renommer.className = "icone-btn";
-      renommer.title = "Renommer";
-      renommer.textContent = "✏️";
-      renommer.addEventListener("click", () => renommerCarnet(c));
-      actions.appendChild(renommer);
-
-      const suppr = document.createElement("button");
-      suppr.className = "icone-btn";
-      suppr.title = "Supprimer ce carnet";
-      suppr.textContent = "🗑";
-      suppr.addEventListener("click", () => supprimerCarnet(c));
-      actions.appendChild(suppr);
-
-      ligne.appendChild(actions);
+    const actions = document.createElement("span");
+    actions.className = "carnet-actions";
+    if (!actif) {
+      const ouvrir = document.createElement("button");
+      ouvrir.className = "btn btn-ghost btn-petit";
+      ouvrir.textContent = "Ouvrir";
+      ouvrir.addEventListener("click", () => ouvrirCarnet(c.id));
+      actions.appendChild(ouvrir);
     }
+    const suppr = document.createElement("button");
+    suppr.className = "icone-btn";
+    suppr.title = "Supprimer ce carnet";
+    suppr.textContent = "🗑";
+    suppr.addEventListener("click", () => supprimerCarnet(c));
+    actions.appendChild(suppr);
+
+    ligne.appendChild(actions);
     liste.appendChild(ligne);
   });
+
+  // La nouvelle interface (accueil, fiche d'identité, barre du haut) se met
+  // à jour en même temps.
+  if (typeof majInterfaceCarnets === "function") majInterfaceCarnets();
 }
 
 /* ---------- Carnets affichés en plus (mode visualisation) ---------- */
@@ -3726,10 +3931,8 @@ async function afficherFantome(id) {
   if (etat.fantomes.has(id) || id === etat.carnetActifId) return;
   let donnees = null;
   try { donnees = await dbChargerCle("carnet-" + id); } catch (e) {}
-  if (!donnees || !donnees.trace) {
-    toast("Ce carnet est encore vide (pas de trace).", true);
-    return;
-  }
+  // Un carnet encore vide (pas de trace) n'a simplement rien à afficher.
+  if (!donnees || !donnees.trace) return;
 
   const couche = L.layerGroup().addTo(etat.carte);
   const pictosPerso = Array.isArray(donnees.pictosPerso) ? donnees.pictosPerso : [];
@@ -3779,18 +3982,20 @@ async function afficherFantome(id) {
     sv.marker = m;
   });
 
-  // Les pictogrammes/textes libres de ce carnet, eux aussi affichés (figés).
+  // Les éléments décoratifs de ce carnet (pictos, textes, photos, traits,
+  // formes, dessins), affichés figés (non modifiables).
   (donnees.annotations || []).forEach((sa) => {
-    if (typeof sa.lat !== "number" || typeof sa.lng !== "number") return;
-    const type = sa.type === "picto" ? "picto" : "texte";
-    const a = {
-      type,
-      picto: sa.picto, texte: sa.texte, police: sa.police, couleur: sa.couleur,
-      taille: sa.taille || (type === "picto" ? 36 : 18),
-      align: sa.align, gras: sa.gras, italique: sa.italique,
-    };
-    L.marker([sa.lat, sa.lng], { icon: creerIconeAnnotation(a), interactive: false })
-      .addTo(couche);
+    const a = lireAnnotationSauvee(sa);
+    if (!a) return;
+    if (estAnnotationVecteur(a)) {
+      if (typeof coucheAnnotationVecteur === "function") {
+        const calque = coucheAnnotationVecteur(a, false);
+        if (calque) calque.addTo(couche);
+      }
+    } else {
+      L.marker([a.lat, a.lng], { icon: creerIconeAnnotation(a), interactive: false })
+        .addTo(couche);
+    }
   });
 }
 
@@ -3829,8 +4034,17 @@ function majFantomes() {
  * adapté à la sauvegarde et à l'export en fichier.
  */
 function serialiserCarnet() {
+  const carnet = carnetActif();
   return {
     version: 1,
+    // L'identité du carnet (logo, catégorie, description) voyage avec le
+    // fichier exporté, pour la retrouver à l'import sur un autre appareil.
+    meta: carnet ? {
+      nom: carnet.nom,
+      logo: carnet.logo || "",
+      categorie: carnet.categorie || "",
+      description: carnet.description || "",
+    } : null,
     trace: etat.trace,
     style: etat.style,
     prochainId: prochainIdSouvenir,
@@ -3859,7 +4073,8 @@ function serialiserCarnet() {
       dates: s.dates || [],               // dates ISO ("2026-07-14")
       audios: s.audios || [],             // [{ src, legende, duree }]
     })),
-    // Pictogrammes et textes posés librement sur le fond de carte.
+    // Éléments posés librement sur le fond de carte : pictogrammes, textes,
+    // photos, traits, formes et dessins.
     annotations: etat.annotations.map((a) => ({
       id: a.id,
       type: a.type,
@@ -3873,6 +4088,18 @@ function serialiserCarnet() {
       align: a.align,
       gras: a.gras,
       italique: a.italique,
+      souligne: a.souligne,
+      barre: a.barre,
+      // Photo posée sur la carte.
+      src: a.src,
+      legende: a.legende,
+      // Traits, formes et dessins.
+      points: a.points,       // [[lat, lng], …]
+      forme: a.forme,         // "rect" | "cercle" | "fleche"
+      lat2: a.lat2,
+      lng2: a.lng2,
+      epaisseur: a.epaisseur,
+      remplir: a.remplir,
     })),
   };
 }
@@ -3952,29 +4179,13 @@ function restaurerCarnet(donnees) {
 
   renumeroterSouvenirs();
 
-  // Les pictogrammes et textes posés sur le fond de carte.
+  // Les éléments posés sur le fond de carte (pictos, textes, photos, dessins).
   effacerAnnotations();
   (donnees.annotations || []).forEach((sa) => {
-    const type = sa.type === "picto" ? "picto" : "texte";
-    const base = type === "picto" ? ANNOT_PICTO_DEFAUT : ANNOT_TEXTE_DEFAUT;
-    if (typeof sa.lat !== "number" || typeof sa.lng !== "number") return;
-    const a = {
-      id: sa.id,
-      type,
-      lat: sa.lat,
-      lng: sa.lng,
-      picto: typeof sa.picto === "string" ? sa.picto : ANNOT_PICTO_DEFAUT.picto,
-      texte: typeof sa.texte === "string" ? sa.texte : ANNOT_TEXTE_DEFAUT.texte,
-      police: typeof sa.police === "string" ? sa.police : ANNOT_TEXTE_DEFAUT.police,
-      couleur: typeof sa.couleur === "string" ? sa.couleur : ANNOT_TEXTE_DEFAUT.couleur,
-      taille: typeof sa.taille === "number" ? sa.taille : base.taille,
-      align: ANNOT_ALIGN_CSS[sa.align] ? sa.align : ANNOT_TEXTE_DEFAUT.align,
-      gras: !!sa.gras,
-      italique: !!sa.italique,
-      marker: null,
-    };
+    const a = lireAnnotationSauvee(sa);
+    if (!a) return;
     etat.annotations.push(a);
-    attacherMarqueurAnnotation(a);
+    attacherAnnotation(a);
   });
 
   // On reprend le compteur d'identifiants là où il en était
@@ -3995,6 +4206,9 @@ let timerSauvegarde = null;
 function planifierSauvegarde() {
   clearTimeout(timerSauvegarde);
   timerSauvegarde = setTimeout(sauvegarderMaintenant, 600);
+  // Les listes de la nouvelle interface (souvenirs, photos posées…) suivent
+  // les modifications, avec le même léger différé.
+  if (typeof planifierMajListes === "function") planifierMajListes();
 }
 
 async function sauvegarderMaintenant() {
@@ -4006,9 +4220,15 @@ async function sauvegarderMaintenant() {
       const existant = await dbChargerCle(cle).catch(() => null);
       if (existant && existant.trace) return;
     }
+    // On horodate la modification : c'est ce qui permet à la sauvegarde en
+    // ligne de savoir quelle version (appareil ou nuage) est la plus récente.
+    const actif = carnetActif();
+    if (actif && etat.trace) actif.modifieLe = new Date().toISOString();
     await dbSauverCle(cle, serialiserCarnet());
     await sauverIndexCarnets();
     indiquerEnregistre();
+    // Et on programme l'envoi en ligne (si on est connecté à un compte).
+    if (typeof planifierPousseeNuage === "function") planifierPousseeNuage();
   } catch (e) {
     toast("La sauvegarde locale a échoué (stockage plein ?).", true);
   }
@@ -4277,6 +4497,8 @@ function ouvrirModalAffiche() {
   majSegment("affiche-orientation", "orientation", reglagesAffiche.orientation);
   majBoutonPolice("affiche");
   document.getElementById("affiche-couleur").value = reglagesAffiche.couleur;
+  // La disposition (souvenirs inclus + ordre des pages) se règle ici aussi.
+  if (typeof majDispositionAffiche === "function") majDispositionAffiche();
   document.getElementById("modal-affiche").hidden = false;
 }
 
@@ -4345,8 +4567,15 @@ function importerCarnetFichier(fichier) {
       retirerTousFantomes();
 
       const id = Math.max(0, ...etat.carnets.map((c) => c.id)) + 1;
-      const nom = (donnees.trace && donnees.trace.name) || "Carnet importé";
-      etat.carnets.push({ id, nom, visible: true });
+      const meta = donnees.meta || {};
+      const nom = meta.nom || (donnees.trace && donnees.trace.name) || "Carnet importé";
+      etat.carnets.push({
+        id, uuid: genUuid(), nom, visible: true,
+        logo: typeof meta.logo === "string" ? meta.logo : "",
+        categorie: typeof meta.categorie === "string" ? meta.categorie : "",
+        description: typeof meta.description === "string" ? meta.description : "",
+        modifieLe: new Date().toISOString(),
+      });
       etat.carnetActifId = id;
 
       restaurerCarnet(donnees);
@@ -4443,10 +4672,9 @@ function basculerMode() {
    Réserve de souvenirs (stock, sans position sur la carte)
    ========================================================= */
 
-/** Ouvre le panneau de la réserve. */
+/** Ouvre l'onglet Souvenirs (qui contient la réserve « à placer »). */
 function ouvrirReserve() {
-  renderReserve();
-  document.getElementById("panneau-reserve").hidden = false;
+  if (typeof ouvrirOnglet === "function") ouvrirOnglet("souvenirs");
 }
 
 /** Ferme le panneau de la réserve. */
@@ -4454,54 +4682,9 @@ function fermerReserve() {
   document.getElementById("panneau-reserve").hidden = true;
 }
 
-/** (Re)construit la liste des souvenirs en réserve. */
+/** (Re)construit la liste des souvenirs (placés + à placer, dans ui.js). */
 function renderReserve() {
-  const liste = document.getElementById("reserve-liste");
-  const vide = document.getElementById("reserve-vide");
-  liste.innerHTML = "";
-  vide.hidden = etat.stock.length > 0;
-
-  etat.stock.forEach((item) => {
-    const ligne = document.createElement("button");
-    ligne.className = "reserve-item";
-
-    // Vignette : photo de couverture, ou le pictogramme à défaut.
-    const vign = document.createElement("div");
-    vign.className = "reserve-vignette";
-    const couv = photoCouverture(item);
-    const picto = obtenirPictoPerso(item.pictogramme);
-    if (couv) {
-      const im = document.createElement("img");
-      im.src = couv.src;
-      vign.appendChild(im);
-    } else if (picto) {
-      const im = document.createElement("img");
-      im.src = picto.src;
-      vign.appendChild(im);
-      vign.classList.add("reserve-vignette-vide");
-    } else {
-      vign.textContent = glyphDePicto(item.pictogramme) || "📝";
-      vign.classList.add("reserve-vignette-vide");
-    }
-
-    const infos = document.createElement("div");
-    infos.className = "reserve-infos";
-    const nom = document.createElement("div");
-    nom.className = "reserve-nom";
-    nom.textContent = item.nom || "Sans nom";
-    const extrait = document.createElement("div");
-    extrait.className = "reserve-extrait";
-    extrait.textContent = item.textes
-      ? item.textes.slice(0, 90)
-      : (item.photos.length ? `${item.photos.length} photo(s)` : "Vide");
-    infos.appendChild(nom);
-    infos.appendChild(extrait);
-
-    ligne.appendChild(vign);
-    ligne.appendChild(infos);
-    ligne.addEventListener("click", () => ouvrirStockEdition(item));
-    liste.appendChild(ligne);
-  });
+  if (typeof renderSouvenirsListe === "function") renderSouvenirsListe();
 }
 
 /** Crée un souvenir en réserve (vide) et l'ouvre pour l'éditer. */
@@ -4870,7 +5053,11 @@ function recadrerSurParcours() {
   const points = [];
   etat.trace.segments.forEach((seg) => seg.forEach((p) => points.push(p)));
   etat.souvenirs.forEach((s) => points.push([s.lat, s.lng]));
-  etat.annotations.forEach((a) => points.push([a.lat, a.lng]));
+  etat.annotations.forEach((a) => {
+    // Les traits et dessins portent une liste de points ; les autres un point.
+    if (Array.isArray(a.points)) a.points.forEach((p) => points.push(p));
+    else if (typeof a.lat === "number" && typeof a.lng === "number") points.push([a.lat, a.lng]);
+  });
   if (points.length) etat.carte.fitBounds(points, { padding: [40, 40] });
 }
 
@@ -5368,8 +5555,11 @@ function init() {
     });
 
   // Au démarrage : ressources partagées (polices, décors importés), puis
-  // l'index des carnets et le rechargement du carnet ouvert.
-  chargerRessourcesGlobales().then(demarrerCarnets);
+  // l'index des carnets et le rechargement du carnet ouvert, et enfin la
+  // nouvelle interface (page d'accueil avec tous les carnets).
+  chargerRessourcesGlobales()
+    .then(demarrerCarnets)
+    .then(() => { if (typeof demarrerUI === "function") demarrerUI(); });
 
   // On enregistre le service worker (pour l'installation et le hors-ligne).
   if ("serviceWorker" in navigator) {

@@ -32,6 +32,20 @@
     format: "A4", orientation: "portrait", police: "systeme", couleur: "#2f3b34",
   };
 
+  // Disposition choisie dans la fenêtre « Livre photo » : ordre des pages et
+  // souvenirs décochés. La CARTE, elle, garde toutes les épingles avec leur
+  // numéro d'origine — seules les pages de souvenirs suivent la disposition.
+  const exclusions = Array.isArray(reglages.exclusions) ? reglages.exclusions : [];
+  const ordre = Array.isArray(reglages.ordre) ? reglages.ordre : null;
+  let souvenirsImprimes = souvenirs.map((s, i) => ({ s, numero: i + 1 }));
+  if (ordre) {
+    souvenirsImprimes.sort((a, b) => {
+      const ia = ordre.indexOf(a.s.id), ib = ordre.indexOf(b.s.id);
+      return (ia === -1 ? 999999 : ia) - (ib === -1 ? 999999 : ib);
+    });
+  }
+  souvenirsImprimes = souvenirsImprimes.filter((x) => !exclusions.includes(x.s.id));
+
   /* ---------- Constantes (reprises de app.js) ---------- */
 
   const FORMATS_PAPIER = {
@@ -233,6 +247,54 @@
   function lireArrondi(valeur) {
     const n = Number(valeur);
     return (Number.isFinite(n) && n >= 0 && n <= 4) ? Math.round(n) : 0;
+  }
+
+  /** Les points d'une flèche : la ligne + les deux branches (comme ui.js). */
+  function pointsFleche(a) {
+    const k = Math.cos(((a.lat + a.lat2) / 2) * Math.PI / 180) || 1;
+    const dx = (a.lng2 - a.lng) * k;
+    const dy = a.lat2 - a.lat;
+    const longueur = Math.hypot(dx, dy) || 1e-9;
+    const ux = dx / longueur;
+    const uy = dy / longueur;
+    const t = longueur * 0.22;
+    const branche = (angle) => {
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      const bx = -ux * cos + uy * sin;
+      const by = -ux * sin - uy * cos;
+      return [a.lat2 + t * by, a.lng2 + (t * bx) / k];
+    };
+    return [[a.lat, a.lng], [a.lat2, a.lng2], branche(0.45), [a.lat2, a.lng2], branche(-0.45)];
+  }
+
+  /** Calque Leaflet d'un trait / forme / dessin, identique à l'application. */
+  function coucheVecteurImpression(a, carte) {
+    const style = {
+      color: a.couleur || "#b4452f",
+      weight: a.epaisseur || 4,
+      opacity: 0.9,
+      interactive: false,
+    };
+    if (a.type === "trait" || a.type === "dessin") {
+      if (!Array.isArray(a.points) || a.points.length < 2) return null;
+      return L.polyline(a.points, style);
+    }
+    if ([a.lat, a.lng, a.lat2, a.lng2].some((v) => typeof v !== "number")) return null;
+    if (a.forme === "rect") {
+      return L.rectangle([[a.lat, a.lng], [a.lat2, a.lng2]], {
+        ...style, fill: !!a.remplir, fillColor: style.color, fillOpacity: a.remplir ? 0.25 : 0,
+      });
+    }
+    if (a.forme === "cercle") {
+      const centre = [(a.lat + a.lat2) / 2, (a.lng + a.lng2) / 2];
+      const rayon = carte.distance(centre, [centre[0], a.lng2]);
+      return L.circle(centre, {
+        radius: Math.max(rayon, 1),
+        ...style, fill: !!a.remplir, fillColor: style.color, fillOpacity: a.remplir ? 0.25 : 0,
+      });
+    }
+    if (a.forme === "fleche") return L.polyline(pointsFleche(a), style);
+    return null;
   }
 
   // La carte principale, gardée accessible pour recaler ses tuiles juste
@@ -543,10 +605,23 @@
       points.push([s.lat, s.lng]);
     });
 
-    // Pictogrammes et textes posés librement sur le fond de carte
-    // (même rendu que dans l'application, mais figés).
+    // Éléments posés librement sur le fond de carte : pictogrammes, textes,
+    // photos, traits, formes et dessins (même rendu que dans l'application).
     const ALIGN_CSS = { gauche: "left", centre: "center", droite: "right" };
     annotations.forEach((a) => {
+      // Traits, formes et dessins : des calques dessinés.
+      if (a.type === "trait" || a.type === "dessin" || a.type === "forme") {
+        const calque = coucheVecteurImpression(a, carte);
+        if (calque) {
+          calque.addTo(carte);
+          if (Array.isArray(a.points)) a.points.forEach((p) => points.push(p));
+          else if (typeof a.lat === "number") {
+            points.push([a.lat, a.lng]);
+            points.push([a.lat2, a.lng2]);
+          }
+        }
+        return;
+      }
       if (typeof a.lat !== "number" || typeof a.lng !== "number") return;
       let contenu;
       if (a.type === "picto") {
@@ -554,7 +629,16 @@
         contenu = perso
           ? `<img class="annot-picto-img" src="${perso.src}" style="height:${a.taille}px" alt="">`
           : `<span class="annot-picto" style="font-size:${a.taille}px">${glyphDePicto(a.picto) || "⛰️"}</span>`;
+      } else if (a.type === "image") {
+        // Photo posée sur la carte (façon polaroid, avec sa légende).
+        if (typeof a.src !== "string" || !a.src) return;
+        const legende = a.legende
+          ? `<figcaption>${echapperHtml(a.legende)}</figcaption>` : "";
+        contenu = `<figure class="annot-image" style="width:${a.taille || 170}px">` +
+          `<img src="${a.src}" alt="">${legende}</figure>`;
       } else {
+        const deco = [a.souligne ? "underline" : "", a.barre ? "line-through" : ""]
+          .filter(Boolean).join(" ") || "none";
         const css = [
           `font-family:${cssPolice(a.police)}`,
           `color:${a.couleur}`,
@@ -562,6 +646,7 @@
           `text-align:${ALIGN_CSS[a.align] || "center"}`,
           `font-weight:${a.gras ? "800" : "400"}`,
           `font-style:${a.italique ? "italic" : "normal"}`,
+          `text-decoration:${deco}`,
         ].join(";");
         const html = echapperHtml(a.texte || "").replace(/\n/g, "<br>");
         // Les noms de polices contiennent des guillemets : on les échappe.
@@ -787,7 +872,7 @@
 
     // Sans souvenir, pas de section "Souvenirs du voyage" : la carte seule
     // (et pas de saut de page après elle, qui laisserait une feuille blanche).
-    if (souvenirs.length === 0) {
+    if (souvenirsImprimes.length === 0) {
       document.getElementById("impression").hidden = true;
       const zoneCarte = document.getElementById("zone-carte");
       zoneCarte.style.breakAfter = "auto";
@@ -797,8 +882,8 @@
     const zoneMesure = document.getElementById("impression-mesure");
     const cartesInfo = [];
     const attentesMini = [];
-    souvenirs.forEach((s, i) => {
-      const { carte, miniMapEl } = construireCarteImpression(s, i + 1);
+    souvenirsImprimes.forEach(({ s, numero }) => {
+      const { carte, miniMapEl } = construireCarteImpression(s, numero);
       zoneMesure.appendChild(carte);
       cartesInfo.push({ carte, largeurUnites: classifierTailleSouvenir(s) });
       attentesMini.push(creerMiniCarteImpression(miniMapEl, s));

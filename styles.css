@@ -1224,9 +1224,20 @@ body.mode-visualisation .menu-groupe:not(:has(.btn:not([hidden]):not(.edition-se
 }
 
 /* ---------- Mise en page principale ---------- */
+/* La zone principale est une rangée : rail d'onglets | tiroir | carte. */
 .layout {
   position: relative;
   flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+}
+
+/* La carte et ses recouvrements (titre, décor, bannières…) vivent ici. */
+.carte-zone {
+  position: relative;
+  flex: 1;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -2170,4 +2181,598 @@ body.page-impression .pin-wrap {
      boutons de zoom et autres contrôles de la carte. */
   .barre-impression { display: none !important; }
   body.page-impression .leaflet-control-container { display: none !important; }
+}
+
+/* =========================================================
+   NOUVELLE ERGONOMIE — Accueil + Éditeur façon Canva
+   ========================================================= */
+
+/* Les deux "vues" de l'application : ce qui appartient à l'une
+   disparaît quand on est dans l'autre. */
+body.vue-accueil .editeur-seule { display: none !important; }
+body.vue-editeur .accueil-seule { display: none !important; }
+
+/* Anciens éléments encore référencés par le code : jamais affichés. */
+.zone-morte { display: none !important; }
+
+/* ---------- Barre du haut : variantes ---------- */
+.topbar-gauche { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.btn-retour {
+  border: 1.5px solid rgba(255,255,255,0.3);
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-retour:hover { background: rgba(255,255,255,0.22); }
+.editeur-identite {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--papier);
+  font-size: 16px;
+  font-weight: 800;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 10px;
+}
+.editeur-identite:hover { background: rgba(255,255,255,0.12); }
+.editeur-identite #editeur-nom {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40vw;
+}
+.btn-topbar { padding: 8px 16px; }
+
+/* ---------- Rail d'onglets (gauche, façon Canva) ---------- */
+.rail {
+  flex: none;
+  width: 78px;
+  background: var(--foret-fonce);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 6px 0;
+  gap: 2px;
+  overflow-y: auto;
+  z-index: 950;
+}
+.rail-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 10px 4px;
+  border: none;
+  background: transparent;
+  color: rgba(255,255,255,0.85);
+  cursor: pointer;
+  border-radius: 10px;
+  margin: 0 5px;
+  font-family: inherit;
+}
+.rail-btn:hover { background: rgba(255,255,255,0.12); }
+.rail-btn.actif { background: rgba(255,255,255,0.2); color: #fff; }
+.rail-ico { font-size: 20px; line-height: 1; }
+.rail-label { font-size: 10px; font-weight: 700; text-align: center; line-height: 1.15; }
+
+/* ---------- Tiroir : le panneau de l'onglet ouvert ---------- */
+.tiroir {
+  flex: none;
+  width: 322px;
+  max-width: 84vw;
+  background: var(--carte-bg);
+  border-right: 1.5px solid var(--ligne);
+  box-shadow: 4px 0 20px rgba(47,59,52,0.10);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  z-index: 940;
+}
+/* Le tiroir disparaît si aucune de ses sections n'est ouverte. */
+.tiroir:not(:has(.tiroir-section:not([hidden]))) { display: none; }
+.tiroir-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.tiroir-section[hidden] { display: none; }
+
+/* ---------- Onglet Carnets : fiche d'identité ---------- */
+.meta-ligne { display: flex; gap: 8px; }
+.meta-logo { width: 64px; text-align: center; font-size: 20px; flex: none; }
+.meta-description { resize: vertical; font-family: inherit; }
+
+/* ---------- Chips (filtres, dates rapides) ---------- */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.chip {
+  border: 1.5px solid var(--ligne);
+  background: var(--carte-bg);
+  color: var(--encre-douce);
+  border-radius: 999px;
+  padding: 6px 13px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+.chip:hover { background: var(--papier); }
+.chip.actif {
+  background: var(--foret);
+  border-color: var(--foret);
+  color: #fff;
+}
+
+/* ---------- Onglet Souvenirs : liste unifiée ---------- */
+.souvenirs-liste { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.souvenir-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1.5px solid var(--ligne);
+  border-radius: 12px;
+  padding: 8px;
+  background: var(--carte-bg);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  width: 100%;
+}
+.souvenir-item:hover { background: var(--papier); }
+/* Souvenir pas encore placé : identifiable par sa couleur orange. */
+.souvenir-item.a-placer {
+  border-color: #e0a184;
+  background: #fdf3ec;
+  cursor: grab;
+}
+.souvenir-item.a-placer:active { cursor: grabbing; }
+.souvenir-item.en-glisse { opacity: 0.45; }
+.souvenir-vignette {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--papier);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+.souvenir-vignette img { width: 100%; height: 100%; object-fit: cover; }
+.souvenir-item-infos { flex: 1; min-width: 0; }
+.souvenir-item-nom {
+  font-weight: 800;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.souvenir-item-detail { font-size: 12px; color: var(--encre-douce); }
+.souvenir-item-badge {
+  flex: none;
+  font-size: 11px;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+.souvenir-item-badge.badge-place { background: #e4efe7; color: var(--foret-fonce); }
+.souvenir-item-badge.badge-reserve { background: #f7d8c4; color: #a0522d; }
+.pastille-reserve-demo {
+  background: #f7d8c4;
+  color: #a0522d;
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-weight: 700;
+}
+
+/* ---------- Onglet Modèles ---------- */
+.modeles-liste {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.modele-carte {
+  border: 1.5px solid var(--ligne);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--carte-bg);
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+  font-family: inherit;
+}
+.modele-carte:hover { box-shadow: var(--ombre); transform: translateY(-1px); }
+.modele-carte.actif { border-color: var(--foret); box-shadow: 0 0 0 2px rgba(63,125,82,0.25); }
+.modele-apercu {
+  height: 74px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+}
+.modele-infos { padding: 8px 10px 10px; }
+.modele-nom { font-weight: 800; font-size: 13px; }
+.modele-desc { font-size: 11px; color: var(--encre-douce); margin-top: 2px; line-height: 1.3; }
+
+/* ---------- Onglet Outils ---------- */
+.outils-grille {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.outil-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 6px;
+  border: 1.5px solid var(--ligne);
+  border-radius: 12px;
+  background: var(--carte-bg);
+  color: var(--encre);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+.outil-btn span { font-size: 22px; line-height: 1; }
+.outil-btn:hover { background: var(--papier); }
+.outil-btn.actif { border-color: var(--foret); background: #e4efe7; }
+
+/* ---------- Onglet Importer : photos posées ---------- */
+.importer-liste { display: flex; flex-direction: column; gap: 8px; }
+.importer-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1.5px solid var(--ligne);
+  border-radius: 12px;
+  padding: 8px;
+  background: var(--carte-bg);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  width: 100%;
+}
+.importer-item:hover { background: var(--papier); }
+.importer-item img {
+  width: 52px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex: none;
+}
+.importer-item-legende {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Photo posée sur la carte (annotation "image") : façon polaroid */
+.annot-image {
+  margin: 0;
+  background: #fff;
+  padding: 4px 4px 3px;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+}
+.annot-image img { display: block; width: 100%; border-radius: 2px; }
+.annot-image figcaption {
+  font-size: 11px;
+  text-align: center;
+  padding: 3px 2px 1px;
+  color: #2f3b34;
+  font-family: Georgia, serif;
+  font-style: italic;
+}
+
+/* ---------- Panneau Accueil (liste des carnets) ---------- */
+.accueil-panneau {
+  position: relative;
+  flex: none;
+  width: 360px;
+  max-width: 88vw;
+  background: var(--carte-bg);
+  border-right: 1.5px solid var(--ligne);
+  box-shadow: 4px 0 20px rgba(47,59,52,0.10);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  z-index: 940;
+}
+.accueil-tete { padding: 14px 14px 6px; }
+.accueil-tete h2 { margin: 0; font-size: 19px; color: var(--foret-fonce); }
+.accueil-compte { font-size: 13px; color: var(--encre-douce); font-weight: 700; }
+.accueil-filtres {
+  padding: 6px 14px 10px;
+  border-bottom: 1.5px solid var(--ligne);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.accueil-filtres-ligne { display: flex; gap: 8px; align-items: center; }
+.accueil-select { flex: 1; }
+.accueil-date-label {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--encre-douce);
+  font-weight: 700;
+}
+.accueil-date-label input { flex: 1; min-width: 0; }
+.accueil-liste {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.accueil-pied {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
+  border-top: 1.5px solid var(--ligne);
+}
+
+/* Carte (vignette) d'un carnet sur l'accueil */
+.carnet-carte {
+  border: 1.5px solid var(--ligne);
+  border-radius: 14px;
+  background: var(--carte-bg);
+  padding: 12px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  width: 100%;
+}
+.carnet-carte:hover { background: var(--papier); }
+.carnet-carte.actif { border-color: var(--foret); box-shadow: 0 0 0 2px rgba(63,125,82,0.2); }
+.carnet-carte-tete { display: flex; align-items: center; gap: 10px; }
+.carnet-carte-logo {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: var(--papier);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+}
+.carnet-carte-titres { flex: 1; min-width: 0; }
+.carnet-carte-nom {
+  font-weight: 800;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.carnet-carte-dates { font-size: 12px; color: var(--encre-douce); }
+.carnet-carte-categorie {
+  flex: none;
+  font-size: 11px;
+  font-weight: 800;
+  background: #e4efe7;
+  color: var(--foret-fonce);
+  border-radius: 999px;
+  padding: 3px 9px;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.carnet-carte-desc {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: var(--encre-douce);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.carnet-carte-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+
+/* ---------- Calendrier (choix de date rapide) ---------- */
+.date-rapide { margin-top: 10px; }
+.calendrier {
+  border: 1.5px solid var(--ligne);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--carte-bg);
+}
+.calendrier-tete {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.calendrier-tete .titre-mois {
+  font-weight: 800;
+  font-size: 14px;
+  color: var(--foret-fonce);
+  text-transform: capitalize;
+}
+.calendrier-nav {
+  width: 30px;
+  height: 30px;
+  border: 1.5px solid var(--ligne);
+  border-radius: 8px;
+  background: var(--carte-bg);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--encre);
+}
+.calendrier-nav:hover { background: var(--papier); }
+.calendrier-grille {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.calendrier-jour-nom {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--encre-douce);
+  text-transform: uppercase;
+  padding: 3px 0;
+}
+.calendrier-jour {
+  aspect-ratio: 1;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--encre);
+  cursor: pointer;
+  font-family: inherit;
+}
+.calendrier-jour:hover { background: var(--papier); }
+.calendrier-jour.autre-mois { color: #c3bfae; }
+.calendrier-jour.aujourdhui { box-shadow: inset 0 0 0 1.5px var(--ocre); }
+.calendrier-jour.choisi { background: var(--foret); color: #fff; }
+.date-choisie {
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--foret-fonce);
+}
+
+/* ---------- Fenêtre d'impression : liste des carnets ---------- */
+.impr-liste { display: flex; flex-direction: column; gap: 8px; max-height: 46vh; overflow-y: auto; }
+.impr-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1.5px solid var(--ligne);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--carte-bg);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  width: 100%;
+  font-size: 14px;
+  font-weight: 700;
+}
+.impr-item:hover { background: var(--papier); }
+.impr-item .impr-logo { font-size: 20px; }
+.impr-item .impr-detail { font-weight: 400; font-size: 12px; color: var(--encre-douce); }
+
+/* ---------- Disposition de l'affiche (souvenirs à imprimer) ---------- */
+.affiche-souvenirs-liste {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 30vh;
+  overflow-y: auto;
+  border: 1.5px solid var(--ligne);
+  border-radius: 12px;
+  padding: 8px;
+}
+.affiche-souvenir-ligne {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.affiche-souvenir-ligne input[type="checkbox"] { width: auto; }
+.affiche-souvenir-nom {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.affiche-souvenir-ligne .ordre-btn {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: 1.5px solid var(--ligne);
+  border-radius: 7px;
+  background: var(--carte-bg);
+  cursor: pointer;
+  font-size: 12px;
+}
+.affiche-souvenir-ligne .ordre-btn:hover { background: var(--papier); }
+
+/* Bouton « Terminer » de la bannière d'outil (tracé de trait) */
+.banniere-terminer {
+  background: var(--foret);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.banniere-terminer:hover { filter: brightness(1.1); }
+
+/* ---------- Écrans étroits (téléphone) ---------- */
+@media (max-width: 760px) {
+  /* Le rail passe en barre horizontale en bas de l'écran. */
+  .layout { flex-direction: column; }
+  .rail {
+    order: 3;
+    width: 100%;
+    height: 64px;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 4px;
+  }
+  .rail-btn { flex: none; margin: 5px 2px; padding: 6px 8px; }
+  /* Le tiroir recouvre la carte (au-dessus, sous la barre du haut). */
+  .tiroir {
+    position: absolute;
+    inset: 0 0 64px 0;
+    width: 100%;
+    max-width: none;
+    z-index: 1100;
+  }
+  .accueil-panneau {
+    position: absolute;
+    inset: auto 0 0 0;
+    width: 100%;
+    max-width: none;
+    height: 46vh;
+    border-top: 1.5px solid var(--ligne);
+    border-right: none;
+    z-index: 900;
+  }
+  .carte-zone { flex: 1; }
+  .editeur-identite #editeur-nom { max-width: 28vw; }
+}
+
+/* ---------- Compte en ligne ---------- */
+.compte-btn {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#modal-compte input { margin-bottom: 6px; }
+#modal-compte .btn-petit { margin-top: 6px; }
+@media (max-width: 760px) {
+  .compte-btn { max-width: 130px; }
 }

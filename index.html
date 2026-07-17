@@ -33,156 +33,662 @@
   <!-- Nos styles à nous -->
   <link rel="stylesheet" href="styles.css" />
 </head>
-<body>
+<body class="vue-accueil">
 
-  <!-- Barre du haut : titre de l'app + menu des actions -->
+  <!-- ===================== Barre du haut ===================== -->
   <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark">▲</span>
-      <span class="brand-name">Carnet&nbsp;de&nbsp;voyage</span>
+    <!-- Côté gauche : marque (accueil) ou retour (éditeur) -->
+    <div class="topbar-gauche">
+      <div class="brand accueil-seule">
+        <span class="brand-mark">▲</span>
+        <span class="brand-name">Carnet&nbsp;de&nbsp;voyage</span>
+      </div>
+      <button id="btn-retour-accueil" class="btn-retour editeur-seule" title="Revenir à mes carnets">
+        ← Mes carnets
+      </button>
+      <button id="editeur-identite" class="editeur-identite editeur-seule" title="Infos du carnet (onglet Carnets)">
+        <span id="editeur-logo">📖</span>
+        <span id="editeur-nom">Carnet</span>
+      </button>
     </div>
 
     <div class="topbar-right">
-      <!-- Indicateur discret de sauvegarde automatique -->
+      <!-- Indicateurs discrets : sauvegarde locale + envoi en ligne -->
       <span id="statut-sauvegarde" class="statut-sauvegarde" hidden>✓ Enregistré</span>
-
-      <!-- Ouvre/ferme le menu déroulant des actions -->
-      <button id="btn-menu" class="hamburger-btn" title="Menu" aria-haspopup="true" aria-expanded="false">☰</button>
+      <span id="statut-nuage" class="statut-sauvegarde" hidden>☁️ En ligne</span>
+      <!-- Compte en ligne (connexion, synchronisation) -->
+      <button id="compte-btn" class="btn-retour compte-btn">☁️ Compte</button>
+      <!-- Impression d'un carnet en livre photo (depuis l'accueil) -->
+      <button id="accueil-imprimer" class="btn btn-primary btn-topbar accueil-seule">🖨️ Imprimer</button>
     </div>
-
-    <!-- Menu déroulant : toutes les actions, regroupées par thème.
-         Un groupe dont tous les boutons sont cachés disparaît (CSS :has). -->
-    <nav id="menu-actions" class="menu-actions" hidden>
-
-      <div class="menu-groupe">
-        <div class="menu-groupe-titre">Mon carnet</div>
-        <!-- Mes carnets : en créer, en ouvrir un autre, en afficher plusieurs -->
-        <button id="btn-carnets" class="btn btn-ghost">📚 Mes carnets</button>
-        <!-- Bouton qui déclenche le choix d'un fichier .gpx -->
-        <label id="label-gpx" class="btn btn-primary edition-seule">
-          🥾 Charger un GPX
-          <input id="gpx-input" type="file" accept=".gpx,application/gpx+xml" hidden />
-        </label>
-        <!-- Importer un carnet .json déjà sauvegardé (devient un nouveau carnet) -->
-        <label id="label-importer" class="btn btn-ghost edition-seule">
-          📥 Importer un carnet
-          <input id="import-input" type="file" accept=".json,application/json" hidden />
-        </label>
-      </div>
-
-      <div class="menu-groupe">
-        <div class="menu-groupe-titre">Créer</div>
-        <!-- Bouton "ajouter des souvenirs" : apparaît une fois une trace chargée -->
-        <button id="btn-ajout-souvenir" class="btn btn-accent edition-seule" hidden>
-          <span class="btn-ico">📍</span> Ajouter des souvenirs
-        </button>
-        <!-- Ouvre la réserve de souvenirs (préparés à l'avance, sans position) -->
-        <button id="btn-reserve" class="btn btn-ghost edition-seule" hidden>📦 Réserve</button>
-        <!-- Range les souvenirs dans l'ordre chronologique de leurs dates -->
-        <button id="btn-trier-dates" class="btn btn-ghost edition-seule" hidden>📅 Trier par date</button>
-      </div>
-
-      <div class="menu-groupe">
-        <div class="menu-groupe-titre">Affichage</div>
-        <!-- Bascule Édition / Visualisation : apparaît une fois une trace chargée -->
-        <button id="btn-mode" class="btn btn-ghost" hidden>👁 Mode visualisation</button>
-        <!-- Filtre les souvenirs par dates et pictogrammes (mode visualisation) -->
-        <button id="btn-filtrer" class="btn btn-ghost visu-seule" hidden>🔎 Filtrer</button>
-        <!-- Ouvre le panneau de personnalisation du style -->
-        <button id="btn-style" class="btn btn-ghost edition-seule" hidden>🎨 Style</button>
-        <!-- Ouvre le panneau d'édition du fond de carte -->
-        <button id="btn-fond" class="btn btn-ghost edition-seule" hidden>🖌️ Fond de carte</button>
-      </div>
-
-      <div class="menu-groupe">
-        <div class="menu-groupe-titre">Partager</div>
-        <!-- Exporte une affiche (carte + souvenirs) via l'impression du navigateur -->
-        <button id="btn-export-affiche" class="btn btn-ghost" hidden>🖨️ Affiche PDF</button>
-        <!-- Exporte la carte affichée en image PNG -->
-        <button id="btn-export-png" class="btn btn-ghost" hidden>🖼️ Export PNG</button>
-        <!-- Exporter le carnet en un fichier .json : apparaît avec une trace -->
-        <button id="btn-exporter" class="btn btn-ghost" hidden>💾 Sauvegarder (.json)</button>
-        <!-- Réinitialiser : efface la trace et les souvenirs (avec confirmation) -->
-        <button id="btn-reinitialiser" class="btn btn-ghost edition-seule" hidden>🗑 Réinitialiser</button>
-      </div>
-    </nav>
   </header>
 
-  <!-- Zone principale : la carte occupe tout l'espace -->
+  <!-- ===================== Zone principale ===================== -->
   <main class="layout">
-    <div id="map" class="map"></div>
 
-    <!-- Calque "parchemin" pour l'ambiance médiévale (par-dessus le fond, sous le titre) -->
-    <div id="parchemin" class="parchemin"></div>
+    <!-- Rail d'onglets (éditeur, façon Canva) -->
+    <nav id="rail" class="rail editeur-seule">
+      <button class="rail-btn" data-onglet="carnets"><span class="rail-ico">📚</span><span class="rail-label">Carnets</span></button>
+      <button class="rail-btn" data-onglet="modeles"><span class="rail-ico">🎭</span><span class="rail-label">Modèles</span></button>
+      <button class="rail-btn" data-onglet="souvenirs"><span class="rail-ico">📍</span><span class="rail-label">Souvenirs</span></button>
+      <button class="rail-btn" data-onglet="textes"><span class="rail-ico">🔤</span><span class="rail-label">Textes</span></button>
+      <button class="rail-btn" data-onglet="importer"><span class="rail-ico">🖼️</span><span class="rail-label">Importer</span></button>
+      <button class="rail-btn" data-onglet="outils"><span class="rail-ico">✏️</span><span class="rail-label">Outils</span></button>
+      <button class="rail-btn" data-onglet="fond"><span class="rail-ico">🗺️</span><span class="rail-label">Fond de carte</span></button>
+      <button class="rail-btn" data-onglet="export"><span class="rail-ico">📤</span><span class="rail-label">Export</span></button>
+    </nav>
 
-    <!-- Cartouche de titre affiché sur la carte (rempli via le panneau Style) -->
-    <div id="carte-titre" class="carte-titre" hidden></div>
+    <!-- Tiroir : le panneau de l'onglet ouvert (éditeur) -->
+    <div id="tiroir" class="tiroir editeur-seule">
 
-    <!-- Bordure décorative (double filet, coins ornés) : option du panneau Fond de carte -->
-    <div id="bordure-carte" class="bordure-carte" hidden></div>
+      <!-- ========== Onglet CARNETS ========== -->
+      <section id="panneau-carnets" class="tiroir-section" hidden>
+        <header class="panneau-tete">
+          <span class="panneau-titre-fixe">📚 Carnets</span>
+          <button id="fermer-carnets" class="icone-btn" title="Fermer">✕</button>
+        </header>
+        <div class="panneau-corps">
 
-    <!-- Rose des vents : option du panneau Fond de carte -->
-    <div id="rose-carte" class="rose-carte" hidden>
-      <svg viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="30" cy="30" r="28" fill="rgba(244,236,215,0.85)" stroke="#5a4632" stroke-width="1.4"/>
-        <circle cx="30" cy="30" r="21" fill="none" stroke="#5a4632" stroke-width="0.6" opacity="0.6"/>
-        <g stroke="#5a4632" stroke-width="0.5" opacity="0.55">
-          <line x1="30" y1="4" x2="30" y2="56"/><line x1="4" y1="30" x2="56" y2="30"/>
-          <line x1="12" y1="12" x2="48" y2="48"/><line x1="48" y1="12" x2="12" y2="48"/>
-        </g>
-        <polygon points="30,6 34,27 30,23 26,27" fill="#a33d2a"/>
-        <polygon points="30,54 34,33 30,37 26,33" fill="#5a4632"/>
-        <polygon points="6,30 27,26 23,30 27,34" fill="#5a4632"/>
-        <polygon points="54,30 33,26 37,30 33,34" fill="#5a4632"/>
-        <text x="30" y="14.5" text-anchor="middle" font-size="7.5" font-weight="bold"
-              font-family="Georgia, serif" fill="#5a4632">N</text>
-      </svg>
+          <section class="style-section">
+            <h3>Ce carnet</h3>
+            <div class="meta-ligne">
+              <input id="meta-logo" class="style-input meta-logo" type="text" maxlength="8"
+                     placeholder="📖" title="Logo (un émoji)" />
+              <input id="meta-nom" class="style-input" type="text" maxlength="60" placeholder="Titre du carnet" />
+            </div>
+            <label class="style-label">Catégorie <span class="style-unite">(libre : rando, vélo, famille…)</span></label>
+            <input id="meta-categorie" class="style-input" type="text" maxlength="30"
+                   placeholder="Ex : Randonnée" list="liste-categories" />
+            <datalist id="liste-categories"></datalist>
+            <label class="style-label">Description</label>
+            <textarea id="meta-description" class="style-input meta-description" rows="3"
+                      placeholder="Quelques mots sur ce voyage…"></textarea>
+            <p id="meta-dates" class="style-aide">📅 Dates : —</p>
+          </section>
+
+          <section class="style-section">
+            <h3>Trace GPX</h3>
+            <label id="label-gpx" class="btn btn-primary" style="width:100%">
+              🥾 Charger un GPX
+              <input id="gpx-input" type="file" accept=".gpx,application/gpx+xml" hidden />
+            </label>
+            <p class="style-aide">La trace GPX dessine le parcours de ce carnet sur la carte.</p>
+          </section>
+
+          <section class="style-section">
+            <h3>Tous mes carnets</h3>
+            <button id="carnet-nouveau" class="btn btn-accent btn-petit edition-seule" style="width:100%">
+              + Nouveau carnet
+            </button>
+            <label id="label-importer" class="btn btn-ghost btn-petit edition-seule" style="width:100%">
+              📥 Importer un carnet (.json)
+              <input id="import-input" type="file" accept=".json,application/json" hidden />
+            </label>
+            <button id="carnet-dupliquer" class="btn btn-ghost btn-petit" style="width:100%">
+              📑 Dupliquer ce carnet
+            </button>
+            <div id="carnets-liste" class="carnets-liste"></div>
+          </section>
+
+          <section class="style-section">
+            <h3>Zone dangereuse</h3>
+            <button id="btn-reinitialiser" class="btn btn-danger btn-petit" style="width:100%" hidden>
+              🗑 Réinitialiser ce carnet
+            </button>
+          </section>
+        </div>
+      </section>
+
+      <!-- ========== Onglet MODÈLES ========== -->
+      <section id="panneau-modeles" class="tiroir-section" hidden>
+        <header class="panneau-tete">
+          <span class="panneau-titre-fixe">🎭 Modèles</span>
+          <button class="icone-btn tiroir-fermer" title="Fermer">✕</button>
+        </header>
+        <div class="panneau-corps">
+          <p class="style-aide">Un modèle habille toute la carte d'un coup : fond, couleurs, tracé,
+             titre, polices et décor. Tu peux ensuite tout ajuster dans les autres onglets.</p>
+          <div id="modeles-liste" class="modeles-liste"></div>
+        </div>
+      </section>
+
+      <!-- ========== Onglet SOUVENIRS ========== -->
+      <section id="panneau-reserve" class="tiroir-section" hidden>
+        <header class="panneau-tete">
+          <span class="panneau-titre-fixe">📍 Souvenirs</span>
+          <button id="fermer-reserve" class="icone-btn" title="Fermer">✕</button>
+        </header>
+        <div class="panneau-corps">
+          <button id="souvenir-nouveau" class="btn btn-accent btn-petit" style="width:100%">
+            + Créer un souvenir
+          </button>
+          <button id="btn-ajout-souvenir" class="btn btn-ghost btn-petit" style="width:100%" hidden>
+            <span class="btn-ico">📍</span> Ajouter des souvenirs
+          </button>
+          <button id="reserve-generer" class="btn btn-ghost btn-petit" style="width:100%">
+            ✨ Générer depuis un texte / des photos
+          </button>
+          <button id="btn-trier-dates" class="btn btn-ghost btn-petit" style="width:100%" hidden>
+            📅 Trier par date
+          </button>
+
+          <div id="souvenirs-filtre" class="chips" role="group">
+            <button class="chip actif" data-souvfiltre="tous">Tous</button>
+            <button class="chip" data-souvfiltre="places">Placés</button>
+            <button class="chip" data-souvfiltre="reserve">À placer</button>
+          </div>
+          <p class="style-aide">Les souvenirs <span class="pastille-reserve-demo">orange</span> ne sont pas
+             encore sur la carte : <strong>glisse-les</strong> directement dessus pour les placer.</p>
+
+          <div id="souvenirs-liste" class="souvenirs-liste"></div>
+          <p id="souvenirs-vide" class="galerie-vide" hidden>Aucun souvenir pour l'instant.</p>
+        </div>
+      </section>
+
+      <!-- ========== Onglet TEXTES ========== -->
+      <section id="panneau-textes" class="tiroir-section" hidden>
+        <header class="panneau-tete">
+          <span class="panneau-titre-fixe">🔤 Textes</span>
+          <button class="icone-btn tiroir-fermer" title="Fermer">✕</button>
+        </header>
+        <div class="panneau-corps">
+
+          <section class="style-section">
+            <h3>Ajouter un texte sur la carte</h3>
+            <button id="texte-ajouter-titre" class="btn btn-accent btn-petit" style="width:100%">
+              ＋ Ajouter un titre
+            </button>
+            <button id="texte-ajouter-lieu" class="btn btn-ghost btn-petit" style="width:100%">
+              ＋ Ajouter un texte de lieu
+            </button>
+            <button id="texte-ajouter-libre" class="btn btn-ghost btn-petit" style="width:100%">
+              ＋ Ajouter un texte
+            </button>
+            <p class="style-aide">Clique ensuite sur la carte pour le poser. Une fois posé : glisse-le pour
+               le déplacer, clique dessus pour changer sa police, sa taille, sa couleur ou sa mise en forme.</p>
+          </section>
+
+          <section class="style-section">
+            <h3>Cartouche de titre de la carte</h3>
+            <input id="style-titre" class="style-input" type="text"
+                   placeholder="Ex : Boucle du Lac de Lauvitel" maxlength="60" />
+            <label class="style-label">Police du titre</label>
+            <button id="police-btn-titre" class="btn btn-ghost police-btn" type="button">Titre</button>
+
+            <label class="style-label">Style du cartouche</label>
+            <div id="titre-fond" class="segment segment-grille" role="group">
+              <button class="segment-btn" data-titrefond="classique">Classique</button>
+              <button class="segment-btn" data-titrefond="parchemin">📜 Parchemin</button>
+              <button class="segment-btn" data-titrefond="pirate">☠️ Pirate</button>
+              <button class="segment-btn" data-titrefond="sombre">🕯️ Sombre</button>
+            </div>
+            <p class="style-aide">Laisse le titre vide pour ne rien afficher sur la carte.</p>
+          </section>
+        </div>
+      </section>
+
+      <!-- ========== Onglet IMPORTER ========== -->
+      <section id="panneau-importer" class="tiroir-section" hidden>
+        <header class="panneau-tete">
+          <span class="panneau-titre-fixe">🖼️ Importer</span>
+          <button class="icone-btn tiroir-fermer" title="Fermer">✕</button>
+        </header>
+        <div class="panneau-corps">
+          <section class="style-section">
+            <h3>Photo sur la carte</h3>
+            <label class="btn btn-accent btn-petit" style="width:100%">
+              🖼️ Importer une photo
+              <input id="importer-photo-input" type="file" accept="image/*" hidden />
+            </label>
+            <p class="style-aide">Choisis une photo, puis clique sur la carte pour la poser.
+               Clique ensuite dessus pour écrire sa légende ou régler sa taille, et glisse-la pour la déplacer.</p>
+          </section>
+          <section class="style-section">
+            <h3>Photos posées sur la carte</h3>
+            <div id="importer-liste" class="importer-liste"></div>
+            <p id="importer-vide" class="galerie-vide">Aucune photo posée sur la carte.</p>
+          </section>
+        </div>
+      </section>
+
+      <!-- ========== Onglet OUTILS ========== -->
+      <section id="panneau-outils" class="tiroir-section" hidden>
+        <header class="panneau-tete">
+          <span class="panneau-titre-fixe">✏️ Outils</span>
+          <button class="icone-btn tiroir-fermer" title="Fermer">✕</button>
+        </header>
+        <div class="panneau-corps">
+
+          <section class="style-section">
+            <h3>Décorer la carte</h3>
+            <div class="outils-grille">
+              <button id="btn-ajout-annot-picto" class="outil-btn"><span>😀</span>Pictogramme</button>
+              <button id="btn-ajout-annot-texte" class="outil-btn"><span>🔤</span>Texte</button>
+              <button class="outil-btn" data-outil="trait"><span>📏</span>Trait</button>
+              <button class="outil-btn" data-outil="dessin"><span>✍️</span>Dessin</button>
+              <button class="outil-btn" data-outil="rect"><span>▭</span>Rectangle</button>
+              <button class="outil-btn" data-outil="cercle"><span>◯</span>Cercle</button>
+              <button class="outil-btn" data-outil="fleche"><span>➤</span>Flèche</button>
+            </div>
+            <p class="style-aide">Trait : clique point par point, puis « Terminer » (ou double-clique).
+               Dessin, rectangle, cercle et flèche : garde le doigt/clic appuyé et fais glisser.</p>
+          </section>
+
+          <section class="style-section">
+            <h3>Réglages du prochain dessin</h3>
+            <label class="style-label-couleur">
+              Couleur
+              <input id="outil-couleur" type="color" value="#b4452f" />
+            </label>
+            <label class="style-label">Épaisseur : <span id="outil-epaisseur-val">4</span> px</label>
+            <input id="outil-epaisseur" class="style-range" type="range" min="1" max="14" step="1" value="4" />
+          </section>
+        </div>
+      </section>
+
+      <!-- ========== Onglet FOND DE CARTE ========== -->
+      <section id="panneau-fond-carte" class="tiroir-section" hidden>
+        <header class="panneau-tete">
+          <span class="panneau-titre-fixe">🗺️ Fond de carte</span>
+          <button id="fermer-fond" class="icone-btn" title="Fermer">✕</button>
+        </header>
+        <div class="panneau-corps">
+
+          <!-- Fond de carte -->
+          <section class="style-section">
+            <h3>Fond de carte</h3>
+            <div id="fond-carte" class="segment segment-colonne" role="group">
+              <button class="segment-btn" data-fond="topo">Topographique</button>
+              <button class="segment-btn" data-fond="clair">Clair (voyage)</button>
+              <button class="segment-btn" data-fond="epure">Épuré</button>
+              <button class="segment-btn" data-fond="vectoriel">Vectoriel ✏️</button>
+              <button class="segment-btn" data-fond="perso">Personnalisé…</button>
+            </div>
+
+            <!-- Réglage du fond personnalisé (visible quand "Personnalisé" est choisi) -->
+            <div id="fond-perso-bloc" class="fond-perso" hidden>
+              <label class="style-label">Exemples prêts à l'emploi</label>
+              <div id="fond-perso-exemples" class="fond-exemples"></div>
+
+              <label class="style-label">…ou colle une adresse de tuiles</label>
+              <input id="fond-perso-url" class="style-input" type="text"
+                     placeholder="https://…/{z}/{x}/{y}.png" />
+              <p class="style-aide">L'adresse doit contenir <code>{z}</code>, <code>{x}</code> et <code>{y}</code>.</p>
+            </div>
+
+            <!-- Réglages du fond vectoriel (visible quand "Vectoriel" est choisi) -->
+            <div id="vecteur-bloc" class="vecteur-bloc" hidden>
+              <label class="style-label">Styles médiévaux prêts à l'emploi</label>
+              <div id="preset-fond" class="segment segment-grille" role="group">
+                <button class="segment-btn" data-preset="ancienne">✶ Carte ancienne</button>
+                <button class="segment-btn" data-preset="clair">📜 Parchemin clair</button>
+                <button class="segment-btn" data-preset="sombre">🕯️ Parchemin sombre</button>
+                <button class="segment-btn" data-preset="pirate">☠️ Carte de pirate</button>
+              </div>
+              <p class="style-aide">Chaque style règle d'un coup les couleurs, le grain de parchemin, la rose des vents et la bordure. Tu peux ensuite tout ajuster.</p>
+
+              <label class="style-label">Couches affichées</label>
+              <div class="couches-liste">
+                <label class="style-switch"><input type="checkbox" data-couche="noms" checked /><span>Noms de lieux</span></label>
+                <label class="style-switch"><input type="checkbox" data-couche="frontiere" checked /><span>Frontières</span></label>
+                <label class="style-switch"><input type="checkbox" data-couche="riviere" checked /><span>Rivières</span></label>
+                <label class="style-switch"><input type="checkbox" data-couche="route" checked /><span>Routes &amp; chemins</span></label>
+                <label class="style-switch"><input type="checkbox" data-couche="bati" checked /><span>Bâtiments</span></label>
+              </div>
+
+              <label class="style-label">Couleurs des zones</label>
+              <div class="zone-rangees">
+                <label class="zone-rangee">Eau <input type="color" data-zone="eau" /></label>
+                <label class="zone-rangee">Rivières <input type="color" data-zone="riviere" /></label>
+                <label class="zone-rangee">Forêt <input type="color" data-zone="foret" /></label>
+                <label class="zone-rangee">Réserves &amp; parcs <input type="color" data-zone="reserve" /></label>
+                <label class="zone-rangee">Prairie <input type="color" data-zone="prairie" /></label>
+                <label class="zone-rangee">Glaciers <input type="color" data-zone="glacier" /></label>
+                <label class="zone-rangee">Bâti <input type="color" data-zone="bati" /></label>
+                <label class="zone-rangee">Routes & chemins <input type="color" data-zone="route" /></label>
+                <label class="zone-rangee">Frontières <input type="color" data-zone="frontiere" /></label>
+                <label class="zone-rangee">Noms de lieux <input type="color" data-zone="noms" /></label>
+                <label class="zone-rangee">Fond <input type="color" data-zone="fond" /></label>
+              </div>
+              <button id="zones-reset" class="btn btn-ghost btn-petit">Couleurs d'origine</button>
+
+              <label class="style-label">Niveau de détail</label>
+              <div id="vecteur-detail" class="segment" role="group">
+                <button class="segment-btn" data-detail="complet">Complet</button>
+                <button class="segment-btn" data-detail="epure">Épuré</button>
+              </div>
+              <p class="style-aide">Épuré : masque les petites routes, les bâtiments et les points d'intérêt.</p>
+
+              <label class="style-label">Simplification des tracés</label>
+              <div id="vecteur-simplification" class="segment segment-grille" role="group">
+                <button class="segment-btn" data-simplification="14">Aucune</button>
+                <button class="segment-btn" data-simplification="12">Légère</button>
+                <button class="segment-btn" data-simplification="10">Moyenne</button>
+                <button class="segment-btn" data-simplification="8">Forte</button>
+              </div>
+              <label class="style-label">Réglage fin <span class="style-unite">(1 = très simplifié, 14 = tout le détail)</span></label>
+              <input id="simplification-valeur" class="style-input style-nombre" type="number"
+                     min="1" max="14" step="1" value="14" />
+              <p class="style-aide">Simplifie le dessin des côtes, lacs, rivières et routes, comme sur une carte à grande échelle.</p>
+
+              <label class="style-label">Arrondi des formes</label>
+              <div id="arrondi-carte" class="segment segment-grille" role="group">
+                <button class="segment-btn" data-arrondi="0">Aucun</button>
+                <button class="segment-btn" data-arrondi="1">Léger</button>
+                <button class="segment-btn" data-arrondi="2">Moyen</button>
+                <button class="segment-btn" data-arrondi="3">Fort</button>
+              </div>
+              <label class="style-label">Réglage fin <span class="style-unite">(0 à 4 passes d'arrondi)</span></label>
+              <input id="arrondi-valeur" class="style-input style-nombre" type="number"
+                     min="0" max="4" step="1" value="0" />
+              <p class="style-aide">Adoucit vraiment les angles des côtes, lacs et forêts (idéal avec la simplification). La carte reste parfaitement nette.</p>
+            </div>
+            <p id="fond-aide-vectoriel" class="style-aide" hidden>
+              Les couleurs et la simplification ne fonctionnent qu'avec le fond « Vectoriel ✏️ ».
+            </p>
+          </section>
+
+          <!-- Ambiance (teinte générale) -->
+          <section class="style-section">
+            <h3>Ambiance</h3>
+            <div id="ambiance-carte" class="segment segment-grille" role="group">
+              <button class="segment-btn" data-ambiance="naturel">Naturel</button>
+              <button class="segment-btn" data-ambiance="ancien">Ancien</button>
+              <button class="segment-btn" data-ambiance="doux">Doux</button>
+              <button class="segment-btn" data-ambiance="medieval">Médiéval</button>
+            </div>
+          </section>
+
+          <!-- Tracé du parcours (GPX) -->
+          <section class="style-section">
+            <h3>Tracé du parcours</h3>
+
+            <label class="style-label">Couleur</label>
+            <div id="trace-couleurs" class="nuancier"></div>
+            <label class="style-label-couleur">
+              Personnalisée
+              <input id="trace-couleur-perso" type="color" value="#c8893d" />
+            </label>
+
+            <label class="style-label">Épaisseur : <span id="trace-epaisseur-val">4</span> px</label>
+            <input id="trace-epaisseur" class="style-range" type="range" min="2" max="10" step="1" value="4" />
+
+            <label class="style-label">Type de ligne</label>
+            <div id="trace-type" class="segment" role="group">
+              <button class="segment-btn" data-type="plein">Plein</button>
+              <button class="segment-btn" data-type="pointilles">Pointillés</button>
+              <button class="segment-btn" data-type="tirets">Tirets</button>
+            </div>
+          </section>
+
+          <!-- Noms des souvenirs affichés sur la carte -->
+          <section class="style-section">
+            <h3>Noms des souvenirs</h3>
+            <label class="style-switch">
+              <input id="labels-afficher" type="checkbox" />
+              <span>Afficher les noms sur la carte</span>
+            </label>
+
+            <div id="labels-reglages" hidden>
+              <label class="style-label">Police</label>
+              <button id="police-btn-labels" class="btn btn-ghost police-btn" type="button">Système</button>
+
+              <label class="style-label">Couleur</label>
+              <div id="labels-couleurs" class="nuancier"></div>
+
+              <label class="style-label">Taille</label>
+              <div id="labels-taille" class="segment" role="group">
+                <button class="segment-btn" data-taille="petit">Petit</button>
+                <button class="segment-btn" data-taille="moyen">Moyen</button>
+                <button class="segment-btn" data-taille="grand">Grand</button>
+              </div>
+              <label class="style-label">Réglage fin <span class="style-unite">(8 à 28 pixels)</span></label>
+              <input id="labels-taille-valeur" class="style-input style-nombre" type="number"
+                     min="8" max="28" step="1" value="13" />
+            </div>
+          </section>
+
+          <!-- Décor : rose des vents et bordure (tous fonds) -->
+          <section class="style-section">
+            <h3>Décor</h3>
+            <div class="decor-ligne">
+              <label class="style-switch">
+                <input id="decor-rose" type="checkbox" />
+                <span>Rose des vents</span>
+              </label>
+              <button id="decor-rose-choisir" class="btn btn-ghost btn-petit">Choisir…</button>
+            </div>
+            <div class="decor-ligne">
+              <label class="style-switch">
+                <input id="decor-bordure" type="checkbox" />
+                <span>Bordure stylisée</span>
+              </label>
+              <button id="decor-bordure-choisir" class="btn btn-ghost btn-petit">Choisir…</button>
+            </div>
+            <p class="style-aide">Plusieurs styles au choix, et tu peux importer tes propres images. Le décor apparaît aussi sur l'affiche PDF et l'export en image.</p>
+          </section>
+        </div>
+      </section>
+
+      <!-- ========== Onglet EXPORT ========== -->
+      <section id="panneau-export" class="tiroir-section" hidden>
+        <header class="panneau-tete">
+          <span class="panneau-titre-fixe">📤 Export</span>
+          <button class="icone-btn tiroir-fermer" title="Fermer">✕</button>
+        </header>
+        <div class="panneau-corps">
+          <section class="style-section">
+            <h3>PDF (livre / affiche)</h3>
+            <button id="btn-export-affiche" class="btn btn-accent btn-petit" style="width:100%" hidden>🖨️ Affiche PDF</button>
+            <p class="style-aide">Une page pleine pour la carte, puis tes souvenirs en mosaïque.
+               Tu choisis le format, l'ordre et les souvenirs à inclure avant d'imprimer.</p>
+          </section>
+          <section class="style-section">
+            <h3>Image</h3>
+            <button id="btn-export-png" class="btn btn-ghost btn-petit" style="width:100%" hidden>🖼️ Export PNG</button>
+            <p class="style-aide">La carte telle qu'elle est affichée, en image à partager.</p>
+          </section>
+          <section class="style-section">
+            <h3>Fichier de sauvegarde</h3>
+            <button id="btn-exporter" class="btn btn-ghost btn-petit" style="width:100%" hidden>💾 Sauvegarder (.json)</button>
+            <p class="style-aide">Tout le carnet (trace, souvenirs, photos, audios, style) dans un seul
+               fichier, à garder en lieu sûr ou à ré-importer sur un autre appareil.</p>
+          </section>
+        </div>
+      </section>
+
+      <!-- ========== Panneau ÉLÉMENT SÉLECTIONNÉ (hors rail) ========== -->
+      <section id="panneau-element" class="tiroir-section" hidden>
+        <header class="panneau-tete">
+          <span class="panneau-titre-fixe">🎯 Élément sélectionné</span>
+          <button class="icone-btn tiroir-fermer" title="Fermer">✕</button>
+        </header>
+        <div class="panneau-corps">
+          <!-- Éditeur de l'élément sélectionné -->
+          <div id="annot-editeur" class="annot-editeur" hidden>
+            <div class="annot-editeur-tete">
+              <span id="annot-editeur-titre">Élément sélectionné</span>
+              <button id="annot-terminer" class="icone-btn" title="Terminer">✓</button>
+            </div>
+
+            <!-- Réglages propres au TEXTE -->
+            <div id="annot-bloc-texte" hidden>
+              <label class="style-label">Texte</label>
+              <textarea id="annot-texte" class="style-input annot-texte-input" rows="2"
+                        placeholder="Ton texte (plusieurs lignes possibles)"></textarea>
+
+              <label class="style-label">Police</label>
+              <button id="police-btn-annot" class="btn btn-ghost police-btn" type="button">Système</button>
+
+              <label class="style-label-couleur">
+                Couleur
+                <input id="annot-couleur" type="color" value="#2f3b34" />
+              </label>
+
+              <label class="style-label">Alignement</label>
+              <div id="annot-align" class="segment" role="group">
+                <button class="segment-btn" data-align="gauche">Gauche</button>
+                <button class="segment-btn" data-align="centre">Centré</button>
+                <button class="segment-btn" data-align="droite">Droite</button>
+              </div>
+
+              <label class="style-label">Mise en forme</label>
+              <div class="segment" role="group">
+                <button id="annot-gras" class="segment-btn annot-btn-gras" title="Gras"><b>G</b></button>
+                <button id="annot-italique" class="segment-btn annot-btn-italique" title="Italique"><i>I</i></button>
+                <button id="annot-souligne" class="segment-btn" title="Souligné"><u>S</u></button>
+                <button id="annot-barre" class="segment-btn" title="Barré"><s>B</s></button>
+              </div>
+            </div>
+
+            <!-- Réglages propres au PICTOGRAMME -->
+            <div id="annot-bloc-picto" hidden>
+              <button id="annot-choisir-picto" class="btn btn-ghost picto-actuel-btn" type="button">
+                <span id="annot-picto-glyph" class="picto-actuel-glyph">⛰️</span>
+                <span>Changer de pictogramme</span>
+              </button>
+            </div>
+
+            <!-- Réglages propres à la PHOTO posée sur la carte -->
+            <div id="annot-bloc-image" hidden>
+              <label class="style-label">Légende</label>
+              <input id="annot-legende" class="style-input" type="text" maxlength="140"
+                     placeholder="Légende de la photo…" />
+            </div>
+
+            <!-- Réglages propres aux TRAITS, FORMES et DESSINS -->
+            <div id="annot-bloc-vecteur" hidden>
+              <label class="style-label-couleur">
+                Couleur
+                <input id="annot-trait-couleur" type="color" value="#b4452f" />
+              </label>
+              <label class="style-label">Épaisseur : <span id="annot-trait-epaisseur-val">4</span> px</label>
+              <input id="annot-trait-epaisseur" class="style-range" type="range" min="1" max="14" step="1" value="4" />
+              <label class="style-switch" id="annot-remplir-ligne">
+                <input id="annot-remplir" type="checkbox" />
+                <span>Remplir la forme</span>
+              </label>
+            </div>
+
+            <!-- Réglages communs (taille : texte, picto, photo) -->
+            <div id="annot-bloc-taille">
+              <label class="style-label">Taille : <span id="annot-taille-val">18</span> px</label>
+              <input id="annot-taille" class="style-range" type="range" min="10" max="48" step="1" value="18" />
+            </div>
+
+            <p class="style-aide">Astuce : glisse l'élément directement sur la carte pour le déplacer.</p>
+            <button id="annot-supprimer" class="btn btn-danger btn-petit">Supprimer cet élément</button>
+          </div>
+          <p id="element-vide" class="galerie-vide">Clique sur un élément de la carte (texte, pictogramme,
+             photo, trait, forme ou dessin) pour le modifier ici.</p>
+        </div>
+      </section>
     </div>
 
-    <!-- Petit bandeau d'infos sur la trace chargée (caché tant qu'il n'y a rien) -->
-    <div id="trace-info" class="trace-info" hidden>
-      <span id="trace-name" class="trace-info-name">—</span>
-      <span id="trace-stats" class="trace-info-stats"></span>
-    </div>
-
-    <!-- Message d'accueil tant qu'aucune trace n'est chargée -->
-    <div id="welcome" class="welcome">
-      <div class="welcome-card">
-        <h1>Transforme ta trace en carnet de voyage</h1>
-        <p>Charge un fichier <strong>.gpx</strong> de ta randonnée, pose des souvenirs (photos, récits, audios), personnalise le style de la carte… et partage une belle affiche.</p>
-        <label class="btn btn-primary btn-lg">
-          🥾 Charger un GPX
-          <input id="gpx-input-welcome" type="file" accept=".gpx,application/gpx+xml" hidden />
-        </label>
-        <div class="welcome-secondaires">
-          <button id="btn-exemple" class="btn btn-ghost">✨ Essayer avec l'exemple</button>
-          <button id="btn-carnets-accueil" class="btn btn-ghost">📚 Mes carnets</button>
+    <!-- ===================== Panneau ACCUEIL (liste des carnets) ===================== -->
+    <aside id="accueil-panneau" class="accueil-panneau accueil-seule">
+      <div class="accueil-tete">
+        <h2>Mes carnets <span id="accueil-compte" class="accueil-compte"></span></h2>
+      </div>
+      <div class="accueil-filtres">
+        <input id="accueil-recherche" class="style-input" type="search"
+               placeholder="🔎 Rechercher (titre, description, logo…)" />
+        <div class="accueil-filtres-ligne">
+          <select id="accueil-categorie" class="style-input accueil-select">
+            <option value="">Toutes catégories</option>
+          </select>
+          <button id="accueil-reset" class="btn btn-ghost btn-petit" title="Effacer les filtres">✕</button>
+        </div>
+        <div class="accueil-filtres-ligne">
+          <label class="accueil-date-label">Du <input id="accueil-du" class="style-input" type="date" /></label>
+          <label class="accueil-date-label">Au <input id="accueil-au" class="style-input" type="date" /></label>
         </div>
       </div>
-    </div>
+      <div id="accueil-liste" class="accueil-liste"></div>
+      <div class="accueil-pied">
+        <label class="btn btn-accent btn-petit" style="flex:1">
+          + Nouveau carnet (GPX)
+          <input id="accueil-gpx-input" type="file" accept=".gpx,application/gpx+xml" hidden />
+        </label>
+      </div>
+    </aside>
 
-    <!-- Boutons flottants sur la carte -->
-    <div class="flottants">
-      <button id="fab-recentrer" class="flottant flottant-secondaire" title="Recadrer sur le parcours" hidden>🎯</button>
-      <button id="fab-ajout" class="flottant flottant-principal edition-seule" title="Ajouter des souvenirs" hidden>＋</button>
-    </div>
+    <!-- ===================== La carte et ses recouvrements ===================== -->
+    <div class="carte-zone">
+      <div id="map" class="map"></div>
 
-    <!-- Petite pastille d'attente (redessin du fond vectoriel) -->
-    <div id="patience" class="patience" hidden>
-      <span class="patience-rond"></span>
-      <span id="patience-texte">La carte se redessine…</span>
-    </div>
+      <!-- Calque "parchemin" pour l'ambiance médiévale (par-dessus le fond, sous le titre) -->
+      <div id="parchemin" class="parchemin"></div>
 
-    <!-- Bandeau d'aide affiché seulement la toute première fois qu'on active le mode ajout -->
-    <div id="banniere-ajout" class="banniere-ajout" hidden>
-      <span>📍 Clique sur la carte pour poser un souvenir. Tu peux en poser plusieurs à la suite.</span>
-      <button id="annuler-ajout" class="banniere-annuler">Arrêter</button>
-    </div>
+      <!-- Cartouche de titre affiché sur la carte (rempli via l'onglet Textes) -->
+      <div id="carte-titre" class="carte-titre" hidden></div>
 
-    <!-- Bandeau affiché quand on s'apprête à poser un pictogramme ou un texte -->
-    <div id="banniere-annot" class="banniere-ajout" hidden>
-      <span id="banniere-annot-texte">🖌️ Clique sur la carte pour placer l'élément.</span>
-      <button id="annuler-annot" class="banniere-annuler">Annuler</button>
+      <!-- Bordure décorative (double filet, coins ornés) : option de l'onglet Fond de carte -->
+      <div id="bordure-carte" class="bordure-carte" hidden></div>
+
+      <!-- Rose des vents : option de l'onglet Fond de carte -->
+      <div id="rose-carte" class="rose-carte" hidden>
+        <svg viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="30" cy="30" r="28" fill="rgba(244,236,215,0.85)" stroke="#5a4632" stroke-width="1.4"/>
+          <circle cx="30" cy="30" r="21" fill="none" stroke="#5a4632" stroke-width="0.6" opacity="0.6"/>
+          <g stroke="#5a4632" stroke-width="0.5" opacity="0.55">
+            <line x1="30" y1="4" x2="30" y2="56"/><line x1="4" y1="30" x2="56" y2="30"/>
+            <line x1="12" y1="12" x2="48" y2="48"/><line x1="48" y1="12" x2="12" y2="48"/>
+          </g>
+          <polygon points="30,6 34,27 30,23 26,27" fill="#a33d2a"/>
+          <polygon points="30,54 34,33 30,37 26,33" fill="#5a4632"/>
+          <polygon points="6,30 27,26 23,30 27,34" fill="#5a4632"/>
+          <polygon points="54,30 33,26 37,30 33,34" fill="#5a4632"/>
+          <text x="30" y="14.5" text-anchor="middle" font-size="7.5" font-weight="bold"
+                font-family="Georgia, serif" fill="#5a4632">N</text>
+        </svg>
+      </div>
+
+      <!-- Petit bandeau d'infos sur la trace chargée (caché tant qu'il n'y a rien) -->
+      <div id="trace-info" class="trace-info" hidden>
+        <span id="trace-name" class="trace-info-name">—</span>
+        <span id="trace-stats" class="trace-info-stats"></span>
+      </div>
+
+      <!-- Message d'accueil tant qu'aucun carnet n'existe (ou qu'un carnet est vide) -->
+      <div id="welcome" class="welcome">
+        <div class="welcome-card">
+          <h1 id="welcome-titre">Transforme ta trace en carnet de voyage</h1>
+          <p id="welcome-texte">Charge un fichier <strong>.gpx</strong> de ta randonnée, pose des souvenirs (photos, récits, audios), personnalise le style de la carte… et partage un beau livre.</p>
+          <label class="btn btn-primary btn-lg">
+            🥾 Charger un GPX
+            <input id="gpx-input-welcome" type="file" accept=".gpx,application/gpx+xml" hidden />
+          </label>
+          <div class="welcome-secondaires">
+            <button id="btn-exemple" class="btn btn-ghost">✨ Essayer avec l'exemple</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Boutons flottants sur la carte -->
+      <div class="flottants">
+        <button id="fab-recentrer" class="flottant flottant-secondaire" title="Recadrer sur le parcours" hidden>🎯</button>
+        <button id="fab-ajout" class="flottant flottant-principal edition-seule" title="Ajouter des souvenirs" hidden>＋</button>
+      </div>
+
+      <!-- Petite pastille d'attente (redessin du fond vectoriel) -->
+      <div id="patience" class="patience" hidden>
+        <span class="patience-rond"></span>
+        <span id="patience-texte">La carte se redessine…</span>
+      </div>
+
+      <!-- Bandeau d'aide affiché seulement la toute première fois qu'on active le mode ajout -->
+      <div id="banniere-ajout" class="banniere-ajout" hidden>
+        <span>📍 Clique sur la carte pour poser un souvenir. Tu peux en poser plusieurs à la suite.</span>
+        <button id="annuler-ajout" class="banniere-annuler">Arrêter</button>
+      </div>
+
+      <!-- Bandeau affiché quand on s'apprête à poser un élément (picto, texte, photo, dessin…) -->
+      <div id="banniere-annot" class="banniere-ajout" hidden>
+        <span id="banniere-annot-texte">🖌️ Clique sur la carte pour placer l'élément.</span>
+        <button id="terminer-outil" class="banniere-terminer" hidden>Terminer</button>
+        <button id="annuler-annot" class="banniere-annuler">Annuler</button>
+      </div>
     </div>
 
     <!-- Fond assombri derrière la fiche en mode visualisation (pop up) -->
@@ -274,349 +780,9 @@
         </div>
       </footer>
     </aside>
-
-    <!-- Réserve : souvenirs préparés à l'avance (sans position sur la carte) -->
-    <aside id="panneau-reserve" class="panneau" hidden>
-      <header class="panneau-tete">
-        <span class="panneau-titre-fixe">📦 Réserve de souvenirs</span>
-        <button id="fermer-reserve" class="icone-btn" title="Fermer">✕</button>
-      </header>
-      <div class="panneau-nav" style="flex-direction:column; gap:8px;">
-        <button id="reserve-nouveau" class="btn btn-accent btn-petit" style="width:100%">
-          + Nouveau souvenir en réserve
-        </button>
-        <button id="reserve-generer" class="btn btn-ghost btn-petit" style="width:100%">
-          ✨ Générer depuis un texte / des photos
-        </button>
-      </div>
-      <div class="panneau-corps">
-        <p class="reserve-aide">Prépare des souvenirs à l'avance. Tu pourras en piocher un quand tu poses un point sur la carte.</p>
-        <div id="reserve-liste" class="reserve-liste"></div>
-        <p id="reserve-vide" class="galerie-vide">La réserve est vide.</p>
-      </div>
-    </aside>
-
-    <!-- Panneau Style : personnalisation de la carte (ouvre à gauche) -->
-    <aside id="panneau-style" class="panneau panneau-gauche" hidden>
-      <header class="panneau-tete">
-        <span class="panneau-titre-fixe">🎨 Style de la carte</span>
-        <button id="fermer-style" class="icone-btn" title="Fermer">✕</button>
-      </header>
-      <div class="panneau-corps">
-
-        <!-- Titre de la carte -->
-        <section class="style-section">
-          <h3>Titre de la carte</h3>
-          <input id="style-titre" class="style-input" type="text"
-                 placeholder="Ex : Boucle du Lac de Lauvitel" maxlength="60" />
-          <label class="style-label">Police du titre</label>
-          <button id="police-btn-titre" class="btn btn-ghost police-btn" type="button">Titre</button>
-
-          <label class="style-label">Style du cartouche</label>
-          <div id="titre-fond" class="segment segment-grille" role="group">
-            <button class="segment-btn" data-titrefond="classique">Classique</button>
-            <button class="segment-btn" data-titrefond="parchemin">📜 Parchemin</button>
-            <button class="segment-btn" data-titrefond="pirate">☠️ Pirate</button>
-            <button class="segment-btn" data-titrefond="sombre">🕯️ Sombre</button>
-          </div>
-          <p class="style-aide">Laisse le titre vide pour ne rien afficher sur la carte.</p>
-        </section>
-
-        <!-- Tracé du parcours -->
-        <section class="style-section">
-          <h3>Tracé du parcours</h3>
-
-          <label class="style-label">Couleur</label>
-          <div id="trace-couleurs" class="nuancier"></div>
-          <label class="style-label-couleur">
-            Personnalisée
-            <input id="trace-couleur-perso" type="color" value="#c8893d" />
-          </label>
-
-          <label class="style-label">Épaisseur : <span id="trace-epaisseur-val">4</span> px</label>
-          <input id="trace-epaisseur" class="style-range" type="range" min="2" max="10" step="1" value="4" />
-
-          <label class="style-label">Type de ligne</label>
-          <div id="trace-type" class="segment" role="group">
-            <button class="segment-btn" data-type="plein">Plein</button>
-            <button class="segment-btn" data-type="pointilles">Pointillés</button>
-            <button class="segment-btn" data-type="tirets">Tirets</button>
-          </div>
-        </section>
-
-        <!-- Noms des souvenirs affichés sur la carte -->
-        <section class="style-section">
-          <h3>Noms des souvenirs</h3>
-          <label class="style-switch">
-            <input id="labels-afficher" type="checkbox" />
-            <span>Afficher les noms sur la carte</span>
-          </label>
-
-          <div id="labels-reglages" hidden>
-            <label class="style-label">Police</label>
-            <button id="police-btn-labels" class="btn btn-ghost police-btn" type="button">Système</button>
-
-            <label class="style-label">Couleur</label>
-            <div id="labels-couleurs" class="nuancier"></div>
-
-            <label class="style-label">Taille</label>
-            <div id="labels-taille" class="segment" role="group">
-              <button class="segment-btn" data-taille="petit">Petit</button>
-              <button class="segment-btn" data-taille="moyen">Moyen</button>
-              <button class="segment-btn" data-taille="grand">Grand</button>
-            </div>
-            <label class="style-label">Réglage fin <span class="style-unite">(8 à 28 pixels)</span></label>
-            <input id="labels-taille-valeur" class="style-input style-nombre" type="number"
-                   min="8" max="28" step="1" value="13" />
-          </div>
-        </section>
-
-      </div>
-    </aside>
-
-    <!-- Panneau Fond de carte : couleurs, simplification, pictogrammes et textes -->
-    <aside id="panneau-fond-carte" class="panneau panneau-gauche" hidden>
-      <header class="panneau-tete">
-        <span class="panneau-titre-fixe">🖌️ Fond de carte</span>
-        <button id="fermer-fond" class="icone-btn" title="Fermer">✕</button>
-      </header>
-      <div class="panneau-corps">
-
-        <!-- Fond de carte -->
-        <section class="style-section">
-          <h3>Fond de carte</h3>
-          <div id="fond-carte" class="segment segment-colonne" role="group">
-            <button class="segment-btn" data-fond="topo">Topographique</button>
-            <button class="segment-btn" data-fond="clair">Clair (voyage)</button>
-            <button class="segment-btn" data-fond="epure">Épuré</button>
-            <button class="segment-btn" data-fond="vectoriel">Vectoriel ✏️</button>
-            <button class="segment-btn" data-fond="perso">Personnalisé…</button>
-          </div>
-
-          <!-- Réglage du fond personnalisé (visible quand "Personnalisé" est choisi) -->
-          <div id="fond-perso-bloc" class="fond-perso" hidden>
-            <label class="style-label">Exemples prêts à l'emploi</label>
-            <div id="fond-perso-exemples" class="fond-exemples"></div>
-
-            <label class="style-label">…ou colle une adresse de tuiles</label>
-            <input id="fond-perso-url" class="style-input" type="text"
-                   placeholder="https://…/{z}/{x}/{y}.png" />
-            <p class="style-aide">L'adresse doit contenir <code>{z}</code>, <code>{x}</code> et <code>{y}</code>.</p>
-          </div>
-
-          <!-- Réglages du fond vectoriel (visible quand "Vectoriel" est choisi) -->
-          <div id="vecteur-bloc" class="vecteur-bloc" hidden>
-            <label class="style-label">Styles médiévaux prêts à l'emploi</label>
-            <div id="preset-fond" class="segment segment-grille" role="group">
-              <button class="segment-btn" data-preset="ancienne">✶ Carte ancienne</button>
-              <button class="segment-btn" data-preset="clair">📜 Parchemin clair</button>
-              <button class="segment-btn" data-preset="sombre">🕯️ Parchemin sombre</button>
-              <button class="segment-btn" data-preset="pirate">☠️ Carte de pirate</button>
-            </div>
-            <p class="style-aide">Chaque style règle d'un coup les couleurs, le grain de parchemin, la rose des vents et la bordure. Tu peux ensuite tout ajuster.</p>
-
-            <label class="style-label">Couches affichées</label>
-            <div class="couches-liste">
-              <label class="style-switch"><input type="checkbox" data-couche="noms" checked /><span>Noms de lieux</span></label>
-              <label class="style-switch"><input type="checkbox" data-couche="frontiere" checked /><span>Frontières</span></label>
-              <label class="style-switch"><input type="checkbox" data-couche="riviere" checked /><span>Rivières</span></label>
-              <label class="style-switch"><input type="checkbox" data-couche="route" checked /><span>Routes &amp; chemins</span></label>
-              <label class="style-switch"><input type="checkbox" data-couche="bati" checked /><span>Bâtiments</span></label>
-            </div>
-
-            <label class="style-label">Couleurs des zones</label>
-            <div class="zone-rangees">
-              <label class="zone-rangee">Eau <input type="color" data-zone="eau" /></label>
-              <label class="zone-rangee">Rivières <input type="color" data-zone="riviere" /></label>
-              <label class="zone-rangee">Forêt <input type="color" data-zone="foret" /></label>
-              <label class="zone-rangee">Réserves &amp; parcs <input type="color" data-zone="reserve" /></label>
-              <label class="zone-rangee">Prairie <input type="color" data-zone="prairie" /></label>
-              <label class="zone-rangee">Glaciers <input type="color" data-zone="glacier" /></label>
-              <label class="zone-rangee">Bâti <input type="color" data-zone="bati" /></label>
-              <label class="zone-rangee">Routes & chemins <input type="color" data-zone="route" /></label>
-              <label class="zone-rangee">Frontières <input type="color" data-zone="frontiere" /></label>
-              <label class="zone-rangee">Noms de lieux <input type="color" data-zone="noms" /></label>
-              <label class="zone-rangee">Fond <input type="color" data-zone="fond" /></label>
-            </div>
-            <button id="zones-reset" class="btn btn-ghost btn-petit">Couleurs d'origine</button>
-
-            <label class="style-label">Niveau de détail</label>
-            <div id="vecteur-detail" class="segment" role="group">
-              <button class="segment-btn" data-detail="complet">Complet</button>
-              <button class="segment-btn" data-detail="epure">Épuré</button>
-            </div>
-            <p class="style-aide">Épuré : masque les petites routes, les bâtiments et les points d'intérêt.</p>
-
-            <label class="style-label">Simplification des tracés</label>
-            <div id="vecteur-simplification" class="segment segment-grille" role="group">
-              <button class="segment-btn" data-simplification="14">Aucune</button>
-              <button class="segment-btn" data-simplification="12">Légère</button>
-              <button class="segment-btn" data-simplification="10">Moyenne</button>
-              <button class="segment-btn" data-simplification="8">Forte</button>
-            </div>
-            <label class="style-label">Réglage fin <span class="style-unite">(1 = très simplifié, 14 = tout le détail)</span></label>
-            <input id="simplification-valeur" class="style-input style-nombre" type="number"
-                   min="1" max="14" step="1" value="14" />
-            <p class="style-aide">Simplifie le dessin des côtes, lacs, rivières et routes, comme sur une carte à grande échelle.</p>
-
-            <label class="style-label">Arrondi des formes</label>
-            <div id="arrondi-carte" class="segment segment-grille" role="group">
-              <button class="segment-btn" data-arrondi="0">Aucun</button>
-              <button class="segment-btn" data-arrondi="1">Léger</button>
-              <button class="segment-btn" data-arrondi="2">Moyen</button>
-              <button class="segment-btn" data-arrondi="3">Fort</button>
-            </div>
-            <label class="style-label">Réglage fin <span class="style-unite">(0 à 4 passes d'arrondi)</span></label>
-            <input id="arrondi-valeur" class="style-input style-nombre" type="number"
-                   min="0" max="4" step="1" value="0" />
-            <p class="style-aide">Adoucit vraiment les angles des côtes, lacs et forêts (idéal avec la simplification). La carte reste parfaitement nette.</p>
-          </div>
-          <p id="fond-aide-vectoriel" class="style-aide" hidden>
-            Les couleurs et la simplification ne fonctionnent qu'avec le fond « Vectoriel ✏️ ».
-          </p>
-        </section>
-
-        <!-- Ambiance (teinte générale) -->
-        <section class="style-section">
-          <h3>Ambiance</h3>
-          <div id="ambiance-carte" class="segment segment-grille" role="group">
-            <button class="segment-btn" data-ambiance="naturel">Naturel</button>
-            <button class="segment-btn" data-ambiance="ancien">Ancien</button>
-            <button class="segment-btn" data-ambiance="doux">Doux</button>
-            <button class="segment-btn" data-ambiance="medieval">Médiéval</button>
-          </div>
-        </section>
-
-        <!-- Décor : rose des vents et bordure (tous fonds) -->
-        <section class="style-section">
-          <h3>Décor</h3>
-          <div class="decor-ligne">
-            <label class="style-switch">
-              <input id="decor-rose" type="checkbox" />
-              <span>Rose des vents</span>
-            </label>
-            <button id="decor-rose-choisir" class="btn btn-ghost btn-petit">Choisir…</button>
-          </div>
-          <div class="decor-ligne">
-            <label class="style-switch">
-              <input id="decor-bordure" type="checkbox" />
-              <span>Bordure stylisée</span>
-            </label>
-            <button id="decor-bordure-choisir" class="btn btn-ghost btn-petit">Choisir…</button>
-          </div>
-          <p class="style-aide">Plusieurs styles au choix, et tu peux importer tes propres images. Le décor apparaît aussi sur l'affiche PDF et l'export en image.</p>
-        </section>
-
-
-        <!-- Pictogrammes et textes posés librement sur la carte -->
-        <section class="style-section">
-          <h3>Pictogrammes et textes</h3>
-          <p class="style-aide">Décore ta carte : pose un pictogramme ou un texte où tu veux, puis glisse-le pour le déplacer. Clique dessus pour le modifier.</p>
-          <div class="annot-btns">
-            <button id="btn-ajout-annot-picto" class="btn btn-accent btn-petit">＋ Pictogramme</button>
-            <button id="btn-ajout-annot-texte" class="btn btn-accent btn-petit">＋ Texte</button>
-          </div>
-
-          <!-- Éditeur de l'élément sélectionné -->
-          <div id="annot-editeur" class="annot-editeur" hidden>
-            <div class="annot-editeur-tete">
-              <span id="annot-editeur-titre">Élément sélectionné</span>
-              <button id="annot-terminer" class="icone-btn" title="Terminer">✓</button>
-            </div>
-
-            <!-- Réglages propres au TEXTE -->
-            <div id="annot-bloc-texte" hidden>
-              <label class="style-label">Texte</label>
-              <textarea id="annot-texte" class="style-input annot-texte-input" rows="2"
-                        placeholder="Ton texte (plusieurs lignes possibles)"></textarea>
-
-              <label class="style-label">Police</label>
-              <button id="police-btn-annot" class="btn btn-ghost police-btn" type="button">Système</button>
-
-              <label class="style-label-couleur">
-                Couleur
-                <input id="annot-couleur" type="color" value="#2f3b34" />
-              </label>
-
-              <label class="style-label">Alignement</label>
-              <div id="annot-align" class="segment" role="group">
-                <button class="segment-btn" data-align="gauche">Gauche</button>
-                <button class="segment-btn" data-align="centre">Centré</button>
-                <button class="segment-btn" data-align="droite">Droite</button>
-              </div>
-
-              <label class="style-label">Mise en forme</label>
-              <div class="segment" role="group">
-                <button id="annot-gras" class="segment-btn annot-btn-gras">Gras</button>
-                <button id="annot-italique" class="segment-btn annot-btn-italique">Italique</button>
-              </div>
-            </div>
-
-            <!-- Réglages propres au PICTOGRAMME -->
-            <div id="annot-bloc-picto" hidden>
-              <button id="annot-choisir-picto" class="btn btn-ghost picto-actuel-btn" type="button">
-                <span id="annot-picto-glyph" class="picto-actuel-glyph">⛰️</span>
-                <span>Changer de pictogramme</span>
-              </button>
-            </div>
-
-            <!-- Réglages communs -->
-            <label class="style-label">Taille : <span id="annot-taille-val">18</span> px</label>
-            <input id="annot-taille" class="style-range" type="range" min="10" max="48" step="1" value="18" />
-
-            <p class="style-aide">Astuce : glisse l'élément directement sur la carte pour le déplacer.</p>
-            <button id="annot-supprimer" class="btn btn-danger btn-petit">Supprimer cet élément</button>
-          </div>
-        </section>
-
-      </div>
-    </aside>
-    <!-- Panneau Carnets : liste des carnets, création, affichage multiple -->
-    <aside id="panneau-carnets" class="panneau panneau-gauche" hidden>
-      <header class="panneau-tete">
-        <span class="panneau-titre-fixe">📚 Mes carnets</span>
-        <button id="fermer-carnets" class="icone-btn" title="Fermer">✕</button>
-      </header>
-      <div class="panneau-corps">
-        <button id="carnet-nouveau" class="btn btn-accent btn-petit edition-seule" style="width:100%">
-          + Nouveau carnet
-        </button>
-        <p class="style-aide edition-seule">Un seul carnet se modifie à la fois. Clique sur « Ouvrir » pour changer de carnet (le carnet en cours est sauvegardé automatiquement).</p>
-        <p class="style-aide visu-seule">Coche les carnets à afficher ensemble sur la carte. Le carnet ouvert est toujours affiché.</p>
-        <div id="carnets-liste" class="carnets-liste"></div>
-      </div>
-    </aside>
-
-    <!-- Panneau Filtrer : par dates et pictogrammes (mode visualisation) -->
-    <aside id="panneau-filtre" class="panneau panneau-gauche" hidden>
-      <header class="panneau-tete">
-        <span class="panneau-titre-fixe">🔎 Filtrer les souvenirs</span>
-        <button id="fermer-filtre" class="icone-btn" title="Fermer">✕</button>
-      </header>
-      <div class="panneau-corps">
-
-        <section class="style-section">
-          <h3>Par dates</h3>
-          <label class="style-label">Du</label>
-          <input id="filtre-du" class="style-input" type="date" />
-          <label class="style-label">Au</label>
-          <input id="filtre-au" class="style-input" type="date" />
-          <p class="style-aide">Seuls les souvenirs ayant au moins une date dans la période restent affichés. Les souvenirs sans date sont masqués.</p>
-        </section>
-
-        <section class="style-section">
-          <h3>Par pictogrammes</h3>
-          <div id="filtre-pictos" class="filtre-pictos"></div>
-          <p class="style-aide">Décoche un pictogramme pour masquer les souvenirs qui le portent.</p>
-        </section>
-
-        <p id="filtre-bilan" class="style-aide"></p>
-        <button id="filtre-reset" class="btn btn-ghost btn-petit">Tout réafficher</button>
-      </div>
-    </aside>
   </main>
 
-  <!-- Petite fenêtre pour saisir le nom au moment de poser un souvenir -->
+  <!-- Petite fenêtre pour saisir le nom au moment de poser un souvenir (clic sur la carte) -->
   <div id="modal-nom" class="modal-overlay" hidden>
     <div class="modal-card">
       <h2>Nouveau souvenir</h2>
@@ -630,8 +796,44 @@
 
       <!-- Ou piocher un souvenir déjà préparé dans la réserve -->
       <div id="modal-stock" class="modal-stock" hidden>
-        <div class="modal-stock-titre">…ou choisis-en un dans la réserve :</div>
+        <div class="modal-stock-titre">…ou choisis-en un à placer :</div>
         <div id="modal-stock-liste" class="modal-stock-liste"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fenêtre : créer un souvenir (nom + date, rangé dans les souvenirs « à placer ») -->
+  <div id="modal-souvenir" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <h2>Créer un souvenir</h2>
+      <p class="modal-sous-titre">Son nom, sa date — tu le glisseras ensuite sur la carte.</p>
+      <input id="souvenir-nouveau-nom" type="text" placeholder="Ex : Bivouac sous les étoiles" maxlength="80" />
+
+      <div class="date-rapide">
+        <div class="chips">
+          <button class="chip" data-daterapide="aujourdhui">Aujourd'hui</button>
+          <button class="chip" data-daterapide="hier">Hier</button>
+          <button class="chip" data-daterapide="sansdate">Sans date</button>
+        </div>
+        <div id="calendrier" class="calendrier"></div>
+        <p id="date-choisie" class="date-choisie">Aucune date choisie</p>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="souvenir-nouveau-annuler">Annuler</button>
+        <button class="btn btn-accent" id="souvenir-nouveau-creer">Créer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fenêtre : choisir le carnet à imprimer (depuis l'accueil) -->
+  <div id="modal-impression" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <h2>🖨️ Imprimer un carnet</h2>
+      <p class="modal-sous-titre">Choisis le carnet à mettre en page en livre photo.</p>
+      <div id="impr-liste" class="impr-liste"></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="impr-annuler">Annuler</button>
       </div>
     </div>
   </div>
@@ -640,7 +842,7 @@
   <div id="modal-generer" class="modal-overlay" hidden>
     <div class="modal-card modal-large">
       <h2>✨ Générer des souvenirs</h2>
-      <p class="modal-sous-titre">Colle ou dicte un texte en vrac. L'IA le découpe en plusieurs souvenirs (titre + récit) rangés dans la réserve. Tu peux aussi ajouter des photos de notes ; l'IA en lira le texte.</p>
+      <p class="modal-sous-titre">Colle ou dicte un texte en vrac. L'IA le découpe en plusieurs souvenirs (titre + récit) rangés dans les souvenirs « à placer ». Tu peux aussi ajouter des photos de notes ; l'IA en lira le texte.</p>
 
       <label class="style-label">Ton texte</label>
       <textarea id="gen-texte" class="fiche-texte" placeholder="Raconte ton voyage en vrac : lieux, moments, anecdotes… (le micro du clavier fonctionne ici)"></textarea>
@@ -670,10 +872,10 @@
     </div>
   </div>
 
-  <!-- Fenêtre : réglages de l'affiche PDF (format, orientation, colonnes) -->
+  <!-- Fenêtre : réglages de l'affiche PDF (format, orientation, disposition) -->
   <div id="modal-affiche" class="modal-overlay" hidden>
-    <div class="modal-card">
-      <h2>🖨️ Affiche PDF</h2>
+    <div class="modal-card modal-large">
+      <h2>🖨️ Livre photo / Affiche PDF</h2>
       <p class="modal-sous-titre">Une page pleine pour la carte, puis les souvenirs sur les pages suivantes.</p>
 
       <label class="style-label">Format de papier</label>
@@ -691,8 +893,6 @@
         <button class="segment-btn" data-orientation="paysage">Paysage</button>
       </div>
 
-      <p class="style-aide">Les souvenirs sont disposés en mosaïque : les plus riches (photo + long récit) occupent un grand rectangle, les petits s'imbriquent autour. La grille est calculée automatiquement d'après leur contenu, pour tout faire tenir sur un minimum de pages.</p>
-
       <label class="style-label">Police du texte</label>
       <button id="police-btn-affiche" class="btn btn-ghost police-btn" type="button">Système</button>
 
@@ -701,9 +901,16 @@
         <input id="affiche-couleur" type="color" value="#2f3b34" />
       </label>
 
+      <!-- Disposition : choisir et ordonner les souvenirs imprimés -->
+      <label class="style-label">Disposition : souvenirs à imprimer (dans l'ordre)</label>
+      <div id="affiche-souvenirs-liste" class="affiche-souvenirs-liste"></div>
+      <p class="style-aide">Décoche un souvenir pour ne pas l'imprimer ; les flèches changent l'ordre des
+         pages. Les souvenirs sont ensuite disposés en mosaïque : les plus riches (photo + long récit)
+         occupent un grand rectangle, les petits s'imbriquent autour.</p>
+
       <div class="modal-actions">
         <button class="btn btn-ghost" id="affiche-annuler">Annuler</button>
-        <button class="btn btn-accent" id="affiche-generer">Imprimer</button>
+        <button class="btn btn-accent" id="affiche-generer">Mettre en page</button>
       </div>
     </div>
   </div>
@@ -795,8 +1002,96 @@
     <button id="lightbox-suiv" class="lightbox-nav lightbox-suiv" title="Photo suivante">›</button>
   </div>
 
+  <!-- Fenêtre : compte en ligne (création, connexion, synchronisation) -->
+  <div id="modal-compte" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <h2>☁️ Mon compte</h2>
+
+      <!-- Message si les clés du service en ligne ne sont pas encore réglées -->
+      <p id="compte-non-configure" class="modal-sous-titre" hidden>
+        Le service en ligne n'est pas encore configuré sur cette version de
+        l'application (voir le guide « compte en ligne »). En attendant, tes
+        carnets restent enregistrés sur cet appareil.
+      </p>
+
+      <!-- Pas connecté : créer un compte ou se connecter -->
+      <div id="compte-bloc-connexion">
+        <p class="modal-sous-titre">Avec un compte, tes carnets sont sauvegardés
+           en ligne et se retrouvent sur tous tes appareils.</p>
+        <label class="style-label">Adresse e-mail</label>
+        <input id="compte-email" type="email" placeholder="toi@exemple.fr" autocomplete="email" />
+        <label class="style-label">Mot de passe <span class="style-unite">(8 caractères minimum)</span></label>
+        <input id="compte-mdp" type="password" placeholder="Ton mot de passe" autocomplete="current-password" />
+        <div class="modal-actions">
+          <button id="compte-creer" class="btn btn-ghost">Créer un compte</button>
+          <button id="compte-connecter" class="btn btn-accent">Se connecter</button>
+        </div>
+        <button id="compte-oubli" class="btn btn-ghost btn-petit" style="width:100%">
+          Mot de passe oublié ?
+        </button>
+      </div>
+
+      <!-- Connecté : synchroniser, se déconnecter -->
+      <div id="compte-bloc-connecte" hidden>
+        <p class="modal-sous-titre">Connecté en tant que
+           <strong id="compte-email-affiche">—</strong>.
+           Tes carnets sont sauvegardés en ligne automatiquement.</p>
+        <button id="compte-synchroniser" class="btn btn-accent btn-petit" style="width:100%">
+          🔄 Synchroniser maintenant
+        </button>
+        <button id="compte-deconnecter" class="btn btn-ghost btn-petit" style="width:100%">
+          Se déconnecter de cet appareil
+        </button>
+      </div>
+
+      <!-- Retour du lien « mot de passe oublié » : choisir le nouveau -->
+      <div id="compte-bloc-recovery" hidden>
+        <p class="modal-sous-titre">Choisis ton nouveau mot de passe.</p>
+        <label class="style-label">Nouveau mot de passe <span class="style-unite">(8 caractères minimum)</span></label>
+        <input id="compte-nouveau-mdp" type="password" autocomplete="new-password" />
+        <div class="modal-actions">
+          <button id="compte-nouveau-mdp-ok" class="btn btn-accent">Enregistrer</button>
+        </div>
+      </div>
+
+      <p id="compte-statut" class="gen-statut" hidden></p>
+
+      <div class="modal-actions">
+        <button id="compte-fermer" class="btn btn-ghost">Fermer</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Petit message temporaire (succès / erreur) -->
   <div id="toast" class="toast" hidden></div>
+
+  <!-- ============================================================
+       Zone morte : anciens éléments que le code référence encore,
+       jamais affichés. Ils seront retirés au prochain grand ménage.
+       ============================================================ -->
+  <div class="zone-morte" hidden>
+    <button id="btn-menu"></button>
+    <nav id="menu-actions" hidden></nav>
+    <button id="btn-mode" hidden></button>
+    <button id="btn-carnets"></button>
+    <button id="btn-carnets-accueil"></button>
+    <button id="btn-reserve" hidden></button>
+    <button id="reserve-nouveau"></button>
+    <button id="btn-style" hidden></button>
+    <button id="btn-fond" hidden></button>
+    <button id="btn-filtrer" hidden></button>
+    <aside id="panneau-style" hidden>
+      <button id="fermer-style"></button>
+    </aside>
+    <aside id="panneau-filtre" hidden>
+      <button id="fermer-filtre"></button>
+      <input id="filtre-du" type="date" />
+      <input id="filtre-au" type="date" />
+      <div id="filtre-pictos"></div>
+      <p id="filtre-bilan"></p>
+      <button id="filtre-reset"></button>
+    </aside>
+  </div>
 
   <!-- Leaflet (le moteur de la carte) -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -809,9 +1104,18 @@
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
 
+  <!-- Supabase : le service du compte et de la sauvegarde en ligne
+       (si ce script ne charge pas — hors ligne — l'app marche quand même) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
   <!-- Notre code -->
   <script src="gpx.js"></script>
   <script src="db.js"></script>
   <script src="app.js"></script>
+  <!-- La nouvelle interface (accueil + éditeur façon Canva) -->
+  <script src="ui.js"></script>
+  <!-- Compte et sauvegarde en ligne -->
+  <script src="config.js"></script>
+  <script src="nuage.js"></script>
 </body>
 </html>
