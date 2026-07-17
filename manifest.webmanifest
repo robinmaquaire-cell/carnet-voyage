@@ -1,7 +1,7 @@
 {
-  "name": "TraceMap",
-  "short_name": "TraceMap",
-  "description": "TraceMap — transforme ta trace GPS en carnet de voyage interactif.",
+  "name": "LogBookMap",
+  "short_name": "LogBookMap",
+  "description": "LogBookMap — transforme ta trace GPS en carnet de voyage interactif.",
   "lang": "fr",
   "start_url": "./",
   "scope": "./",

@@ -1,11 +1,11 @@
 @echo off
 chcp 65001 >nul
-title TraceMap
+title LogBookMap
 echo ============================================
-echo   TraceMap - demarrage du serveur
+echo   LogBookMap - demarrage du serveur
 echo ============================================
 echo.
-echo TraceMap va s'ouvrir dans ton navigateur.
+echo LogBookMap va s'ouvrir dans ton navigateur.
 echo Garde cette fenetre noire OUVERTE pendant que tu utilises l'app.
 echo Pour arreter : ferme cette fenetre.
 echo.

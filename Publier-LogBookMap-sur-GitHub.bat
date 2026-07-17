@@ -1,9 +1,9 @@
 @echo off
 chcp 65001 >nul
-title Publier TraceMap sur GitHub
+title Publier LogBookMap sur GitHub
 cd /d "%~dp0"
 echo ============================================
-echo   Envoi de TraceMap vers GitHub
+echo   Envoi de LogBookMap vers GitHub
 echo ============================================
 echo.
 echo Si une fenetre de connexion GitHub s'ouvre,
