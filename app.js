@@ -17,7 +17,10 @@ const etat = {
   carnetActifId: 1,       // le carnet ouvert (le seul modifiable)
   fantomes: new Map(),    // carnets AFFICHÉS en plus en visualisation : id → {couche, souvenirs, trace, pictosPerso}
   coucheTrace: null,      // le groupe de calques qui contient la trace dessinée
-  trace: null,            // les données de la trace { name, segments, waypoints }
+  trace: null,            // la RÉUNION des GPX du carnet { name, segments, waypoints }
+  gpxListe: [],           // chaque GPX ajouté au carnet : [{id, nom, segments, waypoints}]
+  zoomRefTrace: 13,       // zoom "de référence" du carnet (celui qui cadre la trace)
+  chargeOk: false,        // vrai quand le carnet courant a été chargé correctement
   souvenirs: [],          // la liste des points souvenirs posés par l'utilisateur
   stock: [],              // souvenirs "en réserve" (sans position), à poser plus tard
   pictosPerso: [],        // pictogrammes personnalisés importés par l'utilisateur
@@ -695,7 +698,11 @@ function afficherTrace(trace) {
   trace.waypoints.forEach((w) => tousLesPoints.push([w.lat, w.lng]));
 
   if (tousLesPoints.length > 0) {
-    etat.carte.fitBounds(tousLesPoints, { padding: [40, 40] });
+    const bornes = L.latLngBounds(tousLesPoints);
+    etat.carte.fitBounds(bornes, { padding: [40, 40] });
+    // Le zoom qui cadre la trace sert de référence : les épingles sont à
+    // taille pleine à ce zoom, et rétrécissent quand on dézoome.
+    etat.zoomRefTrace = etat.carte.getBoundsZoom(bornes, false, L.point(40, 40));
   }
 
   // Mise à jour du bandeau d'infos (nom + statistiques).
@@ -737,8 +744,29 @@ function majBandeauInfos(trace) {
 }
 
 /* ---------------------------------------------------------
-   3. Chargement d'un fichier GPX choisi par l'utilisateur
+   3. Chargement des fichiers GPX (un carnet peut en avoir plusieurs)
    --------------------------------------------------------- */
+
+/**
+ * Reconstruit la trace AFFICHÉE (etat.trace) en réunissant tous les GPX du
+ * carnet. Renvoie null si le carnet n'a plus aucun GPX.
+ */
+function fusionnerTraces() {
+  if (etat.gpxListe.length === 0) {
+    etat.trace = null;
+    return null;
+  }
+  const segments = [];
+  const waypoints = [];
+  etat.gpxListe.forEach((g) => {
+    (g.segments || []).forEach((s) => segments.push(s));
+    (g.waypoints || []).forEach((w) => waypoints.push(w));
+  });
+  etat.trace = { name: etat.gpxListe[0].nom || "Trace", segments, waypoints };
+  return etat.trace;
+}
+
+/** Ajoute un fichier GPX au carnet (en plus des éventuels GPX déjà là). */
 function chargerFichierGpx(fichier) {
   if (!fichier) return;
 
@@ -753,8 +781,15 @@ function chargerFichierGpx(fichier) {
   lecteur.onload = () => {
     try {
       const trace = parseGpx(lecteur.result);
-      afficherTrace(trace);
-      toast(`Trace « ${trace.name} » chargée`);
+      etat.gpxListe.push({
+        id: prochainIdSouvenir++,
+        nom: (fichier.name || trace.name || "Trace").replace(/\.gpx$/i, "").slice(0, 60),
+        segments: trace.segments,
+        waypoints: trace.waypoints,
+      });
+      afficherTrace(fusionnerTraces());
+      if (typeof renderGpxListe === "function") renderGpxListe();
+      toast(`Trace « ${trace.name} » ajoutée au carnet`);
       planifierSauvegarde();
     } catch (e) {
       toast(e.message || "Impossible de lire ce fichier GPX.", true);
@@ -853,7 +888,8 @@ function fabriquerEpingle(numero, pictoCle, pictosPerso, styleEpingles) {
   }
 
   return {
-    html: `<div class="pin-wrap" style="width:${w}px;height:${h}px">${fond}${contenu}</div>`,
+    // data-ancre : sert au zoom (l'épingle rétrécit vers sa pointe ou son centre).
+    html: `<div class="pin-wrap" data-ancre="${forme === "goutte" ? "pointe" : "centre"}" style="width:${w}px;height:${h}px">${fond}${contenu}</div>`,
     iconSize: [w, h],
     iconAnchor: ancre,
     popupAnchor: [0, -h + 4],
@@ -919,6 +955,7 @@ function appliquerStyleEpingles() {
   }
   // La mini-carte de la fiche ouverte suit aussi.
   if (etat.souvenirActif && etat.miniCarte) majMiniCarte(etat.souvenirActif);
+  if (typeof majEchellesZoom === "function") majEchellesZoom();
 }
 
 /**
@@ -3508,12 +3545,15 @@ function lireAnnotationSauvee(sa) {
 
   // Épingles (picto, texte, photo) : un point + le contenu.
   if (typeof sa.lat !== "number" || typeof sa.lng !== "number") return null;
+  // Zoom de référence (les anciens éléments reçoivent un zoom moyen).
+  const zoomRef = typeof sa.zoomRef === "number" ? sa.zoomRef : 14;
   if (type === "image") {
     if (typeof sa.src !== "string" || !sa.src) return null;
     return {
       id: sa.id,
       type,
       lat: sa.lat, lng: sa.lng,
+      zoomRef,
       src: sa.src,
       legende: typeof sa.legende === "string" ? sa.legende : "",
       taille: typeof sa.taille === "number" ? sa.taille : ANNOT_IMAGE_DEFAUT.taille,
@@ -3525,6 +3565,7 @@ function lireAnnotationSauvee(sa) {
     id: sa.id,
     type,
     lat: sa.lat, lng: sa.lng,
+    zoomRef,
     picto: typeof sa.picto === "string" ? sa.picto : ANNOT_PICTO_DEFAUT.picto,
     texte: typeof sa.texte === "string" ? sa.texte : ANNOT_TEXTE_DEFAUT.texte,
     police: typeof sa.police === "string" ? sa.police : ANNOT_TEXTE_DEFAUT.police,
@@ -3579,6 +3620,9 @@ function creerAnnotation(type, latlng) {
     type,
     lat: latlng.lat,
     lng: latlng.lng,
+    // Le zoom au moment de la pose : l'élément garde cette taille à ce zoom,
+    // et rétrécit quand on dézoome (voir majEchellesZoom dans ui.js).
+    zoomRef: etat.carte.getZoom(),
     ...JSON.parse(JSON.stringify(base)),
     ...(annotationPreset || {}),
     marker: null,
@@ -3787,6 +3831,8 @@ async function sauverIndexCarnets() {
       du: c.du || "",
       au: c.au || "",
       modifieLe: c.modifieLe || "",
+      // Carnet partagé AVEC MOI : qui en est propriétaire, et mon droit.
+      partage: c.partage ? { proprietaire: c.partage.proprietaire, droit: c.partage.droit } : null,
     })),
     actifId: etat.carnetActifId,
   });
@@ -3815,11 +3861,11 @@ async function demarrerCarnets() {
     }
 
     if (!index || !Array.isArray(index.carnets) || index.carnets.length === 0) {
-      // Tout premier démarrage : un carnet vide, prêt à recevoir un GPX.
-      etat.carnets = [{ id: 1, uuid: genUuid(), nom: "Mon carnet", visible: true }];
-      etat.carnetActifId = 1;
+      // Tout premier démarrage : aucun carnet — l'accueil proposera d'en
+      // créer un (ou de se connecter pour retrouver les siens).
+      etat.carnets = [];
+      etat.carnetActifId = 0;
       indexCarnetsPret = true; // lecture réussie (il n'y avait rien) : on peut écrire
-      await sauverIndexCarnets();
       return;
     }
 
@@ -3836,23 +3882,39 @@ async function demarrerCarnets() {
       du: typeof c.du === "string" ? c.du : "",
       au: typeof c.au === "string" ? c.au : "",
       modifieLe: typeof c.modifieLe === "string" ? c.modifieLe : "",
+      partage: (c.partage && typeof c.partage.proprietaire === "string")
+        ? { proprietaire: c.partage.proprietaire, droit: c.partage.droit === "edition" ? "edition" : "lecture" }
+        : null,
     }));
+    // Ménage : l'ancien « Mon carnet » créé automatiquement par les vieilles
+    // versions disparaît s'il est resté vide (pas de trace, pas de fiche).
+    const aGarder = [];
+    for (const c of etat.carnets) {
+      const vide = c.nom === "Mon carnet" && !c.logo && !c.categorie && !c.description;
+      if (vide) {
+        const donnees = await dbChargerCle("carnet-" + c.id).catch(() => null);
+        if (!donnees || !donnees.trace) {
+          try { await dbEffacerCle("carnet-" + c.id); } catch (e) {}
+          continue;
+        }
+      }
+      aGarder.push(c);
+    }
+    etat.carnets = aGarder;
+
     etat.carnetActifId = etat.carnets.some((c) => c.id === index.actifId)
       ? index.actifId
-      : etat.carnets[0].id;
+      : (etat.carnets[0] ? etat.carnets[0].id : 0);
     indexCarnetsPret = true; // l'index a bien été lu : les écritures sont sûres
 
-    const donnees = await dbChargerCle("carnet-" + etat.carnetActifId);
-    if (donnees && donnees.trace) {
-      restaurerCarnet(donnees);
-      toast(`Carnet « ${carnetActif().nom} » rechargé`);
+    if (etat.carnetActifId) {
+      const donnees = await dbChargerCle("carnet-" + etat.carnetActifId);
+      if (donnees && donnees.trace) restaurerCarnet(donnees);
     }
   } catch (e) {
     // IndexedDB indisponible : on démarre à vide, sans bruit.
-    if (etat.carnets.length === 0) {
-      etat.carnets = [{ id: 1, uuid: genUuid(), nom: "Mon carnet", visible: true }];
-      etat.carnetActifId = 1;
-    }
+    if (!Array.isArray(etat.carnets)) etat.carnets = [];
+    if (etat.carnets.length === 0) etat.carnetActifId = 0;
   }
 }
 
@@ -3871,6 +3933,9 @@ function viderCarnetCourant() {
   fermerReserve();
   if (etat.coucheTrace) { etat.coucheTrace.remove(); etat.coucheTrace = null; }
   etat.trace = null;
+  etat.gpxListe = [];
+  etat.chargeOk = true; // état vide voulu (pas un raté de chargement)
+  if (typeof renderGpxListe === "function") renderGpxListe();
   prochainIdSouvenir = 1;
 
   etat.style = JSON.parse(JSON.stringify(STYLE_DEFAUT));
@@ -3959,9 +4024,10 @@ async function supprimerCarnet(carnet) {
   // Si on vient de supprimer le carnet ouvert, on bascule sur un autre.
   if (carnet.id === etat.carnetActifId) {
     if (etat.carnets.length === 0) {
-      etat.carnets = [{ id: 1, uuid: genUuid(), nom: "Mon carnet", visible: true }];
-      etat.carnetActifId = 1;
+      // Plus aucun carnet : l'accueil proposera d'en créer un.
+      etat.carnetActifId = 0;
       viderCarnetCourant();
+      if (typeof majPopupsAccueil === "function") majPopupsAccueil();
     } else {
       etat.carnetActifId = etat.carnets[0].id;
       let donnees = null;
@@ -4049,11 +4115,13 @@ async function afficherFantome(id) {
   if (!donnees || !donnees.trace) return;
 
   const couche = L.layerGroup().addTo(etat.carte);
-  const pictosPerso = Array.isArray(donnees.pictosPerso) ? donnees.pictosPerso : [];
 
-  // La trace, avec le style enregistré dans CE carnet.
+  // Sur la carte globale, un carnet ne montre QUE son tracé et son nom
+  // (au style du carnet) — le détail se découvre en l'ouvrant.
   const t = (donnees.style && donnees.style.trace) || { couleur: "#8a8a8a", epaisseur: 3, type: "plein" };
+  const points = [];
   donnees.trace.segments.forEach((seg) => {
+    seg.forEach((p) => points.push(p));
     L.polyline(seg, {
       color: t.couleur,
       weight: t.epaisseur,
@@ -4062,56 +4130,43 @@ async function afficherFantome(id) {
     }).addTo(couche);
   });
 
-  // Les souvenirs : épingles consultables (fiche en lecture seule).
-  const souvenirs = (donnees.souvenirs || []).map((sv) => ({
-    id: sv.id,
-    nom: sv.nom || "",
-    lat: sv.lat,
-    lng: sv.lng,
-    photos: Array.isArray(sv.photos) ? sv.photos : [],
-    couverture: sv.couverture === undefined ? null : sv.couverture,
-    textes: sv.textes || "",
-    pictogramme: sv.pictogramme || "souvenir",
-    dates: lireDates(sv.dates),
-    audios: lireAudios(sv.audios),
-    marker: null,
-    label: null,
-  }));
-
-  const fantome = { couche, souvenirs, trace: donnees.trace, pictosPerso };
-  etat.fantomes.set(id, fantome); // AVANT les tooltips (listeDuSouvenir s'en sert)
-
-  souvenirs.forEach((sv, i) => {
-    if (typeof sv.lat !== "number" || typeof sv.lng !== "number") return;
-    const m = L.marker([sv.lat, sv.lng], {
-      // Chaque carnet garde son propre style d'épingles sur l'accueil.
-      icon: creerIconeSouvenir(i + 1, sv.pictogramme, pictosPerso,
-        donnees.style && donnees.style.epingles),
+  // Le nom du carnet, posé au centre de son tracé, dans sa police de titre.
+  const fiche = etat.carnets.find((c) => c.id === id);
+  if (fiche && points.length) {
+    const centre = L.latLngBounds(points).getCenter();
+    L.marker(centre, {
+      icon: creerEtiquetteCarnet(fiche, donnees.style),
+      interactive: true,
     })
-      .bindTooltip(libelleTooltip(sv), {
-        direction: "top",
-        offset: [0, -38],
-        className: "tt-souvenir",
+      .on("click", () => {
+        if (typeof zoomerSurCarnet === "function") zoomerSurCarnet(id);
       })
-      .on("click", () => ouvrirPanneau(sv)); // fiche en lecture seule (visu)
-    m.addTo(couche);
-    sv.marker = m;
-  });
+      .addTo(couche);
+  }
 
-  // Les éléments décoratifs de ce carnet (pictos, textes, photos, traits,
-  // formes, dessins), affichés figés (non modifiables).
-  (donnees.annotations || []).forEach((sa) => {
-    const a = lireAnnotationSauvee(sa);
-    if (!a) return;
-    if (estAnnotationVecteur(a)) {
-      if (typeof coucheAnnotationVecteur === "function") {
-        const calque = coucheAnnotationVecteur(a, false);
-        if (calque) calque.addTo(couche);
-      }
-    } else {
-      L.marker([a.lat, a.lng], { icon: creerIconeAnnotation(a), interactive: false })
-        .addTo(couche);
-    }
+  const fantome = { couche, souvenirs: [], trace: donnees.trace, pictosPerso: [] };
+  etat.fantomes.set(id, fantome);
+}
+
+/** L'étiquette « nom du carnet » affichée sur la carte globale. */
+function creerEtiquetteCarnet(fiche, style) {
+  const police = cssDePolice((style && style.titrePolice) || "titre");
+  const couleur = (style && style.trace && style.trace.couleur) || "#2f3b34";
+  const texte = `${fiche.logo ? echapperHtml(fiche.logo) + " " : ""}${echapperHtml(fiche.nom)}`;
+  const css = [
+    `font-family:${police.replace(/"/g, "&quot;")}`,
+    "font-size:15px",
+    "font-weight:700",
+    `color:${couleur}`,
+    "white-space:nowrap",
+    "text-shadow:0 1px 3px rgba(255,255,255,0.95), 0 -1px 3px rgba(255,255,255,0.95), 1px 0 3px rgba(255,255,255,0.95), -1px 0 3px rgba(255,255,255,0.95)",
+    "transform:translate(-50%,-50%)",
+    "cursor:pointer",
+  ].join(";");
+  return L.divIcon({
+    className: "",
+    html: `<div style="${css}">${texte}</div>`,
+    iconSize: [0, 0],
   });
 }
 
@@ -4162,6 +4217,11 @@ function serialiserCarnet() {
       description: carnet.description || "",
     } : null,
     trace: etat.trace,
+    // Chaque GPX du carnet (etat.trace ci-dessus est leur réunion, gardée
+    // pour la fenêtre d'impression et les anciennes versions).
+    gpx: etat.gpxListe.map((g) => ({
+      id: g.id, nom: g.nom, segments: g.segments, waypoints: g.waypoints,
+    })),
     style: etat.style,
     prochainId: prochainIdSouvenir,
     // Pictogrammes personnalisés importés par l'utilisateur.
@@ -4206,6 +4266,7 @@ function serialiserCarnet() {
       italique: a.italique,
       souligne: a.souligne,
       barre: a.barre,
+      zoomRef: a.zoomRef,
       // Photo posée sur la carte.
       src: a.src,
       legende: a.legende,
@@ -4272,7 +4333,20 @@ function restaurerCarnet(donnees) {
   }));
 
   effacerSouvenirs();
-  afficherTrace(donnees.trace);
+
+  // Les GPX du carnet (les anciens carnets n'en avaient qu'un : on l'emballe).
+  etat.gpxListe = Array.isArray(donnees.gpx) && donnees.gpx.length
+    ? donnees.gpx.map((g) => ({
+        id: g.id, nom: g.nom || "Trace",
+        segments: Array.isArray(g.segments) ? g.segments : [],
+        waypoints: Array.isArray(g.waypoints) ? g.waypoints : [],
+      }))
+    : [{
+        id: 0, nom: donnees.trace.name || "Trace",
+        segments: donnees.trace.segments, waypoints: donnees.trace.waypoints,
+      }];
+  afficherTrace(fusionnerTraces());
+  if (typeof renderGpxListe === "function") renderGpxListe();
 
   (donnees.souvenirs || []).forEach((sv) => {
     const souvenir = {
@@ -4305,13 +4379,16 @@ function restaurerCarnet(donnees) {
   });
 
   // On reprend le compteur d'identifiants là où il en était
-  // (souvenirs + réserve + pictos + annotations).
-  const maxId = [...etat.souvenirs, ...etat.stock, ...etat.pictosPerso, ...etat.annotations]
+  // (souvenirs + réserve + pictos + annotations + GPX).
+  const maxId = [...etat.souvenirs, ...etat.stock, ...etat.pictosPerso,
+    ...etat.annotations, ...etat.gpxListe]
     .reduce((m, s) => Math.max(m, s.id || 0), 0);
-  prochainIdSouvenir = donnees.prochainId || maxId + 1;
+  prochainIdSouvenir = Math.max(donnees.prochainId || 1, maxId + 1);
 
   // On applique fond, ambiance, titre et style de trace, + les contrôles.
   appliquerStyleComplet();
+  etat.chargeOk = true;
+  if (typeof majEchellesZoom === "function") majEchellesZoom();
   return true;
 }
 
@@ -4329,10 +4406,13 @@ function planifierSauvegarde() {
 
 async function sauvegarderMaintenant() {
   try {
+    // Sans carnet ouvert (tout premier démarrage), il n'y a rien à écrire.
+    if (!carnetActif()) return;
     const cle = "carnet-" + etat.carnetActifId;
     // Garde-fou : on ne remplace JAMAIS un carnet sauvegardé (avec trace)
-    // par un état vide — protège les données si un chargement a raté.
-    if (!etat.trace) {
+    // par un état vide issu d'un chargement raté. (Si l'utilisateur a
+    // volontairement retiré tous les GPX, chargeOk est vrai : on écrit.)
+    if (!etat.trace && !etat.chargeOk) {
       const existant = await dbChargerCle(cle).catch(() => null);
       if (existant && existant.trace) return;
     }

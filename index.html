@@ -43,8 +43,8 @@
         <span class="brand-mark">▲</span>
         <span class="brand-name">LogBookMap</span>
       </div>
-      <button id="btn-retour-accueil" class="btn-retour editeur-seule" title="Revenir à mes carnets">
-        ← Mes carnets
+      <button id="btn-retour-accueil" class="btn-retour editeur-seule" title="Revenir à la carte globale">
+        ← Carte globale
       </button>
       <button id="editeur-identite" class="editeur-identite editeur-seule" title="Infos du carnet (onglet Carnets)">
         <span id="editeur-logo">📖</span>
@@ -56,6 +56,8 @@
       <!-- Indicateurs discrets : sauvegarde locale + envoi en ligne -->
       <span id="statut-sauvegarde" class="statut-sauvegarde" hidden>✓ Enregistré</span>
       <span id="statut-nuage" class="statut-sauvegarde" hidden>☁️ En ligne</span>
+      <!-- Style de la carte globale (fond, ambiance — indépendant des carnets) -->
+      <button id="accueil-style-btn" class="btn-retour accueil-seule" title="Style de la carte globale">🎨</button>
       <!-- Compte en ligne (connexion, synchronisation) -->
       <button id="compte-btn" class="btn-retour compte-btn">☁️ Compte</button>
       <!-- Impression d'un carnet en livre photo (depuis l'accueil) -->
@@ -68,11 +70,8 @@
 
     <!-- Rail d'onglets (éditeur, façon Canva) -->
     <nav id="rail" class="rail editeur-seule">
-      <button class="rail-btn" data-onglet="carnets"><span class="rail-ico">📚</span><span class="rail-label">Carnets</span></button>
-      <button class="rail-btn" data-onglet="modeles"><span class="rail-ico">🎭</span><span class="rail-label">Modèles</span></button>
+      <button class="rail-btn" data-onglet="carnets"><span class="rail-ico">📓</span><span class="rail-label">Carnet</span></button>
       <button class="rail-btn" data-onglet="souvenirs"><span class="rail-ico">📍</span><span class="rail-label">Souvenirs</span></button>
-      <button class="rail-btn" data-onglet="textes"><span class="rail-ico">🔤</span><span class="rail-label">Textes</span></button>
-      <button class="rail-btn" data-onglet="importer"><span class="rail-ico">🖼️</span><span class="rail-label">Importer</span></button>
       <button class="rail-btn" data-onglet="outils"><span class="rail-ico">✏️</span><span class="rail-label">Outils</span></button>
       <button class="rail-btn" data-onglet="fond"><span class="rail-ico">🗺️</span><span class="rail-label">Fond de carte</span></button>
       <button class="rail-btn" data-onglet="export"><span class="rail-ico">📤</span><span class="rail-label">Export</span></button>
@@ -81,19 +80,19 @@
     <!-- Tiroir : le panneau de l'onglet ouvert (éditeur) -->
     <div id="tiroir" class="tiroir editeur-seule">
 
-      <!-- ========== Onglet CARNETS ========== -->
+      <!-- ========== Onglet CARNET (paramètres généraux du carnet ouvert) ========== -->
       <section id="panneau-carnets" class="tiroir-section" hidden>
         <header class="panneau-tete">
-          <span class="panneau-titre-fixe">📚 Carnets</span>
+          <span class="panneau-titre-fixe">📓 Carnet</span>
           <button id="fermer-carnets" class="icone-btn" title="Fermer">✕</button>
         </header>
         <div class="panneau-corps">
 
           <section class="style-section">
-            <h3>Ce carnet</h3>
+            <h3>Identité</h3>
             <div class="meta-ligne">
               <input id="meta-logo" class="style-input meta-logo" type="text" maxlength="8"
-                     placeholder="📖" title="Logo (un émoji)" />
+                     placeholder="📖" title="Pictogramme (un émoji)" />
               <input id="meta-nom" class="style-input" type="text" maxlength="60" placeholder="Titre du carnet" />
             </div>
             <label class="style-label">Catégorie <span class="style-unite">(libre : rando, vélo, famille…)</span></label>
@@ -107,12 +106,41 @@
           </section>
 
           <section class="style-section">
-            <h3>Trace GPX</h3>
+            <h3>Traces GPX du carnet</h3>
+            <div id="gpx-liste" class="gpx-liste"></div>
+            <p id="gpx-vide" class="galerie-vide">Aucun GPX pour l'instant : ajoutes-en un pour dessiner le parcours.</p>
             <label id="label-gpx" class="btn btn-primary" style="width:100%">
-              🥾 Charger un GPX
+              🥾 Ajouter un GPX
               <input id="gpx-input" type="file" accept=".gpx,application/gpx+xml" hidden />
             </label>
-            <p class="style-aide">La trace GPX dessine le parcours de ce carnet sur la carte.</p>
+            <p class="style-aide">Un carnet peut réunir plusieurs traces (les étapes d'un même voyage, par exemple).</p>
+          </section>
+
+          <section class="style-section">
+            <h3>Style : modèles prêts à l'emploi</h3>
+            <p class="style-aide">Un modèle habille toute la carte d'un coup (fond, couleurs, tracé,
+               polices, décor). Réglages fins dans l'onglet « Fond de carte ».</p>
+            <div id="modeles-liste" class="modeles-liste"></div>
+          </section>
+
+          <section class="style-section">
+            <h3>Partage</h3>
+            <div id="partage-connecte">
+              <p class="style-aide">Partage ce carnet avec d'autres utilisateurs (par leur adresse
+                 e-mail de compte) : ils le verront sur leur carte globale.</p>
+              <div id="partage-liste" class="partage-liste"></div>
+              <div class="partage-ajout">
+                <input id="partage-email" class="style-input" type="email" placeholder="ami@exemple.fr" />
+                <select id="partage-droit" class="style-input">
+                  <option value="lecture">Lecture</option>
+                  <option value="edition">Édition</option>
+                </select>
+              </div>
+              <button id="partage-ajouter" class="btn btn-accent btn-petit" style="width:100%">+ Partager</button>
+            </div>
+            <p id="partage-deconnecte" class="style-aide" hidden>
+              Connecte-toi à ton compte (bouton ☁️ en haut) pour partager ce carnet.
+            </p>
           </section>
 
           <section class="style-section">
@@ -139,19 +167,6 @@
         </div>
       </section>
 
-      <!-- ========== Onglet MODÈLES ========== -->
-      <section id="panneau-modeles" class="tiroir-section" hidden>
-        <header class="panneau-tete">
-          <span class="panneau-titre-fixe">🎭 Modèles</span>
-          <button class="icone-btn tiroir-fermer" title="Fermer">✕</button>
-        </header>
-        <div class="panneau-corps">
-          <p class="style-aide">Un modèle habille toute la carte d'un coup : fond, couleurs, tracé,
-             titre, polices et décor. Tu peux ensuite tout ajuster dans les autres onglets.</p>
-          <div id="modeles-liste" class="modeles-liste"></div>
-        </div>
-      </section>
-
       <!-- ========== Onglet SOUVENIRS ========== -->
       <section id="panneau-reserve" class="tiroir-section" hidden>
         <header class="panneau-tete">
@@ -159,18 +174,17 @@
           <button id="fermer-reserve" class="icone-btn" title="Fermer">✕</button>
         </header>
         <div class="panneau-corps">
-          <button id="souvenir-nouveau" class="btn btn-accent btn-petit" style="width:100%">
-            + Créer un souvenir
-          </button>
-          <button id="btn-ajout-souvenir" class="btn btn-ghost btn-petit" style="width:100%" hidden>
-            <span class="btn-ico">📍</span> Ajouter des souvenirs
-          </button>
-          <button id="reserve-generer" class="btn btn-ghost btn-petit" style="width:100%">
-            ✨ Générer depuis un texte / des photos
-          </button>
-          <button id="btn-trier-dates" class="btn btn-ghost btn-petit" style="width:100%" hidden>
-            📅 Trier par date
-          </button>
+          <div class="boutons-espaces">
+            <button id="souvenir-nouveau" class="btn btn-accent btn-petit" style="width:100%">
+              + Créer un souvenir
+            </button>
+            <button id="reserve-generer" class="btn btn-ghost btn-petit" style="width:100%">
+              ✨ Générer depuis un texte / des photos
+            </button>
+            <button id="btn-trier-dates" class="btn btn-ghost btn-petit" style="width:100%" hidden>
+              📅 Trier par date
+            </button>
+          </div>
 
           <div id="souvenirs-filtre" class="chips" role="group">
             <button class="chip actif" data-souvfiltre="tous">Tous</button>
@@ -185,31 +199,63 @@
         </div>
       </section>
 
-      <!-- ========== Onglet TEXTES ========== -->
-      <section id="panneau-textes" class="tiroir-section" hidden>
+      <!-- ========== Onglet OUTILS (textes, photos, pictos, dessins) ========== -->
+      <section id="panneau-outils" class="tiroir-section" hidden>
         <header class="panneau-tete">
-          <span class="panneau-titre-fixe">🔤 Textes</span>
+          <span class="panneau-titre-fixe">✏️ Outils</span>
           <button class="icone-btn tiroir-fermer" title="Fermer">✕</button>
         </header>
         <div class="panneau-corps">
 
           <section class="style-section">
-            <h3>Ajouter un texte sur la carte</h3>
-            <button id="texte-ajouter-titre" class="btn btn-accent btn-petit" style="width:100%">
-              ＋ Ajouter un titre
-            </button>
-            <button id="texte-ajouter-lieu" class="btn btn-ghost btn-petit" style="width:100%">
-              ＋ Ajouter un texte de lieu
-            </button>
-            <button id="texte-ajouter-libre" class="btn btn-ghost btn-petit" style="width:100%">
-              ＋ Ajouter un texte
-            </button>
-            <p class="style-aide">Clique ensuite sur la carte pour le poser. Une fois posé : glisse-le pour
-               le déplacer, clique dessus pour changer sa police, sa taille, sa couleur ou sa mise en forme.</p>
+            <div class="outils-grille outils-grille-3">
+              <button id="texte-ajouter-libre" class="outil-btn"><span>🔤</span>Texte</button>
+              <button id="texte-ajouter-titre" class="outil-btn"><span>𝐓</span>Titre</button>
+              <button id="texte-ajouter-lieu" class="outil-btn"><span>🏷️</span>Lieu</button>
+              <label class="outil-btn" for="importer-photo-input"><span>🖼️</span>Photo
+                <input id="importer-photo-input" type="file" accept="image/*" hidden />
+              </label>
+              <button id="btn-ajout-annot-picto" class="outil-btn"><span>😀</span>Pictogramme</button>
+              <button class="outil-btn" data-outil="dessin"><span>✍️</span>Stylo</button>
+              <button class="outil-btn" data-outil="trait"><span>📏</span>Trait</button>
+              <button class="outil-btn" data-outil="fleche"><span>➤</span>Flèche</button>
+              <button class="outil-btn" data-outil="rect"><span>▭</span>Rectangle</button>
+              <button class="outil-btn" data-outil="cercle"><span>◯</span>Cercle</button>
+            </div>
+            <p class="style-aide">Texte, photo, pictogramme : touche ensuite la carte pour poser
+               l'élément. Stylo, formes et flèche : garde le doigt (ou le clic) appuyé et fais
+               glisser. Trait : touche point par point puis « Terminer ».</p>
           </section>
 
           <section class="style-section">
-            <h3>Cartouche de titre de la carte</h3>
+            <h3>Couleur et épaisseur des dessins</h3>
+            <label class="style-label-couleur">
+              Couleur
+              <input id="outil-couleur" type="color" value="#b4452f" />
+            </label>
+            <label class="style-label">Épaisseur : <span id="outil-epaisseur-val">4</span> px</label>
+            <input id="outil-epaisseur" class="style-range" type="range" min="1" max="14" step="1" value="4" />
+          </section>
+
+          <section class="style-section">
+            <h3>Photos posées sur la carte</h3>
+            <div id="importer-liste" class="importer-liste"></div>
+            <p id="importer-vide" class="galerie-vide">Aucune photo posée sur la carte.</p>
+          </section>
+        </div>
+      </section>
+
+      <!-- ========== Onglet FOND DE CARTE ========== -->
+      <section id="panneau-fond-carte" class="tiroir-section" hidden>
+        <header class="panneau-tete">
+          <span class="panneau-titre-fixe">🗺️ Fond de carte</span>
+          <button id="fermer-fond" class="icone-btn" title="Fermer">✕</button>
+        </header>
+        <div class="panneau-corps">
+
+          <!-- Cartouche de titre affiché sur la carte -->
+          <section class="style-section">
+            <h3>Titre de la carte</h3>
             <input id="style-titre" class="style-input" type="text"
                    placeholder="Ex : Boucle du Lac de Lauvitel" maxlength="60" />
             <label class="style-label">Police du titre</label>
@@ -224,75 +270,6 @@
             </div>
             <p class="style-aide">Laisse le titre vide pour ne rien afficher sur la carte.</p>
           </section>
-        </div>
-      </section>
-
-      <!-- ========== Onglet IMPORTER ========== -->
-      <section id="panneau-importer" class="tiroir-section" hidden>
-        <header class="panneau-tete">
-          <span class="panneau-titre-fixe">🖼️ Importer</span>
-          <button class="icone-btn tiroir-fermer" title="Fermer">✕</button>
-        </header>
-        <div class="panneau-corps">
-          <section class="style-section">
-            <h3>Photo sur la carte</h3>
-            <label class="btn btn-accent btn-petit" style="width:100%">
-              🖼️ Importer une photo
-              <input id="importer-photo-input" type="file" accept="image/*" hidden />
-            </label>
-            <p class="style-aide">Choisis une photo, puis clique sur la carte pour la poser.
-               Clique ensuite dessus pour écrire sa légende ou régler sa taille, et glisse-la pour la déplacer.</p>
-          </section>
-          <section class="style-section">
-            <h3>Photos posées sur la carte</h3>
-            <div id="importer-liste" class="importer-liste"></div>
-            <p id="importer-vide" class="galerie-vide">Aucune photo posée sur la carte.</p>
-          </section>
-        </div>
-      </section>
-
-      <!-- ========== Onglet OUTILS ========== -->
-      <section id="panneau-outils" class="tiroir-section" hidden>
-        <header class="panneau-tete">
-          <span class="panneau-titre-fixe">✏️ Outils</span>
-          <button class="icone-btn tiroir-fermer" title="Fermer">✕</button>
-        </header>
-        <div class="panneau-corps">
-
-          <section class="style-section">
-            <h3>Décorer la carte</h3>
-            <div class="outils-grille">
-              <button id="btn-ajout-annot-picto" class="outil-btn"><span>😀</span>Pictogramme</button>
-              <button id="btn-ajout-annot-texte" class="outil-btn"><span>🔤</span>Texte</button>
-              <button class="outil-btn" data-outil="trait"><span>📏</span>Trait</button>
-              <button class="outil-btn" data-outil="dessin"><span>✍️</span>Dessin</button>
-              <button class="outil-btn" data-outil="rect"><span>▭</span>Rectangle</button>
-              <button class="outil-btn" data-outil="cercle"><span>◯</span>Cercle</button>
-              <button class="outil-btn" data-outil="fleche"><span>➤</span>Flèche</button>
-            </div>
-            <p class="style-aide">Trait : clique point par point, puis « Terminer » (ou double-clique).
-               Dessin, rectangle, cercle et flèche : garde le doigt/clic appuyé et fais glisser.</p>
-          </section>
-
-          <section class="style-section">
-            <h3>Réglages du prochain dessin</h3>
-            <label class="style-label-couleur">
-              Couleur
-              <input id="outil-couleur" type="color" value="#b4452f" />
-            </label>
-            <label class="style-label">Épaisseur : <span id="outil-epaisseur-val">4</span> px</label>
-            <input id="outil-epaisseur" class="style-range" type="range" min="1" max="14" step="1" value="4" />
-          </section>
-        </div>
-      </section>
-
-      <!-- ========== Onglet FOND DE CARTE ========== -->
-      <section id="panneau-fond-carte" class="tiroir-section" hidden>
-        <header class="panneau-tete">
-          <span class="panneau-titre-fixe">🗺️ Fond de carte</span>
-          <button id="fermer-fond" class="icone-btn" title="Fermer">✕</button>
-        </header>
-        <div class="panneau-corps">
 
           <!-- Fond de carte -->
           <section class="style-section">
@@ -619,8 +596,12 @@
     <aside id="accueil-panneau" class="accueil-panneau accueil-seule">
       <div class="accueil-tete">
         <h2>Mes carnets <span id="accueil-compte" class="accueil-compte"></span></h2>
+        <button id="accueil-rechercher" class="btn btn-ghost btn-petit" title="Rechercher et filtrer">
+          🔎 Rechercher
+        </button>
       </div>
-      <div class="accueil-filtres">
+      <!-- Les filtres n'apparaissent qu'après un clic sur « Rechercher » -->
+      <div id="accueil-filtres" class="accueil-filtres" hidden>
         <input id="accueil-recherche" class="style-input" type="search"
                placeholder="🔎 Rechercher (titre, description, logo…)" />
         <div class="accueil-filtres-ligne">
@@ -636,16 +617,18 @@
       </div>
       <div id="accueil-liste" class="accueil-liste"></div>
       <div class="accueil-pied">
-        <label class="btn btn-accent btn-petit" style="flex:1">
-          + Nouveau carnet (GPX)
-          <input id="accueil-gpx-input" type="file" accept=".gpx,application/gpx+xml" hidden />
-        </label>
+        <button id="accueil-nouveau" class="btn btn-accent btn-petit" style="flex:1">
+          + Nouveau carnet
+        </button>
       </div>
     </aside>
 
     <!-- ===================== La carte et ses recouvrements ===================== -->
     <div class="carte-zone">
       <div id="map" class="map"></div>
+
+      <!-- Titre de la carte globale : « LogBookMap de <pseudo> » -->
+      <div id="accueil-titre" class="accueil-titre accueil-seule">LogBookMap</div>
 
       <!-- Calque "parchemin" pour l'ambiance médiévale (par-dessus le fond, sous le titre) -->
       <div id="parchemin" class="parchemin"></div>
@@ -1032,7 +1015,7 @@
     <button id="lightbox-suiv" class="lightbox-nav lightbox-suiv" title="Photo suivante">›</button>
   </div>
 
-  <!-- Fenêtre : compte en ligne (création, connexion, synchronisation) -->
+  <!-- Fenêtre : compte en ligne (lien magique par e-mail, synchronisation) -->
   <div id="modal-compte" class="modal-overlay" hidden>
     <div class="modal-card">
       <h2>☁️ Mon compte</h2>
@@ -1040,32 +1023,35 @@
       <!-- Message si les clés du service en ligne ne sont pas encore réglées -->
       <p id="compte-non-configure" class="modal-sous-titre" hidden>
         Le service en ligne n'est pas encore configuré sur cette version de
-        l'application (voir le guide « compte en ligne »). En attendant, tes
-        carnets restent enregistrés sur cet appareil.
+        l'application. En attendant, tes carnets restent enregistrés sur cet appareil.
       </p>
 
-      <!-- Pas connecté : créer un compte ou se connecter -->
+      <!-- Pas connecté : recevoir un lien magique -->
       <div id="compte-bloc-connexion">
-        <p class="modal-sous-titre">Avec un compte, tes carnets sont sauvegardés
-           en ligne et se retrouvent sur tous tes appareils.</p>
+        <p class="modal-sous-titre">Avec un compte, tes carnets sont sauvegardés en
+           ligne et se retrouvent sur tous tes appareils. Pas de mot de passe :
+           tu reçois un <strong>lien de connexion par e-mail</strong> (le compte se
+           crée tout seul à la première connexion).</p>
         <label class="style-label">Adresse e-mail</label>
         <input id="compte-email" type="email" placeholder="toi@exemple.fr" autocomplete="email" />
-        <label class="style-label">Mot de passe <span class="style-unite">(8 caractères minimum)</span></label>
-        <input id="compte-mdp" type="password" placeholder="Ton mot de passe" autocomplete="current-password" />
+        <label class="style-switch">
+          <input id="compte-rester" type="checkbox" checked />
+          <span>Rester connecté sur cet appareil</span>
+        </label>
         <div class="modal-actions">
-          <button id="compte-creer" class="btn btn-ghost">Créer un compte</button>
-          <button id="compte-connecter" class="btn btn-accent">Se connecter</button>
+          <button id="compte-lien" class="btn btn-accent" style="width:100%">
+            ✉️ Recevoir mon lien de connexion
+          </button>
         </div>
-        <button id="compte-oubli" class="btn btn-ghost btn-petit" style="width:100%">
-          Mot de passe oublié ?
-        </button>
       </div>
 
-      <!-- Connecté : synchroniser, se déconnecter -->
+      <!-- Connecté : pseudo, synchroniser, se déconnecter -->
       <div id="compte-bloc-connecte" hidden>
         <p class="modal-sous-titre">Connecté en tant que
            <strong id="compte-email-affiche">—</strong>.
            Tes carnets sont sauvegardés en ligne automatiquement.</p>
+        <label class="style-label">Ton prénom ou pseudo <span class="style-unite">(affiché sur ta carte globale)</span></label>
+        <input id="compte-pseudo" type="text" maxlength="30" placeholder="Ex : Robin" />
         <button id="compte-synchroniser" class="btn btn-accent btn-petit" style="width:100%">
           🔄 Synchroniser maintenant
         </button>
@@ -1074,20 +1060,71 @@
         </button>
       </div>
 
-      <!-- Retour du lien « mot de passe oublié » : choisir le nouveau -->
-      <div id="compte-bloc-recovery" hidden>
-        <p class="modal-sous-titre">Choisis ton nouveau mot de passe.</p>
-        <label class="style-label">Nouveau mot de passe <span class="style-unite">(8 caractères minimum)</span></label>
-        <input id="compte-nouveau-mdp" type="password" autocomplete="new-password" />
-        <div class="modal-actions">
-          <button id="compte-nouveau-mdp-ok" class="btn btn-accent">Enregistrer</button>
-        </div>
-      </div>
-
       <p id="compte-statut" class="gen-statut" hidden></p>
 
       <div class="modal-actions">
         <button id="compte-fermer" class="btn btn-ghost">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fenêtre de bienvenue : aucun carnet et pas de compte connecté -->
+  <div id="modal-bienvenue" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <h2>👋 Bienvenue sur LogBookMap</h2>
+      <p class="modal-sous-titre">Transforme tes traces GPS en carnets de voyage
+         illustrés. Par quoi veux-tu commencer ?</p>
+      <div class="boutons-espaces">
+        <button id="bienvenue-connexion" class="btn btn-accent" style="width:100%">
+          ☁️ Se connecter / créer son compte
+        </button>
+        <button id="bienvenue-local" class="btn btn-ghost" style="width:100%">
+          📓 Créer un carnet en local
+        </button>
+      </div>
+      <p class="style-aide">Avec un compte, tes carnets sont sauvegardés en ligne et
+         se retrouvent sur tous tes appareils. En local, ils restent uniquement sur
+         celui-ci (tu pourras te connecter plus tard).</p>
+    </div>
+  </div>
+
+  <!-- Fenêtre : créer un carnet (le nom d'abord, le GPX ensuite) -->
+  <div id="modal-nouveau-carnet" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <h2>📓 Nouveau carnet</h2>
+      <p class="modal-sous-titre">Donne-lui un nom — tu ajouteras ensuite sa trace
+         GPX et son style dans l'onglet Carnet.</p>
+      <input id="nouveau-carnet-nom" type="text" maxlength="60"
+             placeholder="Ex : Tour du Queyras 2026" />
+      <div class="modal-actions">
+        <button id="nouveau-carnet-annuler" class="btn btn-ghost">Annuler</button>
+        <button id="nouveau-carnet-creer" class="btn btn-accent">Créer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fenêtre : style de la carte globale (indépendant des carnets) -->
+  <div id="modal-carte-globale" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <h2>🎨 Style de la carte globale</h2>
+      <p class="modal-sous-titre">Ce style ne s'applique qu'à la carte d'accueil —
+         chaque carnet garde le sien.</p>
+      <label class="style-label">Fond de carte</label>
+      <div id="global-fond" class="segment segment-grille" role="group">
+        <button class="segment-btn" data-gfond="topo">Topographique</button>
+        <button class="segment-btn" data-gfond="clair">Clair</button>
+        <button class="segment-btn" data-gfond="epure">Épuré</button>
+        <button class="segment-btn" data-gfond="satellite">Satellite</button>
+      </div>
+      <label class="style-label">Ambiance</label>
+      <div id="global-ambiance" class="segment segment-grille" role="group">
+        <button class="segment-btn" data-gambiance="naturel">Naturel</button>
+        <button class="segment-btn" data-gambiance="ancien">Ancien</button>
+        <button class="segment-btn" data-gambiance="doux">Doux</button>
+        <button class="segment-btn" data-gambiance="medieval">Médiéval</button>
+      </div>
+      <div class="modal-actions">
+        <button id="carte-globale-fermer" class="btn btn-accent">Fermer</button>
       </div>
     </div>
   </div>
@@ -1100,6 +1137,9 @@
        jamais affichés. Ils seront retirés au prochain grand ménage.
        ============================================================ -->
   <div class="zone-morte" hidden>
+    <button id="btn-ajout-souvenir"></button>
+    <button id="btn-ajout-annot-texte"></button>
+    <input id="accueil-gpx-input" type="file" />
     <button id="btn-menu"></button>
     <nav id="menu-actions" hidden></nav>
     <button id="btn-mode" hidden></button>

@@ -53,13 +53,26 @@ sauvegarde en ligne s'activera. Ces deux valeurs ne sont **pas secrètes** (elle
 sont faites pour être dans l'application) : la sécurité vient des règles posées
 à l'étape 3 — chaque compte ne voit que ses propres carnets.
 
+## Étape 6 — Activer le partage de carnets (une fois)
+
+Retourne dans **SQL Editor**, colle le contenu du fichier
+**`supabase-setup-2-partage.sql`** et clique **Run**. C'est ce qui permet de
+partager un carnet avec d'autres comptes (lecture ou édition).
+
 ## Comment ça marche ensuite
 
-- Bouton **☁️ Compte** en haut de l'application → **Créer un compte**
-  (e-mail + mot de passe), ou **Se connecter** sur un autre appareil.
+- Bouton **☁️ Se connecter** en haut → tape ton adresse e-mail → tu reçois un
+  **lien de connexion** par e-mail (pas de mot de passe ; le compte se crée
+  tout seul la première fois). La case « Rester connecté sur cet appareil »
+  évite d'avoir à recommencer.
+- ⚠️ L'e-mail de connexion est limité à **quelques envois par heure** (service
+  d'e-mails gratuit de Supabase) : normal si un 2e lien tarde à arriver.
 - Une fois connecté, chaque modification est envoyée en ligne quelques secondes
   après (petit indicateur « ☁️ En ligne »), et à chaque ouverture l'application
   récupère les carnets les plus récents.
 - Sans connexion Internet, tout continue de marcher : la synchronisation
   rattrape au retour du réseau (bouton « 🔄 Synchroniser maintenant » dans la
   fenêtre Compte si besoin).
+- **Partage** : dans l'éditeur d'un carnet → onglet 📓 Carnet → section
+  Partage → tape l'adresse e-mail du compte de ton ami + « Lecture » ou
+  « Édition ». Le carnet apparaîtra sur sa carte globale.

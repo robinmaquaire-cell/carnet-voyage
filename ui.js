@@ -48,13 +48,16 @@ async function basculerVersAccueil(premierChargement) {
   document.body.classList.add("vue-accueil");
   document.body.classList.remove("vue-editeur");
 
-  definirMode("visualisation");     // lecture seule + fiches en pop up
+  definirMode("visualisation");     // lecture seule
+  appliquerStyleCarteGlobale();     // le fond de la carte globale (pas celui du carnet)
+  majTitreCarteGlobale();
   definirVisibiliteCarnetActif(true);
   await afficherTousLesCarnets();
   appliquerFiltresAccueil();
   majInterfaceCarnets();
   majEcranVide();
   ajusterVueMonde();
+  majPopupsAccueil();
   // La carte doit remesurer sa place (le panneau de gauche a changé).
   setTimeout(() => etat.carte.invalidateSize(), 60);
 }
@@ -66,12 +69,23 @@ async function basculerVersEditeur(id) {
   } else {
     definirMode("edition");
   }
-  definirVisibiliteCarnetActif(true);
 
   etat.vue = "editeur";
   document.body.classList.add("vue-editeur");
   document.body.classList.remove("vue-accueil");
 
+  // On quitte le style de la carte globale : le carnet reprend le sien.
+  appliquerFond(etat.style.fond);
+  appliquerAmbiance(etat.style.ambiance);
+
+  // Un carnet partagé « en lecture » se consulte sans se modifier.
+  const c = carnetActif();
+  if (c && c.partage && c.partage.droit !== "edition") {
+    definirMode("visualisation");
+    toast("Carnet partagé en lecture : tu peux le regarder, pas le modifier.");
+  }
+
+  definirVisibiliteCarnetActif(true);
   majInterfaceCarnets();
   majEcranVide();
   if (etat.trace) recadrerSurParcours();
@@ -79,20 +93,43 @@ async function basculerVersEditeur(id) {
 }
 
 /**
- * Montre ou cache les calques du carnet OUVERT (trace, épingles, noms,
- * éléments décoratifs) — utilisé par les filtres de l'accueil.
+ * Montre ou cache les calques du carnet OUVERT. Sur la carte globale
+ * (accueil), seul le tracé et le nom du carnet apparaissent — les épingles,
+ * noms de souvenirs et décorations restent réservés à l'éditeur.
  */
+let etiquetteCarnetActif = null;
+
 function definirVisibiliteCarnetActif(visible) {
   const carte = etat.carte;
-  const couches = [];
-  if (etat.coucheTrace) couches.push(etat.coucheTrace);
-  if (etat.grappe) couches.push(etat.grappe);
-  etat.souvenirs.forEach((s) => { if (s.label) couches.push(s.label); });
-  etat.annotations.forEach((a) => { if (a.marker) couches.push(a.marker); });
-  couches.forEach((c) => {
-    if (visible) { if (!carte.hasLayer(c)) carte.addLayer(c); }
-    else if (carte.hasLayer(c)) carte.removeLayer(c);
-  });
+  const accueil = etat.vue === "accueil";
+
+  const basculer = (couche, montrer) => {
+    if (!couche) return;
+    if (montrer) { if (!carte.hasLayer(couche)) carte.addLayer(couche); }
+    else if (carte.hasLayer(couche)) carte.removeLayer(couche);
+  };
+
+  // Le tracé : visible partout (au style du carnet).
+  basculer(etat.coucheTrace, visible);
+  // Les détails : seulement dans l'éditeur.
+  basculer(etat.grappe, visible && !accueil);
+  etat.souvenirs.forEach((s) => basculer(s.label, visible && !accueil));
+  etat.annotations.forEach((a) => basculer(a.marker, visible && !accueil));
+
+  // Sur l'accueil : le nom du carnet ouvert, comme pour les autres carnets.
+  if (etiquetteCarnetActif) { etiquetteCarnetActif.remove(); etiquetteCarnetActif = null; }
+  const fiche = carnetActif();
+  if (visible && accueil && fiche && etat.trace) {
+    const points = [];
+    etat.trace.segments.forEach((seg) => seg.forEach((p) => points.push(p)));
+    if (points.length) {
+      etiquetteCarnetActif = L.marker(L.latLngBounds(points).getCenter(), {
+        icon: creerEtiquetteCarnet(fiche, etat.style),
+      })
+        .on("click", () => zoomerSurCarnet(fiche.id))
+        .addTo(carte);
+    }
+  }
 }
 
 /** À l'accueil : charge et affiche tous les autres carnets (lecture seule). */
@@ -122,20 +159,40 @@ function ajusterVueMonde() {
   }
 }
 
-/** L'écran « carnet vide » : textes adaptés à la vue en cours. */
+/** L'écran « carnet vide » (éditeur seulement ; l'accueil a ses pop-ups). */
 function majEcranVide() {
   const enEditeur = etat.vue === "editeur";
-  const rienNullePart = !etat.trace && etat.fantomes.size === 0;
-  const vide = enEditeur ? !etat.trace : rienNullePart;
-
+  const vide = enEditeur && !etat.trace;
   document.getElementById("welcome").hidden = !vide;
   if (!vide) return;
-  document.getElementById("welcome-titre").textContent = enEditeur
-    ? "Ce carnet est encore vide"
-    : "Transforme ta trace en carnet de voyage";
-  document.getElementById("welcome-texte").innerHTML = enEditeur
-    ? "Charge un fichier <strong>.gpx</strong> pour dessiner le parcours de ce carnet, puis pose tes souvenirs dessus."
-    : "Charge un fichier <strong>.gpx</strong> de ta randonnée, pose des souvenirs (photos, récits, audios), personnalise le style de la carte… et imprime un beau livre.";
+  document.getElementById("welcome-titre").textContent = "Ce carnet est encore vide";
+  document.getElementById("welcome-texte").innerHTML =
+    "Charge un fichier <strong>.gpx</strong> pour dessiner son parcours " +
+    "(bouton ci-dessous, ou onglet 📓 Carnet), puis pose tes souvenirs dessus.";
+}
+
+/**
+ * Pop-ups de l'accueil : si aucun carnet n'existe, on propose d'en créer un
+ * — et de se connecter d'abord si on n'a pas de compte.
+ */
+function majPopupsAccueil() {
+  const bienvenue = document.getElementById("modal-bienvenue");
+  const creation = document.getElementById("modal-nouveau-carnet");
+  if (etat.vue !== "accueil" || etat.carnets.length > 0) {
+    bienvenue.hidden = true;
+    return;
+  }
+  // Pas de compte connecté : proposer connexion OU carnet local.
+  const connecte = typeof nuageConnecte === "function" && nuageConnecte();
+  if (!connecte) {
+    if (creation.hidden && document.getElementById("modal-compte").hidden) {
+      bienvenue.hidden = false;
+    }
+  } else {
+    // Connecté mais aucun carnet (même après synchronisation) : en créer un.
+    bienvenue.hidden = true;
+    if (creation.hidden) ouvrirModalNouveauCarnet();
+  }
 }
 
 /* =========================================================
@@ -145,10 +202,7 @@ function majEcranVide() {
 // Nom d'onglet → id de la section correspondante dans le tiroir.
 const ONGLETS = {
   carnets: "panneau-carnets",
-  modeles: "panneau-modeles",
   souvenirs: "panneau-reserve",
-  textes: "panneau-textes",
-  importer: "panneau-importer",
   outils: "panneau-outils",
   fond: "panneau-fond-carte",
   export: "panneau-export",
@@ -171,11 +225,15 @@ function ouvrirOnglet(nom) {
   majRailActif();
 
   // Contenu à rafraîchir à l'ouverture.
-  if (nom === "carnets") { renderCarnets(); }
-  else if (nom === "modeles") { renderModeles(); }
+  if (nom === "carnets") {
+    renderCarnets();
+    renderModeles();
+    renderGpxListe();
+    renderPartagesUI();
+  }
   else if (nom === "souvenirs") { renderSouvenirsListe(); }
-  else if (nom === "importer") { renderImagesListe(); }
-  else if (nom === "textes" || nom === "fond") { synchroniserControlesStyle(); }
+  else if (nom === "outils") { renderImagesListe(); }
+  else if (nom === "fond") { synchroniserControlesStyle(); }
   else if (nom === "element") { majEditeurAnnotation(); }
 }
 
@@ -295,7 +353,13 @@ function renderAccueilListe() {
     }
     tete.appendChild(logo);
     tete.appendChild(titres);
-    if (c.categorie) {
+    if (c.partage) {
+      const badge = document.createElement("span");
+      badge.className = "carnet-carte-categorie";
+      badge.textContent = c.partage.droit === "edition" ? "🤝 partagé ✏️" : "🤝 partagé";
+      badge.title = "Carnet partagé avec toi";
+      tete.appendChild(badge);
+    } else if (c.categorie) {
       const cat = document.createElement("span");
       cat.className = "carnet-carte-categorie";
       cat.textContent = c.categorie;
@@ -314,7 +378,7 @@ function renderAccueilListe() {
     actions.className = "carnet-carte-actions";
     const editer = document.createElement("button");
     editer.className = "btn btn-accent btn-petit";
-    editer.textContent = "✏️ Éditer";
+    editer.textContent = (c.partage && c.partage.droit !== "edition") ? "👁 Ouvrir" : "✏️ Éditer";
     editer.addEventListener("click", (e) => {
       e.stopPropagation();
       basculerVersEditeur(c.id);
@@ -399,6 +463,7 @@ function majInterfaceCarnets() {
       "📅 Dates : " + (dates || "aucune (elles suivent les dates de tes souvenirs)");
   }
   majCategories();
+  majTitreCarteGlobale();
   if (etat.vue === "accueil") renderAccueilListe();
 }
 
@@ -815,7 +880,6 @@ function creerSouvenirRapide() {
 /** Prépare la pose d'un texte avec un préréglage (titre, lieu, libre). */
 function armerTextePreset(preset) {
   annotationPreset = preset;
-  ouvrirOnglet("textes");
   armerAjoutAnnotation("texte");
 }
 
@@ -1245,6 +1309,289 @@ function majDispositionAffiche() {
 }
 
 /* =========================================================
+   10 bis. Nouveau carnet (nom d'abord, GPX ensuite)
+   ========================================================= */
+
+function ouvrirModalNouveauCarnet() {
+  document.getElementById("modal-bienvenue").hidden = true;
+  document.getElementById("nouveau-carnet-nom").value = "";
+  document.getElementById("modal-nouveau-carnet").hidden = false;
+  document.getElementById("nouveau-carnet-nom").focus();
+}
+
+function fermerModalNouveauCarnet() {
+  document.getElementById("modal-nouveau-carnet").hidden = true;
+  majPopupsAccueil(); // s'il n'y a toujours aucun carnet, la bienvenue revient
+}
+
+/** Crée le carnet saisi et l'ouvre dans l'éditeur (onglet Carnet). */
+async function creerNouveauCarnet() {
+  const nom = document.getElementById("nouveau-carnet-nom").value.trim();
+  if (!nom) {
+    toast("Donne un nom à ton carnet.", true);
+    return;
+  }
+  document.getElementById("modal-nouveau-carnet").hidden = true;
+  await sauvegarderMaintenant();
+  retirerTousFantomes();
+
+  const id = Math.max(0, ...etat.carnets.map((c) => c.id)) + 1;
+  etat.carnets.push({
+    id, uuid: genUuid(), nom: nom.slice(0, 60), visible: true,
+    logo: "", categorie: "", description: "", modifieLe: new Date().toISOString(),
+  });
+  etat.carnetActifId = id;
+  viderCarnetCourant();
+  await sauverIndexCarnets();
+  renderCarnets();
+  await basculerVersEditeur();
+  ouvrirOnglet("carnets");
+  toast(`Carnet « ${nom} » créé — ajoute un GPX pour dessiner son parcours`);
+}
+
+/* =========================================================
+   10 ter. Carte globale : style propre + titre « LogBookMap de … »
+   ========================================================= */
+
+const CLE_CARTE_GLOBALE = "carte-globale-style";
+let styleCarteGlobale = { fond: "clair", ambiance: "naturel" };
+try {
+  const lu = JSON.parse(localStorage.getItem(CLE_CARTE_GLOBALE) || "{}");
+  if (["topo", "clair", "epure", "satellite"].includes(lu.fond)) styleCarteGlobale.fond = lu.fond;
+  if (["naturel", "ancien", "doux", "medieval"].includes(lu.ambiance)) styleCarteGlobale.ambiance = lu.ambiance;
+} catch (e) { /* premiers pas : style par défaut */ }
+
+/** Applique le style de la CARTE GLOBALE (sans toucher au style des carnets). */
+function appliquerStyleCarteGlobale() {
+  if (etat.vue !== "accueil") return;
+  etat.glMap = null;
+  majClasseAncienne(false);
+  let url, options;
+  if (styleCarteGlobale.fond === "satellite") {
+    const ex = FONDS_EXEMPLES.satellite;
+    url = ex.url;
+    options = { maxZoom: ex.maxZoom || 19, crossOrigin: "anonymous", attribution: ex.attribution || "" };
+  } else {
+    const fond = FONDS[styleCarteGlobale.fond] || FONDS.clair;
+    url = fond.url;
+    options = fond.options;
+  }
+  if (etat.coucheFond) etat.coucheFond.remove();
+  etat.carte.setMaxZoom(options.maxZoom || 19);
+  etat.coucheFond = L.tileLayer(url, options).addTo(etat.carte);
+  appliquerAmbiance(styleCarteGlobale.ambiance);
+}
+
+function ouvrirModalCarteGlobale() {
+  majSegment("global-fond", "gfond", styleCarteGlobale.fond);
+  majSegment("global-ambiance", "gambiance", styleCarteGlobale.ambiance);
+  document.getElementById("modal-carte-globale").hidden = false;
+}
+
+function sauverStyleCarteGlobale() {
+  try { localStorage.setItem(CLE_CARTE_GLOBALE, JSON.stringify(styleCarteGlobale)); } catch (e) {}
+}
+
+/** Le titre affiché sur la carte globale : « LogBookMap de <pseudo> ». */
+function majTitreCarteGlobale() {
+  const el = document.getElementById("accueil-titre");
+  if (!el) return;
+  const pseudo = typeof lirePseudo === "function" ? lirePseudo() : "";
+  el.textContent = pseudo ? `LogBookMap de ${pseudo}` : "LogBookMap";
+}
+
+/* =========================================================
+   10 quater. Les GPX du carnet (liste, ajout, suppression)
+   ========================================================= */
+
+/** (Re)construit la liste des traces GPX du carnet ouvert. */
+function renderGpxListe() {
+  const liste = document.getElementById("gpx-liste");
+  const vide = document.getElementById("gpx-vide");
+  if (!liste) return;
+  liste.innerHTML = "";
+  vide.hidden = etat.gpxListe.length > 0;
+
+  etat.gpxListe.forEach((g) => {
+    const km = typeof longueurKm === "function" ? longueurKm(g.segments) : 0;
+    const ligne = document.createElement("div");
+    ligne.className = "gpx-ligne";
+    const nom = document.createElement("span");
+    nom.className = "gpx-nom";
+    nom.textContent = `🥾 ${g.nom}`;
+    const detail = document.createElement("span");
+    detail.className = "gpx-detail";
+    detail.textContent = km ? `${km.toFixed(1)} km` : "";
+    const suppr = document.createElement("button");
+    suppr.className = "icone-btn";
+    suppr.title = "Retirer cette trace du carnet";
+    suppr.textContent = "🗑";
+    suppr.addEventListener("click", () => retirerGpx(g.id));
+    ligne.appendChild(nom);
+    ligne.appendChild(detail);
+    ligne.appendChild(suppr);
+    liste.appendChild(ligne);
+  });
+}
+
+/** Retire une trace GPX du carnet (avec confirmation). */
+async function retirerGpx(id) {
+  const g = etat.gpxListe.find((x) => x.id === id);
+  if (!g) return;
+  const ok = await demanderConfirmation(
+    `Retirer « ${g.nom} » ?`,
+    "Cette trace ne sera plus dessinée sur la carte du carnet (tes souvenirs restent en place).",
+    { okLibelle: "Retirer" }
+  );
+  if (!ok) return;
+  etat.gpxListe = etat.gpxListe.filter((x) => x.id !== id);
+  fusionnerTraces();
+  if (etat.trace) {
+    afficherTrace(etat.trace);
+  } else if (etat.coucheTrace) {
+    etat.coucheTrace.remove();
+    etat.coucheTrace = null;
+    document.getElementById("trace-info").hidden = true;
+    majEcranVide();
+  }
+  renderGpxListe();
+  planifierSauvegarde();
+}
+
+/* =========================================================
+   10 quinquies. Partage du carnet ouvert
+   ========================================================= */
+
+/** (Re)construit la section Partage de l'onglet Carnet. */
+async function renderPartagesUI() {
+  const connecte = typeof nuageConnecte === "function" && nuageConnecte();
+  document.getElementById("partage-connecte").hidden = !connecte;
+  document.getElementById("partage-deconnecte").hidden = connecte;
+  const liste = document.getElementById("partage-liste");
+  liste.innerHTML = "";
+  const c = carnetActif();
+  if (!connecte || !c) return;
+
+  if (c.partage) {
+    const p = document.createElement("p");
+    p.className = "style-aide";
+    p.textContent = `Ce carnet t'a été partagé (${c.partage.droit === "edition" ? "édition" : "lecture"}) : seule la personne qui l'a créé gère sa liste de partage.`;
+    liste.appendChild(p);
+    document.querySelector(".partage-ajout").hidden = true;
+    document.getElementById("partage-ajouter").hidden = true;
+    return;
+  }
+  document.querySelector(".partage-ajout").hidden = false;
+  document.getElementById("partage-ajouter").hidden = false;
+
+  const partages = await listerPartages(c.uuid);
+  if (partages.length === 0) {
+    const p = document.createElement("p");
+    p.className = "galerie-vide";
+    p.textContent = "Ce carnet n'est partagé avec personne.";
+    liste.appendChild(p);
+    return;
+  }
+  partages.forEach((p) => {
+    const ligne = document.createElement("div");
+    ligne.className = "gpx-ligne";
+    const email = document.createElement("span");
+    email.className = "gpx-nom";
+    email.textContent = p.email;
+    const droit = document.createElement("span");
+    droit.className = "gpx-detail";
+    droit.textContent = p.droit === "edition" ? "✏️ édition" : "👁 lecture";
+    const suppr = document.createElement("button");
+    suppr.className = "icone-btn";
+    suppr.title = "Ne plus partager avec cette personne";
+    suppr.textContent = "✕";
+    suppr.addEventListener("click", async () => {
+      try {
+        await retirerPartage(c.uuid, p.email);
+        renderPartagesUI();
+        toast(`Partage retiré pour ${p.email}`);
+      } catch (e) { toast("Impossible de retirer ce partage.", true); }
+    });
+    ligne.appendChild(email);
+    ligne.appendChild(droit);
+    ligne.appendChild(suppr);
+    liste.appendChild(ligne);
+  });
+}
+
+/** Ajoute la personne saisie à la liste de partage du carnet ouvert. */
+async function ajouterPartageDepuisFormulaire() {
+  const c = carnetActif();
+  if (!c) return;
+  const email = document.getElementById("partage-email").value.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    toast("Écris une adresse e-mail valide.", true);
+    return;
+  }
+  const droit = document.getElementById("partage-droit").value;
+  try {
+    await ajouterPartage(c.uuid, email, droit);
+    document.getElementById("partage-email").value = "";
+    renderPartagesUI();
+    toast(`Carnet partagé avec ${email} — il apparaîtra sur sa carte globale`);
+  } catch (e) {
+    toast("Partage impossible : vérifie ta connexion (et que le SQL « partage » a bien été installé).", true);
+  }
+}
+
+/* =========================================================
+   10 sexies. Tailles liées au niveau de zoom
+   ========================================================= */
+
+/**
+ * À chaque zoom : les épingles de souvenirs et les éléments posés
+ * (pictos, textes, photos) rétrécissent quand on dézoome, et les
+ * éléments décoratifs disparaissent en dézoom fort. Les traits et
+ * formes dessinés suivent déjà la géographie, rien à faire pour eux.
+ */
+let timerEchelles = null;
+function majEchellesZoom() {
+  if (timerEchelles) return;
+  // Un petit minuteur (et pas requestAnimationFrame, qui ne tourne pas dans
+  // un onglet en arrière-plan) : plusieurs appels rapprochés n'en font qu'un.
+  timerEchelles = setTimeout(() => {
+    timerEchelles = null;
+    const z = etat.carte.getZoom();
+
+    // Épingles de souvenirs : pleine taille au zoom du carnet, mini 40 %.
+    const eSouvenir = Math.max(0.4, Math.min(1.2, Math.pow(2, (z - etat.zoomRefTrace) * 0.5)));
+    etat.souvenirs.forEach((s) => {
+      if (!s.marker) return;
+      const el = s.marker.getElement && s.marker.getElement();
+      if (!el) return; // fondue dans une grappe
+      const wrap = el.querySelector(".pin-wrap");
+      if (!wrap) return;
+      wrap.style.transformOrigin = wrap.dataset.ancre === "pointe" ? "50% 100%" : "50% 50%";
+      wrap.style.transform = `scale(${eSouvenir})`;
+    });
+
+    // Éléments posés : taille pleine à leur zoom de pose, cachés en dézoom fort.
+    etat.annotations.forEach((a) => {
+      if (!a.marker || estAnnotationVecteur(a)) return;
+      const el = a.marker.getElement && a.marker.getElement();
+      if (!el) return;
+      const ref = typeof a.zoomRef === "number" ? a.zoomRef : 14;
+      const echelle = Math.min(1.3, Math.pow(2, z - ref));
+      const cache = echelle < 0.3;
+      el.style.display = cache ? "none" : "";
+      if (!cache) {
+        const wrap = el.querySelector(".annot-wrap") || el.firstElementChild;
+        if (wrap) {
+          // Le translate(-50%,-50%) centre l'élément sur son point : on le
+          // garde, et on ajoute la mise à l'échelle par-dessus.
+          wrap.style.transform = `translate(-50%, -50%) scale(${echelle})`;
+        }
+      }
+    });
+  }, 30);
+}
+
+/* =========================================================
    11. Rafraîchissement différé des listes
    ========================================================= */
 
@@ -1254,8 +1601,9 @@ let timerListes = null;
 function planifierMajListes() {
   clearTimeout(timerListes);
   timerListes = setTimeout(() => {
+    majEchellesZoom(); // les nouveaux éléments prennent leur taille de zoom
     if (ongletOuvert === "souvenirs") renderSouvenirsListe();
-    if (ongletOuvert === "importer") renderImagesListe();
+    if (ongletOuvert === "outils") renderImagesListe();
     const c = carnetActif();
     if (c) {
       const dates = libellePlageDates(c);
@@ -1337,22 +1685,59 @@ function brancherUI() {
       appliquerFiltresAccueil();
     });
 
-  /* --- Accueil : nouveau carnet depuis un GPX --- */
-  document.getElementById("accueil-gpx-input")
-    .addEventListener("change", (e) => {
-      const fichier = e.target.files[0];
-      e.target.value = "";
-      nouveauCarnetDepuisGpx(fichier);
+  /* --- Accueil : nouveau carnet, recherche repliée, style de la carte --- */
+  document.getElementById("accueil-nouveau")
+    .addEventListener("click", ouvrirModalNouveauCarnet);
+  document.getElementById("nouveau-carnet-creer")
+    .addEventListener("click", creerNouveauCarnet);
+  document.getElementById("nouveau-carnet-annuler")
+    .addEventListener("click", fermerModalNouveauCarnet);
+  document.getElementById("nouveau-carnet-nom")
+    .addEventListener("keydown", (e) => { if (e.key === "Enter") creerNouveauCarnet(); });
+  document.getElementById("bienvenue-connexion")
+    .addEventListener("click", () => {
+      document.getElementById("modal-bienvenue").hidden = true;
+      ouvrirModalCompte();
     });
-  // L'écran « aucun carnet » et l'exemple mènent aussi à l'éditeur.
-  document.getElementById("gpx-input-welcome")
-    .addEventListener("change", () => {
-      if (etat.vue === "accueil") basculerVersEditeur();
+  document.getElementById("bienvenue-local")
+    .addEventListener("click", () => {
+      document.getElementById("modal-bienvenue").hidden = true;
+      ouvrirModalNouveauCarnet();
     });
+  document.getElementById("accueil-rechercher")
+    .addEventListener("click", () => {
+      const filtres = document.getElementById("accueil-filtres");
+      filtres.hidden = !filtres.hidden;
+      if (!filtres.hidden) document.getElementById("accueil-recherche").focus();
+    });
+  document.getElementById("accueil-style-btn")
+    .addEventListener("click", ouvrirModalCarteGlobale);
+  document.getElementById("carte-globale-fermer")
+    .addEventListener("click", () => {
+      document.getElementById("modal-carte-globale").hidden = true;
+    });
+  brancherSegment("global-fond", "gfond", (v) => {
+    styleCarteGlobale.fond = v;
+    majSegment("global-fond", "gfond", v);
+    sauverStyleCarteGlobale();
+    appliquerStyleCarteGlobale();
+  });
+  brancherSegment("global-ambiance", "gambiance", (v) => {
+    styleCarteGlobale.ambiance = v;
+    majSegment("global-ambiance", "gambiance", v);
+    sauverStyleCarteGlobale();
+    appliquerStyleCarteGlobale();
+  });
+
+  // L'écran « carnet vide » de l'éditeur : GPX direct ou exemple.
   document.getElementById("btn-exemple")
     .addEventListener("click", () => {
       if (etat.vue === "accueil") basculerVersEditeur();
     });
+
+  /* --- Onglet Carnet : partage --- */
+  document.getElementById("partage-ajouter")
+    .addEventListener("click", ajouterPartageDepuisFormulaire);
 
   /* --- Onglet Carnets : identité + duplication --- */
   document.getElementById("meta-logo")
@@ -1496,35 +1881,54 @@ function brancherUI() {
   document.getElementById("annuler-annot")
     .addEventListener("click", desarmerOutil);
 
-  /* --- Gestes de dessin sur la carte --- */
+  /* --- Gestes de dessin sur la carte (souris ET doigt : pointer events) --- */
   etat.carte.on("click", (e) => {
     if (etat.modeOutil === "trait") clicTrait(e.latlng);
   });
   etat.carte.on("dblclick", () => {
     if (etat.modeOutil === "trait") terminerTrait();
   });
-  etat.carte.on("mousedown", (e) => {
-    if (etat.modeOutil && etat.modeOutil !== "trait") debutGlisse(e.latlng);
+  const mapEl = document.getElementById("map");
+  mapEl.addEventListener("pointerdown", (e) => {
+    if (!etat.modeOutil || etat.modeOutil === "trait" || etat.vue !== "editeur") return;
+    e.preventDefault();
+    try { mapEl.setPointerCapture(e.pointerId); } catch (err) {}
+    debutGlisse(etat.carte.mouseEventToLatLng(e));
   });
-  etat.carte.on("mousemove", (e) => {
-    if (etat.modeOutil && etat.modeOutil !== "trait" && dessinEnCours) pendantGlisse(e.latlng);
+  mapEl.addEventListener("pointermove", (e) => {
+    if (!etat.modeOutil || etat.modeOutil === "trait" || !dessinEnCours) return;
+    e.preventDefault();
+    pendantGlisse(etat.carte.mouseEventToLatLng(e));
   });
-  etat.carte.on("mouseup", (e) => {
-    if (etat.modeOutil && etat.modeOutil !== "trait" && dessinEnCours) finGlisse(e.latlng);
+  mapEl.addEventListener("pointerup", (e) => {
+    if (!etat.modeOutil || etat.modeOutil === "trait" || !dessinEnCours) return;
+    e.preventDefault();
+    finGlisse(etat.carte.mouseEventToLatLng(e));
+  });
+  mapEl.addEventListener("pointercancel", () => {
+    if (dessinEnCours && dessinEnCours.apercu) dessinEnCours.apercu.remove();
+    dessinEnCours = null;
   });
 
-  /* --- Échap : d'abord l'outil de dessin, avant tout le reste --- */
+  /* --- Tailles liées au zoom (épingles + éléments posés) --- */
+  etat.carte.on("zoomend", majEchellesZoom);
+  etat.grappe.on && etat.grappe.on("animationend spiderfied unspiderfied", majEchellesZoom);
+
+  /* --- Échap : d'abord les fenêtres et l'outil en cours --- */
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (!document.getElementById("modal-souvenir").hidden) {
-      fermerModalSouvenir();
-      e.stopPropagation();
-      return;
-    }
-    if (!document.getElementById("modal-impression").hidden) {
-      fermerModalImpression();
-      e.stopPropagation();
-      return;
+    const fermetures = [
+      ["modal-souvenir", fermerModalSouvenir],
+      ["modal-impression", fermerModalImpression],
+      ["modal-nouveau-carnet", fermerModalNouveauCarnet],
+      ["modal-carte-globale", () => { document.getElementById("modal-carte-globale").hidden = true; }],
+    ];
+    for (const [id, fermer] of fermetures) {
+      if (!document.getElementById(id).hidden) {
+        fermer();
+        e.stopPropagation();
+        return;
+      }
     }
     if (etat.modeOutil) {
       desarmerOutil();
