@@ -138,6 +138,11 @@ async function pousserCarnet(c) {
     du: c.du || "",
     au: c.au || "",
     modifie_le: c.modifieLe || new Date().toISOString(),
+    // Zone de cadrage + format d'impression : suivent le carnet d'un appareil
+    // à l'autre (nécessite les colonnes ajoutées par supabase-setup-3-zone.sql).
+    zone: (typeof normaliserZone === "function" ? normaliserZone(c.zone) : (c.zone || null)),
+    format_zone: c.formatZone || "",
+    orientation_zone: c.orientationZone === "paysage" ? "paysage" : "portrait",
   };
   if (c.partage) {
     // Carnet partagé en édition : on met à jour la fiche du propriétaire.
@@ -216,6 +221,9 @@ async function synchroniserNuage() {
             nom: r.nom || "Carnet", logo: r.logo || "", categorie: r.categorie || "",
             description: r.description || "", du: r.du || "", au: r.au || "",
             modifieLe: r.modifie_le || "",
+            zone: (typeof normaliserZone === "function" ? normaliserZone(r.zone) : (r.zone || null)),
+            formatZone: r.format_zone || "",
+            orientationZone: r.orientation_zone === "paysage" ? "paysage" : "portrait",
             partage,
           };
           etat.carnets.push(entree);
@@ -227,12 +235,20 @@ async function synchroniserNuage() {
             nom: r.nom || local.nom, logo: r.logo || "", categorie: r.categorie || "",
             description: r.description || "", du: r.du || "", au: r.au || "",
             modifieLe: r.modifie_le || "",
+            zone: (typeof normaliserZone === "function" ? normaliserZone(r.zone) : (r.zone || null)),
+            formatZone: r.format_zone || "",
+            orientationZone: r.orientation_zone === "paysage" ? "paysage" : "portrait",
             partage,
           });
           const donnees = await telechargerCarnetNuage(local).catch(() => null);
           if (donnees && donnees.trace) {
             await dbSauverCle("carnet-" + local.id, donnees);
             if (local.id === etat.carnetActifId) restaurerCarnet(donnees);
+          }
+          // La zone/format viennent de changer : on rafraîchit l'affichage.
+          if (local.id === etat.carnetActifId) {
+            if (typeof appliquerZoneCarnet === "function" && etat.vue === "editeur") appliquerZoneCarnet(true);
+            if (typeof majBoutonsZone === "function") majBoutonsZone();
           }
           recus++;
         } else if (local) {
