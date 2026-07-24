@@ -143,10 +143,15 @@ async function pousserCarnet(c) {
     zone: (typeof normaliserZone === "function" ? normaliserZone(c.zone) : (c.zone || null)),
     format_zone: c.formatZone || "",
     orientation_zone: c.orientationZone === "paysage" ? "paysage" : "portrait",
+    // Statut synchronise : 'actif' ou 'archive'. ('supprime' = pierre tombale,
+    // ecrite seulement par supprimerCarnetNuage.)
+    statut: c.statut === "archive" ? "archive" : "actif",
   };
   if (c.partage) {
-    // Carnet partagé en édition : on met à jour la fiche du propriétaire.
-    const { error } = await sbClient.from("carnets").update(fiche)
+    // Carnet partagé en édition : on met à jour la fiche du propriétaire, MAIS
+    // pas le statut (archiver de mon côté ne doit pas archiver chez lui).
+    const { statut, ...ficheSansStatut } = fiche;
+    const { error } = await sbClient.from("carnets").update(ficheSansStatut)
       .eq("uuid", c.uuid).eq("user_id", c.partage.proprietaire);
     if (error) throw error;
   } else {
@@ -157,15 +162,20 @@ async function pousserCarnet(c) {
   }
 }
 
-/** Supprime un carnet en ligne (seulement s'il est à moi). */
+/** Supprime définitivement un carnet en ligne (seulement s'il est à moi). */
 async function supprimerCarnetNuage(carnet) {
   if (!nuageConnecte() || !carnet || !carnet.uuid) return;
   // Un carnet PARTAGÉ avec moi ne se supprime que de mon appareil.
   if (carnet.partage) return;
   try {
+    // On libère le fichier de contenu et les partages…
     await sbClient.storage.from("carnets").remove([cheminNuage(carnet)]);
     await sbClient.from("carnet_partages").delete().eq("carnet_uuid", carnet.uuid);
-    await sbClient.from("carnets").delete().eq("uuid", carnet.uuid);
+    // …mais on GARDE la ligne, marquée 'supprime' (pierre tombale) : c'est ce
+    // qui empêche les autres appareils de recréer le carnet à la synchro.
+    await sbClient.from("carnets")
+      .update({ statut: "supprime", modifie_le: new Date().toISOString() })
+      .eq("uuid", carnet.uuid).eq("user_id", sessionNuage.user.id);
   } catch (e) {
     toast("Suppression en ligne impossible pour l'instant (elle sera à refaire).", true);
   }
@@ -214,6 +224,23 @@ async function synchroniserNuage() {
         ? { proprietaire: r.user_id, droit: droitsPartages.get(r.uuid) || "lecture" }
         : null;
       try {
+        // Pierre tombale : ce carnet a ete supprime definitivement ailleurs.
+        // On l'enleve de cet appareil et on ne le recree JAMAIS (fin des
+        // carnets supprimes qui reapparaissent a la synchro).
+        if (r.statut === "supprime") {
+          if (local) {
+            try { await dbEffacerCle("carnet-" + local.id); } catch (e) {}
+            if (typeof retirerFantome === "function") retirerFantome(local.id);
+            const etaitActif = local.id === etat.carnetActifId;
+            etat.carnets = etat.carnets.filter((c) => c.id !== local.id);
+            parUuid.delete(r.uuid);
+            if (etaitActif && typeof basculerVersAutreCarnetActif === "function") {
+              await basculerVersAutreCarnetActif();
+            }
+            recus++;
+          }
+          continue;
+        }
         if (!local) {
           const id = Math.max(0, ...etat.carnets.map((c) => c.id)) + 1;
           const entree = {
@@ -224,6 +251,7 @@ async function synchroniserNuage() {
             zone: (typeof normaliserZone === "function" ? normaliserZone(r.zone) : (r.zone || null)),
             formatZone: r.format_zone || "",
             orientationZone: r.orientation_zone === "paysage" ? "paysage" : "portrait",
+            statut: r.statut === "archive" ? "archive" : "actif",
             partage,
           };
           etat.carnets.push(entree);
@@ -238,6 +266,7 @@ async function synchroniserNuage() {
             zone: (typeof normaliserZone === "function" ? normaliserZone(r.zone) : (r.zone || null)),
             formatZone: r.format_zone || "",
             orientationZone: r.orientation_zone === "paysage" ? "paysage" : "portrait",
+            statut: r.statut === "archive" ? "archive" : "actif",
             partage,
           });
           const donnees = await telechargerCarnetNuage(local).catch(() => null);
@@ -245,8 +274,12 @@ async function synchroniserNuage() {
             await dbSauverCle("carnet-" + local.id, donnees);
             if (local.id === etat.carnetActifId) restaurerCarnet(donnees);
           }
-          // La zone/format viennent de changer : on rafraîchit l'affichage.
-          if (local.id === etat.carnetActifId) {
+          // Le carnet ouvert vient d'etre archive ailleurs : on bascule ailleurs.
+          if (local.statut !== "actif" && local.id === etat.carnetActifId &&
+              typeof basculerVersAutreCarnetActif === "function") {
+            await basculerVersAutreCarnetActif();
+          } else if (local.id === etat.carnetActifId) {
+            // La zone/format viennent peut-etre de changer : on rafraichit.
             if (typeof appliquerZoneCarnet === "function" && etat.vue === "editeur") appliquerZoneCarnet(true);
             if (typeof majBoutonsZone === "function") majBoutonsZone();
           }

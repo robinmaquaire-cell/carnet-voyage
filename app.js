@@ -4025,6 +4025,9 @@ async function sauverIndexCarnets() {
       // Format d'impression par défaut du carnet (zone + export).
       formatZone: typeof c.formatZone === "string" ? c.formatZone : "",
       orientationZone: c.orientationZone === "paysage" ? "paysage" : "portrait",
+      // Statut : 'actif' (par défaut) ou 'archive'. Un carnet supprimé n'est
+      // plus dans la liste (le nuage en garde une trace 'supprime').
+      statut: c.statut === "archive" ? "archive" : "actif",
       // Carnet partagé AVEC MOI : qui en est propriétaire, et mon droit.
       partage: c.partage ? { proprietaire: c.partage.proprietaire, droit: c.partage.droit } : null,
     })),
@@ -4081,6 +4084,7 @@ async function demarrerCarnets() {
       zone: normaliserZone(c.zone),
       formatZone: typeof c.formatZone === "string" ? c.formatZone : "",
       orientationZone: c.orientationZone === "paysage" ? "paysage" : "portrait",
+      statut: c.statut === "archive" ? "archive" : "actif",
       partage: (c.partage && typeof c.partage.proprietaire === "string")
         ? { proprietaire: c.partage.proprietaire, droit: c.partage.droit === "edition" ? "edition" : "lecture" }
         : null,
@@ -4205,37 +4209,89 @@ async function renommerCarnet(carnet) {
   if (carnet.id === etat.carnetActifId && etat.trace) majBandeauInfos(etat.trace);
 }
 
-/** Supprime un carnet (avec confirmation). */
+/** Bascule sur un autre carnet ACTIF (ou l'accueil vide) après retrait de l'ouvert. */
+async function basculerVersAutreCarnetActif() {
+  const autre = etat.carnets.find(
+    (c) => c.id !== etat.carnetActifId && (c.statut || "actif") === "actif"
+  );
+  if (!autre) {
+    etat.carnetActifId = 0;
+    viderCarnetCourant();
+    if (typeof majPopupsAccueil === "function") majPopupsAccueil();
+    return;
+  }
+  etat.carnetActifId = autre.id;
+  let donnees = null;
+  try { donnees = await dbChargerCle("carnet-" + autre.id); } catch (e) {}
+  if (donnees) restaurerCarnet(donnees);
+  else viderCarnetCourant();
+}
+
+/**
+ * Archive un carnet (avec confirmation) : il est masqué des listes et de la
+ * carte, sans rien perdre. C'est le remplaçant de la suppression directe —
+ * la vraie suppression ne se fait plus qu'à partir des Archives.
+ */
+async function archiverCarnet(carnet) {
+  const ok = await demanderConfirmation(
+    `Archiver « ${carnet.nom} » ?`,
+    "Il sera masqué de la carte et des listes, mais rien n'est perdu. Tu " +
+    "pourras le restaurer — ou le supprimer définitivement — depuis les Archives " +
+    "(onglet Carnet).",
+    { okLibelle: "Archiver" }
+  );
+  if (!ok) return;
+
+  carnet.statut = "archive";
+  carnet.modifieLe = new Date().toISOString();
+  retirerFantome(carnet.id);
+  if (carnet.id === etat.carnetActifId) await basculerVersAutreCarnetActif();
+
+  await sauverIndexCarnets();
+  renderCarnets();
+  if (etat.vue === "accueil" && typeof appliquerFiltresAccueil === "function") appliquerFiltresAccueil();
+  if (typeof planifierPousseeNuage === "function") planifierPousseeNuage();
+  toast(`Carnet « ${carnet.nom} » archivé`);
+}
+
+/** Sort un carnet des archives (le rend de nouveau actif). */
+async function restaurerCarnetArchive(carnet) {
+  carnet.statut = "actif";
+  carnet.modifieLe = new Date().toISOString();
+  await sauverIndexCarnets();
+  renderCarnets();
+  if (etat.vue === "accueil") {
+    if (typeof retirerTousFantomes === "function") retirerTousFantomes();
+    if (typeof afficherTousLesCarnets === "function") await afficherTousLesCarnets();
+    if (typeof appliquerFiltresAccueil === "function") appliquerFiltresAccueil();
+  }
+  if (typeof planifierPousseeNuage === "function") planifierPousseeNuage();
+  toast(`Carnet « ${carnet.nom} » restauré`);
+}
+
+/**
+ * Supprime DÉFINITIVEMENT un carnet (uniquement depuis les Archives).
+ * En ligne, on ne supprime pas la ligne : on la marque 'supprime' (pierre
+ * tombale) pour que les autres appareils l'enlèvent aussi et ne la recréent
+ * jamais. C'est ce qui corrige la « réapparition » des carnets supprimés.
+ */
 async function supprimerCarnet(carnet) {
   const ok = await demanderConfirmation(
-    `Supprimer « ${carnet.nom} » ?`,
-    "Sa trace, ses souvenirs, photos et audios seront définitivement effacés. " +
-    "Pense à l'ouvrir et à « Sauvegarder (.json) » d'abord si tu veux le conserver.",
-    { okLibelle: "Supprimer" }
+    `Supprimer définitivement « ${carnet.nom} » ?`,
+    "Sa trace, ses souvenirs, photos et audios seront effacés sur tous tes " +
+    "appareils, sans retour possible. Pense à « Sauvegarder (.json) » d'abord " +
+    "si tu veux en garder une copie.",
+    { okLibelle: "Supprimer définitivement" }
   );
   if (!ok) return;
 
   retirerFantome(carnet.id);
   try { await dbEffacerCle("carnet-" + carnet.id); } catch (e) {}
-  // S'il est aussi sauvegardé en ligne, on l'y supprime également.
+  // En ligne : pierre tombale (marque 'supprime'), pas une vraie suppression.
   if (typeof supprimerCarnetNuage === "function") supprimerCarnetNuage(carnet);
   etat.carnets = etat.carnets.filter((c) => c.id !== carnet.id);
 
-  // Si on vient de supprimer le carnet ouvert, on bascule sur un autre.
-  if (carnet.id === etat.carnetActifId) {
-    if (etat.carnets.length === 0) {
-      // Plus aucun carnet : l'accueil proposera d'en créer un.
-      etat.carnetActifId = 0;
-      viderCarnetCourant();
-      if (typeof majPopupsAccueil === "function") majPopupsAccueil();
-    } else {
-      etat.carnetActifId = etat.carnets[0].id;
-      let donnees = null;
-      try { donnees = await dbChargerCle("carnet-" + etat.carnetActifId); } catch (e) {}
-      if (donnees) restaurerCarnet(donnees);
-      else viderCarnetCourant();
-    }
-  }
+  if (carnet.id === etat.carnetActifId) await basculerVersAutreCarnetActif();
   await sauverIndexCarnets();
   renderCarnets();
   toast(`Carnet « ${carnet.nom} » supprimé`);
@@ -4255,12 +4311,13 @@ function fermerPanneauCarnets() {
   document.getElementById("panneau-carnets").hidden = true;
 }
 
-/** (Re)construit la liste des carnets dans l'onglet Carnets. */
+/** (Re)construit la liste des carnets (actifs) + les Archives dans l'onglet Carnet. */
 function renderCarnets() {
   const liste = document.getElementById("carnets-liste");
   liste.innerHTML = "";
 
-  etat.carnets.forEach((c) => {
+  const actifs = etat.carnets.filter((c) => (c.statut || "actif") === "actif");
+  actifs.forEach((c) => {
     const actif = c.id === etat.carnetActifId;
     const ligne = document.createElement("div");
     ligne.className = "carnet-ligne" + (actif ? " carnet-ligne-actif" : "");
@@ -4279,16 +4336,50 @@ function renderCarnets() {
       ouvrir.addEventListener("click", () => ouvrirCarnet(c.id));
       actions.appendChild(ouvrir);
     }
-    const suppr = document.createElement("button");
-    suppr.className = "icone-btn";
-    suppr.title = "Supprimer ce carnet";
-    suppr.textContent = "🗑";
-    suppr.addEventListener("click", () => supprimerCarnet(c));
-    actions.appendChild(suppr);
+    const arch = document.createElement("button");
+    arch.className = "icone-btn";
+    arch.title = "Archiver ce carnet";
+    arch.textContent = "📥";
+    arch.addEventListener("click", () => archiverCarnet(c));
+    actions.appendChild(arch);
 
     ligne.appendChild(actions);
     liste.appendChild(ligne);
   });
+
+  // ---- Archives : restaurer ou supprimer définitivement ----
+  const arch = document.getElementById("carnets-archives-liste");
+  if (arch) {
+    arch.innerHTML = "";
+    const archives = etat.carnets.filter((c) => c.statut === "archive");
+    const vide = document.getElementById("archives-vide");
+    if (vide) vide.hidden = archives.length > 0;
+    archives.forEach((c) => {
+      const ligne = document.createElement("div");
+      ligne.className = "carnet-ligne";
+      const nom = document.createElement("span");
+      nom.className = "carnet-nom";
+      nom.textContent = (c.logo ? c.logo + " " : "") + c.nom;
+      ligne.appendChild(nom);
+
+      const actions = document.createElement("span");
+      actions.className = "carnet-actions";
+      const restaurer = document.createElement("button");
+      restaurer.className = "btn btn-ghost btn-petit";
+      restaurer.textContent = "Restaurer";
+      restaurer.addEventListener("click", () => restaurerCarnetArchive(c));
+      actions.appendChild(restaurer);
+      const suppr = document.createElement("button");
+      suppr.className = "icone-btn";
+      suppr.title = "Supprimer définitivement";
+      suppr.textContent = "🗑";
+      suppr.addEventListener("click", () => supprimerCarnet(c));
+      actions.appendChild(suppr);
+
+      ligne.appendChild(actions);
+      arch.appendChild(ligne);
+    });
+  }
 
   // La nouvelle interface (accueil, fiche d'identité, barre du haut) se met
   // à jour en même temps.

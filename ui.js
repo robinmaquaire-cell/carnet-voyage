@@ -159,6 +159,7 @@ function definirVisibiliteCarnetActif(visible) {
 async function afficherTousLesCarnets() {
   for (const c of etat.carnets) {
     if (c.id === etat.carnetActifId) continue;
+    if ((c.statut || "actif") !== "actif") continue; // les archivés ne s'affichent pas
     try { await afficherFantome(c.id); } catch (e) { /* carnet illisible */ }
   }
 }
@@ -300,6 +301,7 @@ const filtreAccueil = { texte: "", categorie: "", du: "", au: "" };
 /** Un carnet passe-t-il les filtres de l'accueil ? */
 function carnetVisibleAccueil(c) {
   if (!c) return true;
+  if ((c.statut || "actif") !== "actif") return false; // archivé : masqué de l'accueil
   const t = filtreAccueil.texte.trim().toLowerCase();
   if (t) {
     const texte = [c.nom, c.description, c.categorie, c.logo]
@@ -1496,6 +1498,7 @@ async function creerCarnetVierge(nom) {
   etat.carnets.push({
     id, uuid: genUuid(), nom: nom.slice(0, 60), visible: true,
     logo: "", categorie: "", description: "", modifieLe: new Date().toISOString(),
+    statut: "actif",
     // Format d'impression du carnet (défaut de la zone + de l'export).
     formatZone: nouveauCarnetFormat.format,
     orientationZone: nouveauCarnetFormat.orientation,
