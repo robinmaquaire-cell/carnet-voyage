@@ -47,6 +47,8 @@ async function basculerVersAccueil(premierChargement) {
   etat.vue = "accueil";
   document.body.classList.add("vue-accueil");
   document.body.classList.remove("vue-editeur");
+  // Le masque/bornage de zone est propre à l'éditeur : on le retire.
+  if (typeof appliquerZoneCarnet === "function") appliquerZoneCarnet(false);
 
   definirMode("visualisation");     // lecture seule
   appliquerStyleCarteGlobale();     // le fond de la carte globale (pas celui du carnet)
@@ -74,9 +76,15 @@ async function basculerVersEditeur(id) {
   document.body.classList.add("vue-editeur");
   document.body.classList.remove("vue-accueil");
 
-  // On quitte le style de la carte globale : le carnet reprend le sien.
+  // On quitte le style de la carte globale : le carnet reprend le sien
+  // (fond, ambiance, cartouche de titre et décor propres au carnet).
   appliquerFond(etat.style.fond);
   appliquerAmbiance(etat.style.ambiance);
+  if (typeof appliquerTitre === "function") appliquerTitre();
+  if (typeof appliquerDecor === "function") appliquerDecor();
+  // Le titre de la carte globale ne doit pas rester affiché dans l'éditeur.
+  const bandeauGlobal = document.getElementById("accueil-titre");
+  if (bandeauGlobal) bandeauGlobal.hidden = true;
 
   // Un carnet partagé « en lecture » se consulte sans se modifier.
   const c = carnetActif();
@@ -88,7 +96,15 @@ async function basculerVersEditeur(id) {
   definirVisibiliteCarnetActif(true);
   majInterfaceCarnets();
   majEcranVide();
-  if (etat.trace) recadrerSurParcours();
+  const zone = c && typeof normaliserZone === "function" && normaliserZone(c.zone);
+  if (zone) {
+    // Une zone définie prime : la carte se cadre dessus (et se borne).
+    appliquerZoneCarnet(true);
+  } else {
+    if (etat.trace) recadrerSurParcours();
+    else if (c && c.point) etat.carte.setView([c.point.lat, c.point.lng], 13);
+    if (typeof appliquerZoneCarnet === "function") appliquerZoneCarnet(false);
+  }
   setTimeout(() => etat.carte.invalidateSize(), 60);
 }
 
@@ -119,11 +135,18 @@ function definirVisibiliteCarnetActif(visible) {
   // Sur l'accueil : le nom du carnet ouvert, comme pour les autres carnets.
   if (etiquetteCarnetActif) { etiquetteCarnetActif.remove(); etiquetteCarnetActif = null; }
   const fiche = carnetActif();
-  if (visible && accueil && fiche && etat.trace) {
-    const points = [];
-    etat.trace.segments.forEach((seg) => seg.forEach((p) => points.push(p)));
-    if (points.length) {
-      etiquetteCarnetActif = L.marker(L.latLngBounds(points).getCenter(), {
+  if (visible && accueil && fiche) {
+    let centre = null;
+    if (etat.trace) {
+      const points = [];
+      etat.trace.segments.forEach((seg) => seg.forEach((p) => points.push(p)));
+      if (points.length) centre = L.latLngBounds(points).getCenter();
+    } else if (fiche.point) {
+      // Carnet situé d'un point (sans GPX) : son étiquette se pose là.
+      centre = [fiche.point.lat, fiche.point.lng];
+    }
+    if (centre) {
+      etiquetteCarnetActif = L.marker(centre, {
         icon: creerEtiquetteCarnet(fiche, etat.style),
       })
         .on("click", () => zoomerSurCarnet(fiche.id))
@@ -152,6 +175,11 @@ function ajusterVueMonde() {
     const c = etat.carnets.find((x) => x.id === id);
     if (!c || carnetVisibleAccueil(c)) ajouterTrace(f.trace);
   });
+  // Les carnets situés d'un simple point (sans GPX) comptent aussi.
+  etat.carnets.forEach((c) => {
+    if (!c.point || !carnetVisibleAccueil(c)) return;
+    points.push([c.point.lat, c.point.lng]);
+  });
   if (points.length > 0) {
     etat.carte.fitBounds(points, { padding: [60, 60], maxZoom: 12 });
   } else {
@@ -162,13 +190,20 @@ function ajusterVueMonde() {
 /** L'écran « carnet vide » (éditeur seulement ; l'accueil a ses pop-ups). */
 function majEcranVide() {
   const enEditeur = etat.vue === "editeur";
-  const vide = enEditeur && !etat.trace;
+  const c = typeof carnetActif === "function" ? carnetActif() : null;
+  // Carnet déjà situé : par une zone de cadrage, ou par un point (ancien format).
+  const situe = !!(c && ((typeof normaliserZone === "function" && normaliserZone(c.zone)) || c.point));
+  // Un carnet situé (ou pendant qu'on le situe : point OU tracé de zone) est déjà
+  // utilisable : on n'affiche pas l'écran « charge un GPX » qui bloque la carte.
+  const enTrainDeSituer = placementPointActif ||
+    (typeof dessinZoneActif !== "undefined" && dessinZoneActif);
+  const vide = enEditeur && !etat.trace && !situe && !enTrainDeSituer;
   document.getElementById("welcome").hidden = !vide;
   if (!vide) return;
   document.getElementById("welcome-titre").textContent = "Ce carnet est encore vide";
   document.getElementById("welcome-texte").innerHTML =
-    "Charge un fichier <strong>.gpx</strong> pour dessiner son parcours " +
-    "(bouton ci-dessous, ou onglet 📓 Carnet), puis pose tes souvenirs dessus.";
+    "Charge un fichier <strong>.gpx</strong> pour dessiner son parcours, " +
+    "ou délimite une zone sur la carte — puis pose tes souvenirs dessus.";
 }
 
 /**
@@ -206,7 +241,6 @@ const ONGLETS = {
   outils: "panneau-outils",
   fond: "panneau-fond-carte",
   export: "panneau-export",
-  element: "panneau-element",
 };
 
 let ongletOuvert = null;
@@ -234,7 +268,6 @@ function ouvrirOnglet(nom) {
   else if (nom === "souvenirs") { renderSouvenirsListe(); }
   else if (nom === "outils") { renderImagesListe(); }
   else if (nom === "fond") { synchroniserControlesStyle(); }
-  else if (nom === "element") { majEditeurAnnotation(); }
 }
 
 /** Ferme le tiroir (aucune section visible). */
@@ -254,11 +287,9 @@ function majRailActif() {
   });
 }
 
-/** Ouvre le panneau « Élément sélectionné » (appelé depuis app.js). */
-function ouvrirPanneauElement() {
-  if (etat.vue !== "editeur") return;
-  ouvrirOnglet("element");
-}
+/* La sélection d'un élément n'ouvre plus de panneau : la barre flottante
+   apparaît au-dessus de l'élément (voir selection.js), et l'onglet en cours
+   du tiroir — Outils par exemple — reste ouvert. */
 
 /* =========================================================
    3. Accueil : cartes des carnets + filtres
@@ -405,7 +436,15 @@ function zoomerSurCarnet(id) {
   let trace = null;
   if (id === etat.carnetActifId) trace = etat.trace;
   else if (etat.fantomes.has(id)) trace = etat.fantomes.get(id).trace;
-  if (!trace) { toast("Ce carnet est encore vide (pas de trace)."); return; }
+  if (!trace) {
+    // Pas de trace : on cadre sur la zone, sinon sur le point (ancien format).
+    const c = etat.carnets.find((x) => x.id === id);
+    const z = c && typeof normaliserZone === "function" && normaliserZone(c.zone);
+    if (z) { etat.carte.fitBounds(bornesZone(z), { padding: [40, 40] }); return; }
+    if (c && c.point) { etat.carte.setView([c.point.lat, c.point.lng], 12); return; }
+    toast("Ce carnet est encore vide (pas de lieu).");
+    return;
+  }
   const points = [];
   trace.segments.forEach((seg) => seg.forEach((p) => points.push(p)));
   if (points.length) etat.carte.fitBounds(points, { padding: [50, 50] });
@@ -462,6 +501,7 @@ function majInterfaceCarnets() {
     document.getElementById("meta-dates").textContent =
       "📅 Dates : " + (dates || "aucune (elles suivent les dates de tes souvenirs)");
   }
+  majBoutonsZone();
   majCategories();
   majTitreCarteGlobale();
   if (etat.vue === "accueil") renderAccueilListe();
@@ -734,7 +774,7 @@ function renderSouvenirsListe() {
 function brancherDepotSurCarte() {
   const mapEl = document.getElementById("map");
   mapEl.addEventListener("dragover", (e) => {
-    if (etat.vue !== "editeur" || !etat.trace) return;
+    if (etat.vue !== "editeur") return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
   });
@@ -900,31 +940,110 @@ async function importerPhotoSurCarte(fichier) {
   }
 }
 
-/** (Re)construit la liste des photos posées sur la carte. */
-function renderImagesListe() {
-  const liste = document.getElementById("importer-liste");
-  const vide = document.getElementById("importer-vide");
+// Filtre courant de la liste des éléments ajoutés (onglet Outils).
+let filtreElements = "tous"; // "tous" | "texte" | "picto" | "image" | "dessin"
+
+/** Vrai si l'annotation entre dans la catégorie de filtre demandée. */
+function elementDansFiltre(a, filtre) {
+  if (filtre === "tous") return true;
+  if (filtre === "dessin") return a.type === "trait" || a.type === "forme" || a.type === "dessin";
+  return a.type === filtre;
+}
+
+/** Icône + libellé courts d'un élément posé, pour la liste. */
+function descriptionElement(a) {
+  if (a.type === "texte") {
+    const t = (a.texte || "").replace(/\s+/g, " ").trim();
+    return { icone: "🔤", label: t ? (t.length > 28 ? t.slice(0, 28) + "…" : t) : "Texte" };
+  }
+  if (a.type === "picto") {
+    const perso = obtenirPictoPerso(a.picto);
+    return { icone: perso ? "🖼️" : (glyphDePicto(a.picto) || "📍"), label: "Pictogramme" };
+  }
+  if (a.type === "image") return { icone: "🖼️", label: a.legende || "Photo" };
+  if (a.type === "trait") return { icone: "📏", label: "Trait" };
+  if (a.type === "dessin") return { icone: "✍️", label: "Dessin" };
+  if (a.type === "forme") {
+    const noms = { rect: "Rectangle", cercle: "Cercle", fleche: "Flèche" };
+    const icones = { rect: "▭", cercle: "◯", fleche: "➤" };
+    return { icone: icones[a.forme] || "▭", label: noms[a.forme] || "Forme" };
+  }
+  return { icone: "•", label: "Élément" };
+}
+
+/** (Re)construit la liste des éléments ajoutés sur la carte (avec filtre). */
+function renderElementsListe() {
+  const liste = document.getElementById("elements-liste");
+  const vide = document.getElementById("elements-vide");
   if (!liste) return;
   liste.innerHTML = "";
-  const images = etat.annotations.filter((a) => a.type === "image");
-  vide.hidden = images.length > 0;
+  const elements = etat.annotations.filter((a) => elementDansFiltre(a, filtreElements));
+  if (vide) {
+    vide.hidden = elements.length > 0;
+    vide.textContent = etat.annotations.length === 0
+      ? "Aucun élément ajouté pour l'instant."
+      : "Aucun élément de ce type.";
+  }
 
-  images.forEach((a) => {
-    const item = document.createElement("button");
-    item.className = "importer-item";
-    const img = document.createElement("img");
-    img.src = a.src;
-    const legende = document.createElement("span");
-    legende.className = "importer-item-legende";
-    legende.textContent = a.legende || "(sans légende)";
-    item.appendChild(img);
-    item.appendChild(legende);
-    item.addEventListener("click", () => {
-      etat.carte.panTo([a.lat, a.lng]);
-      selectionnerAnnotation(a);
+  elements.forEach((a) => {
+    const d = descriptionElement(a);
+    const item = document.createElement("div");
+    item.className = "element-item" + (etat.annotationActive === a ? " actif" : "");
+    item.setAttribute("role", "button");
+    item.tabIndex = 0;
+
+    const icone = document.createElement("span");
+    icone.className = "element-item-icone";
+    if (a.type === "image" && a.src) {
+      const img = document.createElement("img");
+      img.src = a.src;
+      icone.appendChild(img);
+    } else if (a.type === "picto") {
+      const perso = obtenirPictoPerso(a.picto);
+      if (perso) { const im = document.createElement("img"); im.src = perso.src; icone.appendChild(im); }
+      else icone.textContent = d.icone;
+    } else {
+      icone.textContent = d.icone;
+      if (estAnnotationVecteur(a)) icone.style.color = a.couleur || "#b4452f";
+    }
+
+    const label = document.createElement("span");
+    label.className = "element-item-label";
+    label.textContent = d.label;
+
+    const suppr = document.createElement("button");
+    suppr.className = "icone-btn element-item-suppr";
+    suppr.title = "Supprimer cet élément";
+    suppr.textContent = "🗑";
+    suppr.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const etaitActif = etat.annotationActive === a;
+      if (!etaitActif) selectionnerAnnotation(a);
+      supprimerAnnotationActive();
+      renderElementsListe();
     });
+
+    const aller = () => {
+      const pt = a.lat != null ? [a.lat, a.lng]
+        : (Array.isArray(a.points) && a.points[0]) ? a.points[0] : null;
+      if (pt) etat.carte.panTo(pt);
+      selectionnerAnnotation(a);
+      renderElementsListe();
+      if (a.type === "texte" && typeof demarrerEditionTexte === "function") demarrerEditionTexte(a);
+    };
+    item.addEventListener("click", aller);
+    item.addEventListener("keydown", (e) => { if (e.key === "Enter") aller(); });
+
+    item.appendChild(icone);
+    item.appendChild(label);
+    item.appendChild(suppr);
     liste.appendChild(item);
   });
+}
+
+/** Ancien nom conservé : la liste des photos fait désormais partie des éléments. */
+function renderImagesListe() {
+  renderElementsListe();
 }
 
 /* =========================================================
@@ -974,6 +1093,9 @@ function desarmerOutil() {
   etat.carte.dragging.enable();
   etat.carte.doubleClickZoom.enable();
   majBoutonsOutils();
+  // Si un élément vient d'être dessiné (donc sélectionné), son cadre
+  // de sélection peut maintenant apparaître.
+  if (typeof majSelectionUI === "function") majSelectionUI();
 }
 
 /** Surligne le bouton de l'outil actif. */
@@ -1083,6 +1205,9 @@ function creerAnnotationVecteur(champs) {
     id: prochainIdSouvenir++,
     couleur: reglagesOutil.couleur,
     epaisseur: reglagesOutil.epaisseur,
+    // Zoom de référence : l'épaisseur du trait est pleine à ce zoom et
+    // rétrécit quand on dézoome (comme les textes et pictogrammes).
+    zoomRef: etat.carte.getZoom(),
     marker: null,
     ...champs,
   };
@@ -1093,6 +1218,17 @@ function creerAnnotationVecteur(champs) {
 }
 
 /* ---------- Rendu des traits, formes et dessins ---------- */
+
+/** Échelle d'un tracé selon le zoom courant (par rapport à son zoom de pose). */
+function echelleVecteur(a) {
+  const ref = typeof a.zoomRef === "number" ? a.zoomRef : (etat.zoomRefTrace || 14);
+  return Math.max(0.15, Math.min(3, Math.pow(2, etat.carte.getZoom() - ref)));
+}
+
+/** Épaisseur du trait à afficher au zoom courant (jamais nulle). */
+function poidsVecteur(a) {
+  return Math.max(0.5, (a.epaisseur || 4) * echelleVecteur(a));
+}
 
 /** Les points d'une flèche : la ligne + les deux branches de la pointe. */
 function pointsFleche(a) {
@@ -1126,7 +1262,7 @@ function pointsFleche(a) {
 function coucheAnnotationVecteur(a, interactif) {
   const style = {
     color: a.couleur || "#b4452f",
-    weight: a.epaisseur || 4,
+    weight: poidsVecteur(a),
     opacity: 0.9,
     interactive: interactif !== false,
   };
@@ -1163,18 +1299,20 @@ function attacherAnnotationVecteur(a) {
   });
   calque.addTo(etat.carte);
   a.marker = calque;
+  // Appuyer sur la forme la sélectionne et la déplace (selection.js).
+  if (typeof brancherDeplacementVecteur === "function") brancherDeplacementVecteur(a);
   return calque;
 }
 
-/** Met à jour le style d'un trait / forme / dessin (sélection comprise). */
+/** Met à jour le style d'un trait / forme / dessin.
+    (La sélection est montrée par le cadre à poignées, pas par le style.) */
 function majStyleAnnotationVecteur(a) {
   if (!a || !a.marker || !a.marker.setStyle) return;
-  const actif = etat.annotationActive === a;
   a.marker.setStyle({
     color: a.couleur || "#b4452f",
-    weight: (a.epaisseur || 4) + (actif ? 1 : 0),
-    opacity: actif ? 1 : 0.9,
-    dashArray: actif ? "6 6" : null,
+    weight: poidsVecteur(a),
+    opacity: 0.9,
+    dashArray: null,
     fill: a.type === "forme" && !!a.remplir,
     fillColor: a.couleur || "#b4452f",
     fillOpacity: a.type === "forme" && a.remplir ? 0.25 : 0,
@@ -1218,8 +1356,8 @@ function fermerModalImpression() {
 async function imprimerCarnet(id) {
   fermerModalImpression();
   await basculerVersEditeur(id);
-  if (!etat.trace) {
-    toast("Ce carnet est encore vide : charge d'abord un GPX.", true);
+  if (typeof carnetExportable === "function" && !carnetExportable()) {
+    toast("Ce carnet est vide : ajoute une trace, une zone ou des souvenirs.", true);
     return;
   }
   ouvrirModalAffiche();
@@ -1312,11 +1450,27 @@ function majDispositionAffiche() {
    10 bis. Nouveau carnet (nom d'abord, GPX ensuite)
    ========================================================= */
 
+// Format d'impression choisi à la création (sert de défaut à la zone, à
+// l'auto-zone d'un GPX et à l'export). Modifiable ensuite dans l'éditeur.
+const nouveauCarnetFormat = { format: "A4", orientation: "portrait" };
+
 function ouvrirModalNouveauCarnet() {
   document.getElementById("modal-bienvenue").hidden = true;
   document.getElementById("nouveau-carnet-nom").value = "";
+  nouveauCarnetFormat.format = "A4";
+  nouveauCarnetFormat.orientation = "portrait";
+  majSegment("nouveau-carnet-format", "nformat", nouveauCarnetFormat.format);
+  majSegment("nouveau-carnet-orientation", "norientation", nouveauCarnetFormat.orientation);
+  majOrientationNouveauCarnet();
   document.getElementById("modal-nouveau-carnet").hidden = false;
   document.getElementById("nouveau-carnet-nom").focus();
+}
+
+/** Désactive l'orientation pour les formats sans orientation (carré). */
+function majOrientationNouveauCarnet() {
+  const fixe = !!(FORMATS_ZONE[nouveauCarnetFormat.format] || {}).fixe;
+  document.querySelectorAll("#nouveau-carnet-orientation .segment-btn")
+    .forEach((b) => { b.disabled = fixe; });
 }
 
 function fermerModalNouveauCarnet() {
@@ -1324,12 +1478,15 @@ function fermerModalNouveauCarnet() {
   majPopupsAccueil(); // s'il n'y a toujours aucun carnet, la bienvenue revient
 }
 
-/** Crée le carnet saisi et l'ouvre dans l'éditeur (onglet Carnet). */
-async function creerNouveauCarnet() {
-  const nom = document.getElementById("nouveau-carnet-nom").value.trim();
+/**
+ * Crée un carnet vierge (sans GPX) et l'ouvre dans l'éditeur.
+ * Renvoie son identifiant, ou null si le nom manque.
+ */
+async function creerCarnetVierge(nom) {
+  nom = (nom || "").trim();
   if (!nom) {
     toast("Donne un nom à ton carnet.", true);
-    return;
+    return null;
   }
   document.getElementById("modal-nouveau-carnet").hidden = true;
   await sauvegarderMaintenant();
@@ -1339,14 +1496,417 @@ async function creerNouveauCarnet() {
   etat.carnets.push({
     id, uuid: genUuid(), nom: nom.slice(0, 60), visible: true,
     logo: "", categorie: "", description: "", modifieLe: new Date().toISOString(),
+    // Format d'impression du carnet (défaut de la zone + de l'export).
+    formatZone: nouveauCarnetFormat.format,
+    orientationZone: nouveauCarnetFormat.orientation,
   });
   etat.carnetActifId = id;
   viderCarnetCourant();
   await sauverIndexCarnets();
   renderCarnets();
   await basculerVersEditeur();
+  return id;
+}
+
+/** Bouton « Créer un carnet vide » : sans lieu ni trace. */
+async function creerNouveauCarnet() {
+  const nom = document.getElementById("nouveau-carnet-nom").value.trim();
+  const id = await creerCarnetVierge(nom);
+  if (!id) return;
   ouvrirOnglet("carnets");
-  toast(`Carnet « ${nom} » créé — ajoute un GPX pour dessiner son parcours`);
+  toast(`Carnet « ${nom} » créé — ajoute un GPX, un point ou des souvenirs`);
+}
+
+/** Bouton « Situer d'un point » : crée le carnet puis attend un clic sur la carte. */
+async function creerNouveauCarnetPoint() {
+  const nom = document.getElementById("nouveau-carnet-nom").value.trim();
+  const id = await creerCarnetVierge(nom);
+  if (!id) return;
+  armerPlacementPointCarnet();
+}
+
+/** Bouton « Importer un GPX » du nouveau carnet : crée le carnet puis charge le GPX. */
+async function creerNouveauCarnetDepuisGpxChoisi(fichier) {
+  if (!fichier) return;
+  if (!/\.gpx$/i.test(fichier.name)) {
+    toast("Merci de choisir un fichier .gpx", true);
+    return;
+  }
+  const nomSaisi = document.getElementById("nouveau-carnet-nom").value.trim();
+  const nom = nomSaisi || fichier.name.replace(/\.gpx$/i, "").slice(0, 60) || "Nouveau carnet";
+  const id = await creerCarnetVierge(nom);
+  if (!id) return;
+  chargerFichierGpx(fichier);
+  ouvrirOnglet("carnets");
+}
+
+/* ---------- Situer un carnet d'un point sur la carte ---------- */
+
+let placementPointActif = false;
+
+/** Passe en mode « clique sur la carte pour situer le carnet ». */
+function armerPlacementPointCarnet() {
+  placementPointActif = true;
+  document.getElementById("map").classList.add("mode-ajout");
+  const b = document.getElementById("banniere-annot");
+  document.getElementById("banniere-annot-texte").textContent =
+    "📍 Clique sur la carte pour situer ton carnet.";
+  document.getElementById("terminer-outil").hidden = true;
+  b.hidden = false;
+  majEcranVide(); // masque l'écran « carnet vide » pendant le placement
+}
+
+/** Abandonne la pose du point (bouton Annuler, Échap). Renvoie true si elle était en cours. */
+function annulerPlacementPointCarnet() {
+  if (!placementPointActif) return false;
+  placementPointActif = false;
+  document.getElementById("banniere-annot").hidden = true;
+  if (!etat.modeAjout) document.getElementById("map").classList.remove("mode-ajout");
+  majEcranVide(); // l'écran « carnet vide » peut revenir
+  return true;
+}
+
+/** Enregistre le point choisi pour le carnet ouvert et recadre dessus. */
+function poserPointCarnet(latlng) {
+  placementPointActif = false;
+  document.getElementById("banniere-annot").hidden = true;
+  if (!etat.modeAjout) document.getElementById("map").classList.remove("mode-ajout");
+  const c = carnetActif();
+  if (!c) return;
+  c.point = { lat: latlng.lat, lng: latlng.lng };
+  c.modifieLe = new Date().toISOString();
+  etat.carte.setView([latlng.lat, latlng.lng], 13);
+  majEcranVide();
+  sauverIndexCarnets();
+  if (typeof planifierPousseeNuage === "function") planifierPousseeNuage();
+  toast("Carnet situé ! Ajoute des souvenirs, des photos et des éléments.");
+  ouvrirOnglet("souvenirs");
+}
+
+/* ---------- Délimiter la zone de cadrage d'un carnet (formats + poignées) ---------- */
+
+// Chaque format donne une PROPORTION largeur/hauteur en portrait (`base`).
+// Les formats A partagent la proportion √2 (1/√2 ≈ 0,707 en portrait).
+const FORMATS_ZONE = {
+  A5:    { base: Math.SQRT1_2, papier: "A5", label: "A5" },
+  A4:    { base: Math.SQRT1_2, papier: "A4", label: "A4" },
+  A3:    { base: Math.SQRT1_2, papier: "A3", label: "A3" },
+  A2:    { base: Math.SQRT1_2, papier: "A2", label: "A2" },
+  carre: { base: 1,           papier: null, label: "Carré", fixe: true },
+  photo: { base: 2 / 3,       papier: null, label: "Photo 3:2" },
+  pano:  { base: 9 / 16,      papier: null, label: "Pano 16:9" },
+};
+
+/** Proportion largeur/hauteur (en pixels) d'un format selon l'orientation. */
+function ratioZone(format, orientation) {
+  const f = FORMATS_ZONE[format] || FORMATS_ZONE.A4;
+  if (f.fixe) return f.base;
+  return orientation === "paysage" ? 1 / f.base : f.base;
+}
+
+/** Format/orientation dont la proportion est la plus proche d'un ratio donné. */
+function formatProcheRatio(r) {
+  const cands = [];
+  Object.keys(FORMATS_ZONE).forEach((f) => {
+    const info = FORMATS_ZONE[f];
+    cands.push([f, "portrait", info.base]);
+    if (!info.fixe) cands.push([f, "paysage", 1 / info.base]);
+  });
+  let best = cands[0], bd = Infinity;
+  cands.forEach((c) => { const d = Math.abs(Math.log(c[2] / r)); if (d < bd) { bd = d; best = c; } });
+  return { format: best[0], orientation: best[1] };
+}
+
+let dessinZoneActif = false;   // vrai tant que l'éditeur de zone est ouvert
+let editeurZone = null;        // état de l'éditeur en cours
+
+/** Bouton « Délimiter une zone » du nouveau carnet : crée le carnet puis ouvre l'éditeur. */
+async function creerNouveauCarnetZone() {
+  const nom = document.getElementById("nouveau-carnet-nom").value.trim();
+  const id = await creerCarnetVierge(nom);
+  if (!id) return;
+  armerDessinZoneCarnet();
+}
+
+/** Ouvre l'éditeur de zone : un rectangle au bon format, déplaçable et redimensionnable. */
+function armerDessinZoneCarnet() {
+  const c = carnetActif();
+  if (!c) return;
+  if (editeurZone) fermerEditeurZone(false);
+  if (typeof annulerPlacementPointCarnet === "function") annulerPlacementPointCarnet();
+  // On efface le masque de la zone existante pendant l'édition.
+  if (etat.coucheZone) { etat.coucheZone.remove(); etat.coucheZone = null; }
+  etat.carte.setMaxBounds(null);
+
+  dessinZoneActif = true;
+  etat.carte.dragging.disable();
+  etat.carte.scrollWheelZoom.disable();
+  etat.carte.doubleClickZoom.disable();
+  document.getElementById("map").classList.add("mode-zone");
+
+  const rectMap = document.getElementById("map").getBoundingClientRect();
+  const zExist = typeof normaliserZone === "function" ? normaliserZone(c.zone) : null;
+
+  // Format par défaut : celui choisi pour le carnet (à la création).
+  let format = (c.formatZone && FORMATS_ZONE[c.formatZone]) ? c.formatZone : "A4";
+  let orientation = c.orientationZone === "paysage" ? "paysage" : "portrait";
+  let x, y, w, h;
+  if (zExist) {
+    // On repose le rectangle sur la zone existante (projection actuelle de la carte).
+    const p1 = etat.carte.latLngToContainerPoint([zExist.nord, zExist.ouest]);
+    const p2 = etat.carte.latLngToContainerPoint([zExist.sud, zExist.est]);
+    x = Math.min(p1.x, p2.x); y = Math.min(p1.y, p2.y);
+    w = Math.max(30, Math.abs(p2.x - p1.x)); h = Math.max(30, Math.abs(p2.y - p1.y));
+    if (zExist.format && FORMATS_ZONE[zExist.format]) {
+      format = zExist.format;
+      orientation = zExist.orientation === "paysage" ? "paysage" : "portrait";
+    } else {
+      const proche = formatProcheRatio(w / h);
+      format = proche.format; orientation = proche.orientation;
+    }
+  } else {
+    const r = ratioZone(format, orientation);
+    h = Math.min(rectMap.height * 0.7, (rectMap.width * 0.7) / r);
+    w = h * r;
+    x = (rectMap.width - w) / 2;
+    y = (rectMap.height - h) / 2;
+  }
+
+  editeurZone = { format, orientation, x, y, w, h, rectMap };
+  construireEditeurZone();
+  majEcranVide();
+}
+
+/** Construit l'overlay de l'éditeur (rectangle, poignées, barre de formats). */
+function construireEditeurZone() {
+  const z = editeurZone;
+  const host = document.getElementById("map");
+
+  const el = document.createElement("div");
+  el.className = "zone-editeur";
+  el.id = "zone-editeur";
+
+  const box = document.createElement("div");
+  box.className = "zone-editeur-box";
+  const ratioEl = document.createElement("div");
+  ratioEl.className = "zone-editeur-ratio";
+  box.appendChild(ratioEl);
+  ["nw", "ne", "sw", "se"].forEach((coin) => {
+    const p = document.createElement("span");
+    p.className = "zone-editeur-poignee " + coin;
+    p.addEventListener("pointerdown", (e) => demarrerResizeBox(e, coin));
+    box.appendChild(p);
+  });
+  box.addEventListener("pointerdown", demarrerDeplacementBox);
+
+  const barre = document.createElement("div");
+  barre.className = "zone-editeur-barre";
+  const gFmt = document.createElement("div");
+  gFmt.className = "zeb-groupe";
+  Object.keys(FORMATS_ZONE).forEach((f) => {
+    const b = document.createElement("button");
+    b.className = "zone-fmt-btn"; b.dataset.fmt = f; b.textContent = FORMATS_ZONE[f].label;
+    b.addEventListener("click", () => { z.format = f; reformerBoxEditeur(); });
+    gFmt.appendChild(b);
+  });
+  const gOri = document.createElement("div");
+  gOri.className = "zeb-groupe";
+  [["portrait", "Portrait"], ["paysage", "Paysage"]].forEach(([o, lib]) => {
+    const b = document.createElement("button");
+    b.className = "zone-ori-btn"; b.dataset.ori = o; b.textContent = lib;
+    b.addEventListener("click", () => { z.orientation = o; reformerBoxEditeur(); });
+    gOri.appendChild(b);
+  });
+  const bValider = document.createElement("button");
+  bValider.className = "btn btn-accent btn-petit"; bValider.textContent = "Valider";
+  bValider.addEventListener("click", validerEditeurZone);
+  const bAnnuler = document.createElement("button");
+  bAnnuler.className = "btn btn-ghost btn-petit"; bAnnuler.textContent = "Annuler";
+  bAnnuler.addEventListener("click", () => fermerEditeurZone(true));
+
+  const sep1 = document.createElement("span"); sep1.className = "zone-editeur-sep";
+  const sep2 = document.createElement("span"); sep2.className = "zone-editeur-sep";
+  barre.append(gFmt, sep1, gOri, sep2, bValider, bAnnuler);
+
+  el.append(box, barre);
+  host.appendChild(el);
+  z.el = el; z.boxEl = box; z.ratioEl = ratioEl;
+  majBoxEditeur();
+}
+
+/** Coordonnées d'un événement pointeur, relatives au conteneur de la carte. */
+function pointDansCarte(e) {
+  const r = document.getElementById("map").getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+/** Reflète l'état (position, taille, libellés) dans le DOM. */
+function majBoxEditeur() {
+  const z = editeurZone; if (!z || !z.boxEl) return;
+  z.boxEl.style.left = z.x + "px";
+  z.boxEl.style.top = z.y + "px";
+  z.boxEl.style.width = z.w + "px";
+  z.boxEl.style.height = z.h + "px";
+  const f = FORMATS_ZONE[z.format] || FORMATS_ZONE.A4;
+  const suffixe = f.fixe ? "" : (z.orientation === "paysage" ? " · Paysage" : " · Portrait");
+  if (z.ratioEl) z.ratioEl.textContent = f.label + suffixe;
+  z.el.querySelectorAll(".zone-fmt-btn").forEach((b) => b.classList.toggle("actif", b.dataset.fmt === z.format));
+  z.el.querySelectorAll(".zone-ori-btn").forEach((b) => {
+    b.classList.toggle("actif", !f.fixe && b.dataset.ori === z.orientation);
+    b.disabled = !!f.fixe;
+  });
+}
+
+/** Borne le rectangle à l'intérieur de la carte (sans changer sa taille si possible). */
+function clampBoxEditeur() {
+  const z = editeurZone; const W = z.rectMap.width, H = z.rectMap.height;
+  z.w = Math.min(z.w, W); z.h = Math.min(z.h, H);
+  z.x = Math.max(0, Math.min(z.x, W - z.w));
+  z.y = Math.max(0, Math.min(z.y, H - z.h));
+}
+
+/** Ré-applique la proportion du format courant (en gardant le centre). */
+function reformerBoxEditeur() {
+  const z = editeurZone; const r = ratioZone(z.format, z.orientation);
+  const cx = z.x + z.w / 2, cy = z.y + z.h / 2;
+  const maxW = z.rectMap.width * 0.98, maxH = z.rectMap.height * 0.98;
+  let h = z.h, w = h * r;
+  if (w > maxW) { w = maxW; h = w / r; }
+  if (h > maxH) { h = maxH; w = h * r; }
+  z.w = w; z.h = h; z.x = cx - w / 2; z.y = cy - h / 2;
+  clampBoxEditeur(); majBoxEditeur();
+}
+
+/** Déplacement du rectangle (glisser le corps, pas les poignées). */
+function demarrerDeplacementBox(e) {
+  if (e.target.classList.contains("zone-editeur-poignee")) return;
+  e.preventDefault();
+  const z = editeurZone;
+  const debut = pointDansCarte(e);
+  const ox = z.x, oy = z.y;
+  const bouger = (ev) => {
+    const p = pointDansCarte(ev);
+    z.x = ox + (p.x - debut.x); z.y = oy + (p.y - debut.y);
+    clampBoxEditeur(); majBoxEditeur();
+  };
+  const relacher = () => {
+    window.removeEventListener("pointermove", bouger);
+    window.removeEventListener("pointerup", relacher);
+  };
+  window.addEventListener("pointermove", bouger);
+  window.addEventListener("pointerup", relacher);
+}
+
+/** Redimensionnement depuis une poignée de coin, en gardant la proportion. */
+function demarrerResizeBox(e, coin) {
+  e.preventDefault(); e.stopPropagation();
+  const z = editeurZone;
+  // Coin opposé (ancre fixe).
+  const ax = coin.indexOf("w") >= 0 ? z.x + z.w : z.x;
+  const ay = coin.indexOf("n") >= 0 ? z.y + z.h : z.y;
+  const bouger = (ev) => {
+    const p = pointDansCarte(ev);
+    const r = ratioZone(z.format, z.orientation);
+    let w = Math.abs(p.x - ax), h = Math.abs(p.y - ay);
+    if (w / r >= h) h = w / r; else w = h * r;
+    if (w < 40) { w = 40; h = w / r; }
+    const maxW = z.rectMap.width, maxH = z.rectMap.height;
+    if (w > maxW) { w = maxW; h = w / r; }
+    if (h > maxH) { h = maxH; w = h * r; }
+    z.w = w; z.h = h;
+    z.x = (p.x >= ax) ? ax : ax - w;
+    z.y = (p.y >= ay) ? ay : ay - h;
+    clampBoxEditeur(); majBoxEditeur();
+  };
+  const relacher = () => {
+    window.removeEventListener("pointermove", bouger);
+    window.removeEventListener("pointerup", relacher);
+  };
+  window.addEventListener("pointermove", bouger);
+  window.addEventListener("pointerup", relacher);
+}
+
+/** Valide : convertit le rectangle en coordonnées géo et enregistre la zone. */
+function validerEditeurZone() {
+  const z = editeurZone, c = carnetActif();
+  if (!z || !c) return;
+  const p1 = etat.carte.containerPointToLatLng(L.point(z.x, z.y));
+  const p2 = etat.carte.containerPointToLatLng(L.point(z.x + z.w, z.y + z.h));
+  const f = FORMATS_ZONE[z.format] || FORMATS_ZONE.A4;
+  const orientation = f.fixe ? "portrait" : z.orientation;
+  c.zone = {
+    sud: Math.min(p1.lat, p2.lat), nord: Math.max(p1.lat, p2.lat),
+    ouest: Math.min(p1.lng, p2.lng), est: Math.max(p1.lng, p2.lng),
+    auto: false, format: z.format, orientation, ratio: z.w / z.h,
+  };
+  // Le format devient celui du carnet (défaut d'un prochain GPX / export).
+  c.formatZone = z.format;
+  c.orientationZone = orientation;
+  c.modifieLe = new Date().toISOString();
+  fermerEditeurZone(false);
+  appliquerZoneCarnet(true);
+  majBoutonsZone();
+  majEcranVide();
+  sauverIndexCarnets();
+  if (typeof planifierPousseeNuage === "function") planifierPousseeNuage();
+  toast("Zone enregistrée ! Modifiable depuis l'onglet Fond de carte.");
+}
+
+/** Ferme l'éditeur. `reappliquer` = remettre le masque de la zone déjà enregistrée. */
+function fermerEditeurZone(reappliquer) {
+  if (editeurZone && editeurZone.el) editeurZone.el.remove();
+  editeurZone = null;
+  dessinZoneActif = false;
+  etat.carte.dragging.enable();
+  etat.carte.scrollWheelZoom.enable();
+  etat.carte.doubleClickZoom.enable();
+  document.getElementById("map").classList.remove("mode-zone");
+  if (reappliquer && typeof appliquerZoneCarnet === "function") appliquerZoneCarnet(false);
+  majEcranVide();
+}
+
+/** Abandonne l'édition (bouton Annuler du bandeau, Échap). Renvoie true si actif. */
+function annulerDessinZoneCarnet() {
+  if (!dessinZoneActif && !editeurZone) return false;
+  fermerEditeurZone(true);
+  return true;
+}
+
+/** Retire la zone du carnet ouvert (l'affichage redevient libre). */
+function retirerZoneCarnet() {
+  const c = carnetActif();
+  if (!c || !c.zone) return;
+  c.zone = null;
+  c.modifieLe = new Date().toISOString();
+  if (typeof appliquerZoneCarnet === "function") appliquerZoneCarnet(false);
+  // On recadre sur la trace ou le point, faute de zone.
+  if (etat.trace && typeof recadrerSurParcours === "function") recadrerSurParcours();
+  else if (c.point) etat.carte.setView([c.point.lat, c.point.lng], 13);
+  majBoutonsZone();
+  sauverIndexCarnets();
+  if (typeof planifierPousseeNuage === "function") planifierPousseeNuage();
+  toast("Zone retirée.");
+}
+
+/** Met à jour l'état affiché + les libellés des boutons de zone (onglet Carnet). */
+function majBoutonsZone() {
+  const c = carnetActif();
+  const etatEl = document.getElementById("zone-etat");
+  const btnDef = document.getElementById("zone-definir");
+  const btnRet = document.getElementById("zone-retirer");
+  if (!etatEl || !btnDef || !btnRet) return;
+  const z = c && typeof normaliserZone === "function" ? normaliserZone(c.zone) : null;
+  if (z) {
+    const f = FORMATS_ZONE[z.format];
+    let libelle = "✓ Zone définie";
+    if (f) libelle += " — format " + f.label + (f.fixe ? "" : (z.orientation === "paysage" ? " paysage" : " portrait"));
+    else if (z.auto) libelle += " (automatique, autour du GPX)";
+    etatEl.textContent = libelle + ".";
+  } else {
+    etatEl.textContent = "Aucune zone définie.";
+  }
+  btnDef.textContent = z ? "🗺️ Modifier la zone" : "🗺️ Définir la zone";
+  btnRet.hidden = !z;
 }
 
 /* =========================================================
@@ -1354,11 +1914,15 @@ async function creerNouveauCarnet() {
    ========================================================= */
 
 const CLE_CARTE_GLOBALE = "carte-globale-style";
-let styleCarteGlobale = { fond: "clair", ambiance: "naturel" };
+// Le titre (bandeau) et la rose des vents de la carte globale sont MASQUÉS par
+// défaut : à l'utilisateur de les activer dans « 🎨 Style de la carte globale ».
+let styleCarteGlobale = { fond: "clair", ambiance: "naturel", titre: false, rose: false };
 try {
   const lu = JSON.parse(localStorage.getItem(CLE_CARTE_GLOBALE) || "{}");
   if (["topo", "clair", "epure", "satellite"].includes(lu.fond)) styleCarteGlobale.fond = lu.fond;
   if (["naturel", "ancien", "doux", "medieval"].includes(lu.ambiance)) styleCarteGlobale.ambiance = lu.ambiance;
+  if (typeof lu.titre === "boolean") styleCarteGlobale.titre = lu.titre;
+  if (typeof lu.rose === "boolean") styleCarteGlobale.rose = lu.rose;
 } catch (e) { /* premiers pas : style par défaut */ }
 
 /** Applique le style de la CARTE GLOBALE (sans toucher au style des carnets). */
@@ -1377,14 +1941,51 @@ function appliquerStyleCarteGlobale() {
     options = fond.options;
   }
   if (etat.coucheFond) etat.coucheFond.remove();
-  etat.carte.setMaxZoom(options.maxZoom || 19);
-  etat.coucheFond = L.tileLayer(url, options).addTo(etat.carte);
+  // Comme dans l'éditeur : on peut zoomer au-delà du zoom fourni par le fond,
+  // les dernières tuiles étant alors agrandies (copie des options, l'objet
+  // FONDS étant partagé).
+  const optionsZoom = {
+    ...options,
+    maxNativeZoom: options.maxZoom || 19,
+    maxZoom: ZOOM_MAX_APP,
+  };
+  etat.carte.setMaxZoom(ZOOM_MAX_APP);
+  etat.coucheFond = L.tileLayer(url, optionsZoom).addTo(etat.carte);
   appliquerAmbiance(styleCarteGlobale.ambiance);
+  appliquerDecorGlobal();
+}
+
+/**
+ * Décor de la carte globale : titre (bandeau) et rose des vents, chacun
+ * affiché seulement si l'utilisateur l'a activé. Masque au passage les
+ * décors PROPRES AUX CARNETS (cartouche, bordure) pour qu'ils ne débordent
+ * pas sur la carte d'accueil.
+ */
+function appliquerDecorGlobal() {
+  // Décors de carnet : jamais sur l'accueil.
+  const carteTitre = document.getElementById("carte-titre");
+  if (carteTitre) carteTitre.hidden = true;
+  const bordure = document.getElementById("bordure-carte");
+  if (bordure) bordure.hidden = true;
+
+  // Rose des vents de la carte globale (masquée par défaut).
+  const roseEl = document.getElementById("rose-carte");
+  if (roseEl) {
+    roseEl.hidden = !styleCarteGlobale.rose;
+    if (styleCarteGlobale.rose && typeof ROSES_VENTS !== "undefined") {
+      roseEl.innerHTML = (ROSES_VENTS.classique || {}).svg || roseEl.innerHTML;
+    }
+  }
+  majTitreCarteGlobale();
 }
 
 function ouvrirModalCarteGlobale() {
   majSegment("global-fond", "gfond", styleCarteGlobale.fond);
   majSegment("global-ambiance", "gambiance", styleCarteGlobale.ambiance);
+  const t = document.getElementById("global-titre");
+  if (t) t.checked = !!styleCarteGlobale.titre;
+  const r = document.getElementById("global-rose");
+  if (r) r.checked = !!styleCarteGlobale.rose;
   document.getElementById("modal-carte-globale").hidden = false;
 }
 
@@ -1392,10 +1993,16 @@ function sauverStyleCarteGlobale() {
   try { localStorage.setItem(CLE_CARTE_GLOBALE, JSON.stringify(styleCarteGlobale)); } catch (e) {}
 }
 
-/** Le titre affiché sur la carte globale : « LogBookMap de <pseudo> ». */
+/** Le titre affiché sur la carte globale : « LogBookMap de <pseudo> » (si activé). */
 function majTitreCarteGlobale() {
   const el = document.getElementById("accueil-titre");
   if (!el) return;
+  // Masqué par défaut : ne s'affiche que si l'utilisateur l'a activé.
+  if (etat.vue === "accueil" && !styleCarteGlobale.titre) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = etat.vue !== "accueil";
   const pseudo = typeof lirePseudo === "function" ? lirePseudo() : "";
   el.textContent = pseudo ? `LogBookMap de ${pseudo}` : "LogBookMap";
 }
@@ -1454,6 +2061,7 @@ async function retirerGpx(id) {
     document.getElementById("trace-info").hidden = true;
     majEcranVide();
   }
+  if (typeof majZoneAutoApresGpx === "function") majZoneAutoApresGpx();
   renderGpxListe();
   planifierSauvegarde();
 }
@@ -1570,24 +2178,31 @@ function majEchellesZoom() {
       wrap.style.transform = `scale(${eSouvenir})`;
     });
 
-    // Éléments posés : taille pleine à leur zoom de pose, cachés en dézoom fort.
+    // Éléments posés : taille pleine à leur zoom de pose. Ils rétrécissent
+    // au dézoom mais ne disparaissent jamais (minuscules au minimum).
     etat.annotations.forEach((a) => {
-      if (!a.marker || estAnnotationVecteur(a)) return;
+      if (!a.marker) return;
+      // Traits, formes, dessins : on ajuste l'épaisseur du trait au zoom.
+      if (estAnnotationVecteur(a)) {
+        if (a.marker.setStyle) a.marker.setStyle({ weight: poidsVecteur(a) });
+        return;
+      }
       const el = a.marker.getElement && a.marker.getElement();
       if (!el) return;
       const ref = typeof a.zoomRef === "number" ? a.zoomRef : 14;
-      const echelle = Math.min(1.3, Math.pow(2, z - ref));
-      const cache = echelle < 0.3;
-      el.style.display = cache ? "none" : "";
-      if (!cache) {
-        const wrap = el.querySelector(".annot-wrap") || el.firstElementChild;
-        if (wrap) {
-          // Le translate(-50%,-50%) centre l'élément sur son point : on le
-          // garde, et on ajoute la mise à l'échelle par-dessus.
-          wrap.style.transform = `translate(-50%, -50%) scale(${echelle})`;
-        }
+      const echelle = Math.max(0.12, Math.min(1.3, Math.pow(2, z - ref)));
+      el.style.display = ""; // toujours affiché, même minuscule
+      const wrap = el.querySelector(".annot-wrap") || el.firstElementChild;
+      if (wrap) {
+        // Le translate(-50%,-50%) centre l'élément sur son point : on le
+        // garde, et on ajoute l'échelle puis l'éventuelle rotation.
+        wrap.style.transform =
+          `translate(-50%, -50%) scale(${echelle}) rotate(${a.rotation || 0}deg)`;
       }
     });
+
+    // Le cadre de sélection suit la nouvelle taille de l'élément actif.
+    if (typeof majSelectionUI === "function") majSelectionUI();
   }, 30);
 }
 
@@ -1690,10 +2305,31 @@ function brancherUI() {
     .addEventListener("click", ouvrirModalNouveauCarnet);
   document.getElementById("nouveau-carnet-creer")
     .addEventListener("click", creerNouveauCarnet);
+  document.getElementById("nouveau-carnet-zone")
+    .addEventListener("click", creerNouveauCarnetZone);
+  brancherSegment("nouveau-carnet-format", "nformat", (v) => {
+    nouveauCarnetFormat.format = v;
+    majSegment("nouveau-carnet-format", "nformat", v);
+    majOrientationNouveauCarnet();
+  });
+  brancherSegment("nouveau-carnet-orientation", "norientation", (v) => {
+    nouveauCarnetFormat.orientation = v;
+    majSegment("nouveau-carnet-orientation", "norientation", v);
+  });
+  document.getElementById("zone-definir")
+    .addEventListener("click", armerDessinZoneCarnet);
+  document.getElementById("zone-retirer")
+    .addEventListener("click", retirerZoneCarnet);
+  document.getElementById("nouveau-carnet-gpx-input")
+    .addEventListener("change", (e) => {
+      const fichier = e.target.files[0];
+      e.target.value = "";
+      creerNouveauCarnetDepuisGpxChoisi(fichier);
+    });
   document.getElementById("nouveau-carnet-annuler")
     .addEventListener("click", fermerModalNouveauCarnet);
   document.getElementById("nouveau-carnet-nom")
-    .addEventListener("keydown", (e) => { if (e.key === "Enter") creerNouveauCarnet(); });
+    .addEventListener("keydown", (e) => { if (e.key === "Enter") creerNouveauCarnetZone(); });
   document.getElementById("bienvenue-connexion")
     .addEventListener("click", () => {
       document.getElementById("modal-bienvenue").hidden = true;
@@ -1728,11 +2364,29 @@ function brancherUI() {
     sauverStyleCarteGlobale();
     appliquerStyleCarteGlobale();
   });
+  document.getElementById("global-titre")
+    .addEventListener("change", (e) => {
+      styleCarteGlobale.titre = e.target.checked;
+      sauverStyleCarteGlobale();
+      appliquerDecorGlobal();
+    });
+  document.getElementById("global-rose")
+    .addEventListener("change", (e) => {
+      styleCarteGlobale.rose = e.target.checked;
+      sauverStyleCarteGlobale();
+      appliquerDecorGlobal();
+    });
 
   // L'écran « carnet vide » de l'éditeur : GPX direct ou exemple.
   document.getElementById("btn-exemple")
     .addEventListener("click", () => {
       if (etat.vue === "accueil") basculerVersEditeur();
+    });
+  // …ou situer le carnet en délimitant une zone, sans GPX.
+  document.getElementById("welcome-point")
+    .addEventListener("click", () => {
+      if (etat.vue !== "editeur") return;
+      armerDessinZoneCarnet();
     });
 
   /* --- Onglet Carnet : partage --- */
@@ -1750,6 +2404,10 @@ function brancherUI() {
     .addEventListener("input", (e) => saisirMeta("description", e.target.value));
   document.getElementById("carnet-dupliquer")
     .addEventListener("click", () => dupliquerCarnet());
+
+  /* --- Onglet Outils : poser un souvenir (même mode que le bouton flottant) --- */
+  document.getElementById("outil-souvenir")
+    .addEventListener("click", () => { if (typeof basculerAjout === "function") basculerAjout(); });
 
   /* --- Onglet Souvenirs --- */
   document.getElementById("souvenir-nouveau")
@@ -1785,6 +2443,16 @@ function brancherUI() {
   });
   brancherDepotSurCarte();
 
+  // Filtre de la liste des éléments ajoutés (onglet Outils).
+  document.querySelectorAll("#elements-filtre .chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      filtreElements = chip.dataset.elemfiltre;
+      document.querySelectorAll("#elements-filtre .chip").forEach((c) =>
+        c.classList.toggle("actif", c === chip));
+      renderElementsListe();
+    });
+  });
+
   /* --- Onglet Textes : préréglages --- */
   document.getElementById("texte-ajouter-titre")
     .addEventListener("click", () => armerTextePreset({
@@ -1817,7 +2485,7 @@ function brancherUI() {
   document.getElementById("annot-legende")
     .addEventListener("input", (e) => {
       majAnnotationActive({ legende: e.target.value });
-      if (ongletOuvert === "importer") renderImagesListe();
+      if (ongletOuvert === "outils") renderElementsListe();
     });
   document.getElementById("annot-trait-couleur")
     .addEventListener("input", (e) => majAnnotationActive({ couleur: e.target.value }));
@@ -1832,6 +2500,7 @@ function brancherUI() {
 
   /* --- Fond de carte : épingles des souvenirs --- */
   construireNuancier("epingle-couleurs", choisirCouleurEpingle);
+  majControlesEpingle();
   brancherSegment("epingle-forme", "forme", (v) => {
     etat.style.epingles.forme = EPINGLE_FORMES.includes(v) ? v : "goutte";
     majSegment("epingle-forme", "forme", etat.style.epingles.forme);
@@ -1850,6 +2519,33 @@ function brancherUI() {
   document.getElementById("epingle-numero")
     .addEventListener("change", (e) => {
       etat.style.epingles.numero = e.target.checked;
+      appliquerStyleEpingles();
+      planifierSauvegarde();
+    });
+  // Import d'une image d'épingle personnalisée.
+  document.getElementById("epingle-image-input")
+    .addEventListener("change", async (e) => {
+      const fichier = e.target.files[0];
+      e.target.value = "";
+      if (!fichier || !fichier.type.startsWith("image/")) return;
+      try {
+        // Format PNG : préserve la transparence (idéal pour une épingle).
+        const src = await importerImage(fichier, 200, "image/png");
+        etat.style.epingles.image = src;
+        etat.style.epingles.forme = "perso";
+        majControlesEpingle();
+        appliquerStyleEpingles();
+        planifierSauvegarde();
+        toast("Épingle personnalisée appliquée");
+      } catch (err) {
+        toast("Impossible de lire cette image.", true);
+      }
+    });
+  document.getElementById("epingle-image-retirer")
+    .addEventListener("click", () => {
+      etat.style.epingles.image = null;
+      if (etat.style.epingles.forme === "perso") etat.style.epingles.forme = "goutte";
+      majControlesEpingle();
       appliquerStyleEpingles();
       planifierSauvegarde();
     });
@@ -1879,7 +2575,12 @@ function brancherUI() {
   document.getElementById("terminer-outil")
     .addEventListener("click", terminerTrait);
   document.getElementById("annuler-annot")
-    .addEventListener("click", desarmerOutil);
+    .addEventListener("click", () => {
+      // Le bouton « Annuler » du bandeau sert aussi au tracé de zone et à la pose d'un point.
+      if (annulerDessinZoneCarnet()) return;
+      if (annulerPlacementPointCarnet()) return;
+      desarmerOutil();
+    });
 
   /* --- Gestes de dessin sur la carte (souris ET doigt : pointer events) --- */
   etat.carte.on("click", (e) => {
@@ -1930,15 +2631,44 @@ function brancherUI() {
         return;
       }
     }
+    if (annulerDessinZoneCarnet()) {
+      e.stopPropagation();
+      return;
+    }
+    if (annulerPlacementPointCarnet()) {
+      e.stopPropagation();
+      return;
+    }
     if (etat.modeOutil) {
       desarmerOutil();
+      e.stopPropagation();
+      return;
+    }
+    // Échap désélectionne aussi l'élément en cours (façon Miro).
+    if (etat.annotationActive) {
+      deselectionnerAnnotation();
       e.stopPropagation();
     }
   }, true);
 
+  /* --- Sélection façon Miro : cadre, poignées, clavier (selection.js) --- */
+  if (typeof brancherSelectionUI === "function") brancherSelectionUI();
+
   // Les réglages d'impression par défaut : tout imprimer, dans l'ordre.
   reglagesAffiche.ordre = null;
   reglagesAffiche.exclusions = [];
+}
+
+/** Affiche/masque les contrôles liés à l'image d'épingle personnalisée. */
+function majControlesEpingle() {
+  const ep = (etat.style && etat.style.epingles) || {};
+  const aImage = !!ep.image;
+  const btnPerso = document.getElementById("epingle-forme-perso");
+  const btnRetirer = document.getElementById("epingle-image-retirer");
+  if (btnPerso) btnPerso.hidden = !aImage;
+  if (btnRetirer) btnRetirer.hidden = !aImage;
+  // Le segment « forme » reflète la forme réellement active.
+  if (typeof majSegment === "function") majSegment("epingle-forme", "forme", ep.forme || "goutte");
 }
 
 /** Change la couleur des épingles (nuancier ou sélecteur personnalisé). */

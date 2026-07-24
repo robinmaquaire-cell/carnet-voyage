@@ -17,6 +17,7 @@ const etat = {
   carnetActifId: 1,       // le carnet ouvert (le seul modifiable)
   fantomes: new Map(),    // carnets AFFICHÉS en plus en visualisation : id → {couche, souvenirs, trace, pictosPerso}
   coucheTrace: null,      // le groupe de calques qui contient la trace dessinée
+  coucheZone: null,       // masque estompé autour de la zone du carnet (éditeur uniquement)
   trace: null,            // la RÉUNION des GPX du carnet { name, segments, waypoints }
   gpxListe: [],           // chaque GPX ajouté au carnet : [{id, nom, segments, waypoints}]
   zoomRefTrace: 13,       // zoom "de référence" du carnet (celui qui cadre la trace)
@@ -61,9 +62,10 @@ const STYLE_DEFAUT = {
   // Affichage des noms des souvenirs sur la carte.
   // taille : "petit" | "moyen" | "grand" OU un nombre de pixels (réglage fin).
   labels: { afficher: false, police: "systeme", couleur: "#2f3b34", taille: "moyen" },
-  // Style des épingles de souvenirs : forme (goutte | rond | carre | minimal),
-  // couleur, largeur en pixels, et affichage du numéro.
-  epingles: { forme: "goutte", couleur: "#d35438", taille: 34, numero: true },
+  // Style des épingles de souvenirs : forme (goutte | rond | carre | minimal
+  // | perso), couleur, largeur en pixels, affichage du numéro, et image
+  // personnalisée importée (utilisée quand forme = "perso").
+  epingles: { forme: "goutte", couleur: "#d35438", taille: 34, numero: true, image: null },
   // Arrondi des contours du fond (rayon en pixels, 0 = aucun). Contrairement
   // à l'ancien "lissage" (un simple flou), c'est un vrai arrondi des angles.
   arrondi: 0,
@@ -79,14 +81,24 @@ const STYLE_DEFAUT = {
     detail: "complet", // "complet" | "epure" (masque petites routes, bâtiments, POI)
     police: null,
     preset: null, // null = fond standard ; sinon une clé de PRESETS_FOND
-    // Couches géographiques affichées (décochées = masquées).
-    couches: { noms: true, frontiere: true, riviere: true, route: true, bati: true },
+    // Couches géographiques affichées (décochées = masquées). Une case par
+    // catégorie reconnue par classeZone() : contrôle fin de ce qui s'affiche.
+    couches: {
+      noms: true, frontiere: true, riviere: true, route: true, bati: true,
+      eau: true, foret: true, reserve: true, prairie: true, glacier: true,
+    },
     // Simplification GÉOMÉTRIQUE des tracés du fond : zoom maximal des DONNÉES
     // vectorielles (14 = tout le détail ; plus bas = contours plus généralisés,
     // comme une carte à petite échelle).
     simplification: 14,
   },
 };
+
+// Zoom maximal de l'application. Il dépasse volontairement le zoom fourni par
+// les fonds de carte (17 à 20 selon la source) : au-delà, les dernières tuiles
+// sont simplement agrandies. On voit un peu plus flou, mais on peut zoomer
+// assez pour placer précisément souvenirs, textes et dessins.
+const ZOOM_MAX_APP = 22;
 
 // Correspondance des anciens réglages de simplification (mots) → zoom des données.
 const SIMPLIFICATION_ANCIENNE = { aucune: 14, legere: 12, moyenne: 10, forte: 8 };
@@ -637,9 +649,21 @@ function initCarte() {
   // Clic sur la carte : selon le mode en cours, on pose un élément de
   // décoration (pictogramme/texte) ou un souvenir.
   etat.carte.on("click", (e) => {
+    // Pendant le tracé d'une zone (glisser), on ignore les clics.
+    if (typeof dessinZoneActif !== "undefined" && dessinZoneActif) return;
+    // Situation d'un nouveau carnet (créé sans GPX) : le clic pose son point.
+    if (typeof placementPointActif !== "undefined" && placementPointActif) {
+      poserPointCarnet(e.latlng);
+      return;
+    }
     // Pose d'un pictogramme ou d'un texte sur le fond de carte.
     if (etat.modeAnnotation) {
       creerAnnotation(etat.modeAnnotation, e.latlng);
+      return;
+    }
+    // Un clic dans le vide désélectionne l'élément en cours (façon Miro).
+    if (etat.annotationActive && !etat.modeAjout && !etat.modeOutil) {
+      deselectionnerAnnotation();
       return;
     }
     // Pose d'un souvenir. Le mode reste actif après : on peut en poser
@@ -727,20 +751,11 @@ function afficherTrace(trace) {
   document.getElementById("fab-recentrer").hidden = false;
 }
 
-/** Met à jour le petit bandeau en bas à gauche. */
+/** Le bandeau d'infos en bas à gauche a été retiré à la demande de l'utilisateur.
+    Le nom du carnet reste visible dans la barre du haut de l'éditeur. */
 function majBandeauInfos(trace) {
   const bandeau = document.getElementById("trace-info");
-  const nbPoints = trace.segments.reduce((n, s) => n + s.length, 0);
-  const km = longueurKm(trace.segments);
-
-  // On affiche le nom du CARNET (pas celui du fichier GPX).
-  const carnet = carnetActif();
-  document.getElementById("trace-name").textContent = (carnet && carnet.nom) || trace.name;
-  document.getElementById("trace-stats").textContent =
-    `${km.toFixed(1)} km · ${nbPoints} points` +
-    (trace.waypoints.length ? ` · ${trace.waypoints.length} repères` : "");
-
-  bandeau.hidden = false;
+  if (bandeau) bandeau.hidden = true;
 }
 
 /* ---------------------------------------------------------
@@ -788,6 +803,7 @@ function chargerFichierGpx(fichier) {
         waypoints: trace.waypoints,
       });
       afficherTrace(fusionnerTraces());
+      majZoneAutoApresGpx(); // cadre automatiquement une zone autour de la trace
       if (typeof renderGpxListe === "function") renderGpxListe();
       toast(`Trace « ${trace.name} » ajoutée au carnet`);
       planifierSauvegarde();
@@ -805,19 +821,32 @@ function chargerFichierGpx(fichier) {
    ========================================================= */
 
 // Formes d'épingles proposées (onglet Fond de carte → Épingles des souvenirs).
-const EPINGLE_FORMES = ["goutte", "rond", "carre", "minimal"];
+// "perso" = image importée par l'utilisateur (voir epingles.image).
+const EPINGLE_FORMES = ["goutte", "rond", "carre", "minimal", "perso"];
+
+/** Quels types de contenu un souvenir possède-t-il (pour les badges d'épingle) ? */
+function contenusSouvenir(s) {
+  if (!s) return null;
+  return {
+    photo: Array.isArray(s.photos) && s.photos.length > 0,
+    texte: typeof s.textes === "string" && s.textes.trim().length > 0,
+    audio: Array.isArray(s.audios) && s.audios.length > 0,
+  };
+}
 
 /**
  * Fabrique le HTML et les dimensions d'une épingle de souvenir, selon le
  * style du carnet (forme, couleur, taille, numéro). Utilisée par la carte,
  * les carnets affichés sur l'accueil ET la fenêtre d'impression.
  */
-function fabriquerEpingle(numero, pictoCle, pictosPerso, styleEpingles) {
+function fabriquerEpingle(numero, pictoCle, pictosPerso, styleEpingles, contenus) {
   const ep = {
     ...STYLE_DEFAUT.epingles,
     ...(styleEpingles || (etat.style && etat.style.epingles) || {}),
   };
-  const forme = EPINGLE_FORMES.includes(ep.forme) ? ep.forme : "goutte";
+  let forme = EPINGLE_FORMES.includes(ep.forme) ? ep.forme : "goutte";
+  // Forme "perso" sans image importée : on retombe sur la goutte classique.
+  if (forme === "perso" && !ep.image) forme = "goutte";
   const couleur = typeof ep.couleur === "string" ? ep.couleur : "#d35438";
   const t = Math.max(20, Math.min(72, Number(ep.taille) || 34)); // largeur en px
 
@@ -858,6 +887,17 @@ function fabriquerEpingle(numero, pictoCle, pictosPerso, styleEpingles) {
     cx = w / 2;
     cy = h / 2;
     rInterieur = (11 / 34) * w;
+  } else if (forme === "perso") {
+    // Image d'épingle importée par l'utilisateur (posée façon « épingle » :
+    // sa base touche le point GPS, comme une goutte).
+    w = t;
+    h = t;
+    ancre = [w / 2, h - 1];
+    fond = `<img class="pin-souvenir pin-image-perso" src="${ep.image}" alt="" ` +
+      `style="width:${w}px;height:${h}px;object-fit:contain;display:block">`;
+    cx = w / 2;
+    cy = h * 0.42;
+    rInterieur = w * 0.24;
   } else {
     // "minimal" : une pastille claire cerclée de la couleur, discrète.
     w = Math.max(18, Math.round(t * 0.8));
@@ -874,7 +914,12 @@ function fabriquerEpingle(numero, pictoCle, pictosPerso, styleEpingles) {
   // Contenu centré dans la pastille : image importée, émoji, ou numéro.
   const centre = `position:absolute;left:${cx}px;top:${cy}px;transform:translate(-50%,-50%);pointer-events:none;`;
   let contenu = "";
-  if (perso) {
+  // Une image d'épingle importée se suffit à elle-même : on ne recouvre pas
+  // son centre (juste le numéro en coin, si demandé).
+  const centreOccupe = forme === "perso";
+  if (centreOccupe) {
+    // rien au centre
+  } else if (perso) {
     const d = Math.round(rInterieur * 2.1);
     contenu = `<img src="${perso.src}" alt="" style="${centre}width:${d}px;height:${d}px;border-radius:50%;object-fit:cover;">`;
   } else if (glyph) {
@@ -882,14 +927,24 @@ function fabriquerEpingle(numero, pictoCle, pictosPerso, styleEpingles) {
   } else if (ep.numero !== false) {
     contenu = `<span style="${centre}font:700 ${Math.max(9, Math.round(rInterieur * 1.15))}px Arial,sans-serif;color:${couleur};">${numero}</span>`;
   }
-  // Badge numéro en coin quand un pictogramme occupe déjà la pastille.
-  if ((perso || glyph) && ep.numero !== false) {
+  // Badge numéro en coin quand un pictogramme (ou une image) occupe la pastille.
+  if ((perso || glyph || centreOccupe) && ep.numero !== false) {
     contenu += `<span class="pin-num">${numero}</span>`;
+  }
+
+  // Badges de contenu (photo / texte / audio), en bas de l'épingle.
+  let badges = "";
+  if (contenus) {
+    const items = [];
+    if (contenus.photo) items.push('<span title="Photos">📷</span>');
+    if (contenus.texte) items.push('<span title="Récit">📝</span>');
+    if (contenus.audio) items.push('<span title="Audio">🎧</span>');
+    if (items.length) badges = `<span class="pin-badges">${items.join("")}</span>`;
   }
 
   return {
     // data-ancre : sert au zoom (l'épingle rétrécit vers sa pointe ou son centre).
-    html: `<div class="pin-wrap" data-ancre="${forme === "goutte" ? "pointe" : "centre"}" style="width:${w}px;height:${h}px">${fond}${contenu}</div>`,
+    html: `<div class="pin-wrap" data-ancre="${forme === "goutte" || forme === "perso" ? "pointe" : "centre"}" style="width:${w}px;height:${h}px">${fond}${contenu}${badges}</div>`,
     iconSize: [w, h],
     iconAnchor: ancre,
     popupAnchor: [0, -h + 4],
@@ -903,8 +958,8 @@ window.fabriquerEpingle = fabriquerEpingle;
  * le carnet, au style d'épingles du carnet (ou de celui fourni).
  * @param {number} numero  Le rang du souvenir (1, 2, 3...).
  */
-function creerIconeSouvenir(numero, pictoCle, pictosPerso, styleEpingles) {
-  const ep = fabriquerEpingle(numero, pictoCle, pictosPerso, styleEpingles);
+function creerIconeSouvenir(numero, pictoCle, pictosPerso, styleEpingles, contenus) {
+  const ep = fabriquerEpingle(numero, pictoCle, pictosPerso, styleEpingles, contenus);
   return L.divIcon({
     className: "",
     html: ep.html,
@@ -1039,7 +1094,7 @@ function majTooltip(souvenir) {
 function renumeroterSouvenirs() {
   etat.souvenirs.forEach((s, i) => {
     if (!s.marker) return;
-    s.marker.setIcon(creerIconeSouvenir(i + 1, s.pictogramme));
+    s.marker.setIcon(creerIconeSouvenir(i + 1, s.pictogramme, null, null, contenusSouvenir(s)));
     majTooltip(s); // le numéro a pu changer
   });
 }
@@ -1081,6 +1136,15 @@ function majBoutonAjout() {
     fab.classList.toggle("actif", etat.modeAjout);
     fab.textContent = etat.modeAjout ? "✕" : "＋";
     fab.title = etat.modeAjout ? "Arrêter l'ajout" : "Ajouter des souvenirs";
+  }
+  // Le bouton « Poser un souvenir » de l'onglet Outils suit aussi l'état.
+  const outil = document.getElementById("outil-souvenir");
+  if (outil) {
+    outil.classList.toggle("actif", etat.modeAjout);
+    const petit = outil.querySelector("small");
+    if (petit) petit.textContent = etat.modeAjout
+      ? "Mode actif — clique sur la carte (ou ici pour arrêter)"
+      : "Clique sur la carte pour le placer";
   }
 }
 
@@ -1184,7 +1248,7 @@ function ajouterSouvenir(lat, lng, nom, contenu = {}, ouvrirFiche = true) {
 function attacherMarqueur(souvenir) {
   const numero = etat.souvenirs.indexOf(souvenir) + 1;
   const marker = L.marker([souvenir.lat, souvenir.lng], {
-    icon: creerIconeSouvenir(numero, souvenir.pictogramme),
+    icon: creerIconeSouvenir(numero, souvenir.pictogramme, null, null, contenusSouvenir(souvenir)),
     draggable: true, // permet de déplacer le souvenir en le glissant sur la carte
   })
     .bindTooltip(libelleTooltip(souvenir), {
@@ -1209,13 +1273,32 @@ function attacherMarqueur(souvenir) {
 function deplacerSouvenirVersPoint(souvenir, latlng) {
   souvenir.lat = latlng.lat;
   souvenir.lng = latlng.lng;
+  // Pendant un glisser, Leaflet a déjà repositionné le marqueur ; on le refait
+  // par sûreté pour que le regroupement se calcule sur la BONNE position.
+  if (souvenir.marker) souvenir.marker.setLatLng(latlng);
   if (souvenir.label) souvenir.label.setLatLng(latlng);
-  // On ressort puis on remet l'épingle dans le groupe : si elle a été posée
-  // sur une autre, elles se regroupent aussitôt.
-  if (souvenir.marker && etat.grappe.hasLayer(souvenir.marker)) {
-    etat.grappe.removeLayer(souvenir.marker);
-    etat.grappe.addLayer(souvenir.marker);
-    majVisibiliteLabels();
+  // On recalcule le regroupement pour ce marqueur (s'il a été posé sur une
+  // autre épingle, elles se regroupent). IMPORTANT : on ne fait PAS de
+  // removeLayer/addLayer synchrone ici — appelé pendant le `dragend`, ça
+  // relance `finishDrag` sur un marqueur en cours de démontage et lève
+  // « baseVal », ce qui laissait l'épingle retirée et jamais remise (elle
+  // « disparaissait à tout jamais »). `refreshClusters` est l'API prévue ;
+  // à défaut on diffère un remove/add protégé.
+  const grappe = etat.grappe;
+  const marker = souvenir.marker;
+  if (marker) {
+    if (typeof grappe.refreshClusters === "function") {
+      try { grappe.refreshClusters(marker); } catch (e) {}
+      majVisibiliteLabels();
+    } else {
+      setTimeout(() => {
+        try {
+          if (grappe.hasLayer(marker)) { grappe.removeLayer(marker); grappe.addLayer(marker); }
+          else if (grappe.addLayer) { grappe.addLayer(marker); }
+          majVisibiliteLabels();
+        } catch (e) {}
+      }, 0);
+    }
   }
   if (etat.souvenirActif === souvenir) {
     document.getElementById("souvenir-coords").textContent =
@@ -1338,7 +1421,7 @@ async function supprimerPictoPerso(id) {
   etat.souvenirs.forEach((s) => {
     if (s.pictogramme !== cle) return;
     s.pictogramme = "souvenir";
-    if (s.marker) s.marker.setIcon(creerIconeSouvenir(etat.souvenirs.indexOf(s) + 1, "souvenir"));
+    if (s.marker) s.marker.setIcon(creerIconeSouvenir(etat.souvenirs.indexOf(s) + 1, "souvenir", null, null, contenusSouvenir(s)));
   });
   etat.stock.forEach((s) => {
     if (s.pictogramme === cle) s.pictogramme = "souvenir";
@@ -1397,7 +1480,7 @@ function choisirPictogramme(cle) {
   if (!s) return;
   s.pictogramme = cle;
   const numero = etat.souvenirs.indexOf(s) + 1;
-  if (s.marker) s.marker.setIcon(creerIconeSouvenir(numero, cle));
+  if (s.marker) s.marker.setIcon(creerIconeSouvenir(numero, cle, null, null, contenusSouvenir(s)));
   majPictoActif(cle);
   majPictoBoutonActuel(cle);
   fermerPictoPicker();
@@ -1538,6 +1621,13 @@ function naviguerSouvenir(decalage) {
 function fermerPanneau() {
   arreterEnregistrementAudio(); // au cas où un enregistrement tournait encore
   const etaitEnReserve = etat.souvenirActif && etat.stock.includes(etat.souvenirActif);
+  // Les badges de contenu (photo/texte/audio) de l'épingle suivent les
+  // éventuelles modifications faites dans la fiche qu'on vient de refermer.
+  const s = etat.souvenirActif;
+  if (s && s.marker && !etaitEnReserve) {
+    const numero = etat.souvenirs.indexOf(s) + 1;
+    s.marker.setIcon(creerIconeSouvenir(numero, s.pictogramme, null, null, contenusSouvenir(s)));
+  }
   document.getElementById("panneau").hidden = true;
   document.getElementById("panneau").classList.remove("fiche-stock");
   etat.souvenirActif = null;
@@ -1596,7 +1686,7 @@ function majMiniCarte(souvenir) {
   // L'épingle du souvenir (même pictogramme que sur la grande carte).
   const numero = listeDuSouvenir(souvenir).indexOf(souvenir) + 1;
   L.marker([souvenir.lat, souvenir.lng], {
-    icon: creerIconeSouvenir(numero, souvenir.pictogramme),
+    icon: creerIconeSouvenir(numero, souvenir.pictogramme, null, null, contenusSouvenir(souvenir)),
   }).addTo(etat.miniCouche);
 
   // Tous les points pour cadrer sur l'ensemble du parcours.
@@ -2321,7 +2411,10 @@ function appliquerFond(cle) {
     // La couche vectorielle ne déclare pas de zoom maximal à Leaflet (ce
     // n'est pas une couche de tuiles classique) : on le pose sur la carte
     // elle-même, sinon le regroupement d'épingles (markercluster) plante.
-    etat.carte.setMaxZoom(19);
+    // Le fond vectoriel se redessine à n'importe quel zoom : il reste net
+    // même au-delà du zoom des données (contrairement aux fonds en images).
+    etat.carte.setMaxZoom(ZOOM_MAX_APP);
+    visibiliteOrigineVecteur = null; // nouveau style : on remémorisera l'origine
     etat.coucheFond = L.maplibreGL({
       pane: "tilePane", // sous le tracé et les marqueurs
       style: STYLE_VECTORIEL_URL,
@@ -2344,6 +2437,7 @@ function appliquerFond(cle) {
     return;
   }
   etat.glMap = null;
+  visibiliteOrigineVecteur = null;
   majClasseAncienne(false); // le grain de papier ne concerne que le vectoriel
 
   let url, options;
@@ -2366,21 +2460,45 @@ function appliquerFond(cle) {
   }
 
   if (etat.coucheFond) etat.coucheFond.remove();
-  // Le zoom maximal de la carte suit celui du fond choisi (voir plus haut).
-  etat.carte.setMaxZoom(options.maxZoom || 19);
+  // On peut zoomer PLUS LOIN que ce que le fond fournit réellement : au-delà
+  // de son zoom natif, Leaflet agrandit les dernières tuiles disponibles
+  // (l'image s'adoucit, mais on continue de zoomer pour placer précisément
+  // souvenirs et éléments). NB : on copie les options du fond au lieu de les
+  // modifier, car l'objet FONDS est partagé.
+  const optionsZoom = {
+    ...options,
+    maxNativeZoom: options.maxZoom || 19, // dernier zoom réellement fourni
+    maxZoom: ZOOM_MAX_APP,
+  };
+  etat.carte.setMaxZoom(ZOOM_MAX_APP);
   // Les tuiles vont sur le calque du fond : la trace et les marqueurs
   // restent automatiquement au-dessus.
-  etat.coucheFond = L.tileLayer(url, options).addTo(etat.carte);
+  etat.coucheFond = L.tileLayer(url, optionsZoom).addTo(etat.carte);
 }
 
 /* ---------- Personnalisation du fond vectoriel ---------- */
 
-/** Appelle `cb` dès que le style du fond vectoriel est prêt. */
+/**
+ * Appelle `cb` dès que le style du fond vectoriel est prêt.
+ * On écoute "styledata" (le style vient d'être analysé) plutôt que "idle"
+ * (rendu stabilisé) : nos réglages — couches masquées, couleurs — sont ainsi
+ * appliqués AVANT le premier affichage. Sinon on voyait les noms de lieux et
+ * les points d'intérêt apparaître une seconde puis disparaître.
+ */
 function surStyleVecteurPret(cb) {
   const m = etat.glMap;
   if (!m) return;
-  if (m.isStyleLoaded()) cb();
-  else m.once("idle", cb); // "idle" = rendu stabilisé, style chargé
+  if (m.isStyleLoaded()) { cb(); return; }
+  let fait = false;
+  const lancer = () => {
+    if (fait || !m.isStyleLoaded()) return;
+    fait = true;
+    m.off("styledata", lancer);
+    cb();
+  };
+  m.on("styledata", lancer);
+  // Filet de sécurité si "styledata" n'a jamais trouvé le style prêt.
+  m.once("idle", lancer);
 }
 
 /**
@@ -2468,16 +2586,44 @@ function majClasseAncienne(on) {
   if (on && preset) parchemin.classList.add("teinte-" + preset.teinte);
 }
 
-/** Masque les couches géographiques décochées (noms, frontières, rivières…). */
+// Visibilité d'origine de chaque couche du style vectoriel (avant nos
+// réglages) : sans elle, recocher une case rendrait visibles des couches que
+// le style d'origine cachait volontairement.
+let visibiliteOrigineVecteur = null;
+
+/** Mémorise (une fois par style chargé) la visibilité d'origine des couches. */
+function memoriserVisibiliteOrigineVecteur() {
+  const m = etat.glMap;
+  if (!m || !m.isStyleLoaded() || visibiliteOrigineVecteur) return;
+  visibiliteOrigineVecteur = {};
+  m.getStyle().layers.forEach((l) => {
+    visibiliteOrigineVecteur[l.id] = (l.layout && l.layout.visibility) || "visible";
+  });
+}
+
+/**
+ * Affiche ou masque chaque couche géographique selon les cases cochées
+ * (noms, frontières, rivières, routes, bâti, eau, forêts…). Contrairement à
+ * avant, décocher PUIS recocher rétablit bien la couche.
+ */
 function appliquerCouchesVisibles() {
   const m = etat.glMap;
   if (!m) return;
+  memoriserVisibiliteOrigineVecteur();
   const couches = etat.style.vecteur.couches || {};
+  const epure = etat.style.vecteur.detail === "epure"
+    || !!PRESETS_FOND[etat.style.vecteur.preset];
   m.getStyle().layers.forEach((l) => {
     let cat = classeZone(l);
     if (l.type === "symbol") cat = "noms"; // tous les textes = "noms de lieux"
-    if (!cat || couches[cat] !== false) return;
-    try { m.setLayoutProperty(l.id, "visibility", "none"); } catch (e) {}
+    if (!cat) return;
+    // Une couche cachée par le style d'origine le reste ; en mode « épuré »,
+    // les couches de détail restent masquées elles aussi.
+    const origine = visibiliteOrigineVecteur ? visibiliteOrigineVecteur[l.id] : "visible";
+    const visible = couches[cat] !== false
+      && origine !== "none"
+      && !(epure && masquerDetail(l));
+    try { m.setLayoutProperty(l.id, "visibility", visible ? "visible" : "none"); } catch (e) {}
   });
 }
 
@@ -2750,9 +2896,11 @@ function appliquerSimplificationVecteur() {
   montrerPatience("La carte se redessine…");
   obtenirStyleVectoriel(niveau, arrondi)
     .then((style) => {
+      visibiliteOrigineVecteur = null; // nouveau style : origine à remémoriser
       m.setStyle(style);
-      // Une fois le nouveau style affiché, on re-applique couleurs et détail.
-      m.once("idle", () => {
+      // Dès que le nouveau style est analysé, on re-applique couleurs, détail
+      // et couches masquées — avant le premier rendu, pour éviter le clignotement.
+      surStyleVecteurPret(() => {
         appliquerStyleVecteur();
         cacherPatience();
       });
@@ -3129,6 +3277,8 @@ function fusionnerStyle(s) {
       taille: (s.epingles && Number.isFinite(Number(s.epingles.taille)))
         ? Math.max(20, Math.min(72, Number(s.epingles.taille))) : base.epingles.taille,
       numero: s.epingles ? s.epingles.numero !== false : true,
+      image: (s.epingles && typeof s.epingles.image === "string" && s.epingles.image)
+        ? s.epingles.image : null,
     },
     // L'ancien "lissage" (flou) n'existe plus : on lit le nouvel "arrondi".
     arrondi: lireArrondi(s.arrondi),
@@ -3261,6 +3411,7 @@ function synchroniserControlesStyle() {
   document.getElementById("epingle-taille").value = ep.taille;
   document.getElementById("epingle-taille-val").textContent = ep.taille;
   document.getElementById("epingle-numero").checked = ep.numero !== false;
+  majControlesEpingle();
   const simplification = lireSimplification(s.vecteur.simplification, 14);
   majSegment("vecteur-simplification", "simplification", String(simplification));
   document.getElementById("simplification-valeur").value = simplification;
@@ -3435,9 +3586,13 @@ function creerIconeAnnotation(a) {
     contenu = `<div class="annot-texte" style="${css.replace(/"/g, "&quot;")}">${html}</div>`;
   }
   const actif = etat.annotationActive === a ? " annot-actif" : "";
+  // La rotation choisie avec la poignée du cadre de sélection (selection.js).
+  const rotation = typeof a.rotation === "number" && a.rotation !== 0
+    ? ` style="transform: translate(-50%, -50%) rotate(${a.rotation}deg)"`
+    : "";
   return L.divIcon({
     className: "",
-    html: `<div class="annot-wrap${actif}">${contenu}</div>`,
+    html: `<div class="annot-wrap${actif}"${rotation}>${contenu}</div>`,
     iconSize: [0, 0], // le contenu se centre lui-même sur le point (CSS)
   });
 }
@@ -3450,13 +3605,36 @@ function attacherMarqueurAnnotation(a) {
   })
     .addTo(etat.carte)
     .on("click", () => {
-      if (etat.mode === "edition") selectionnerAnnotation(a);
+      if (etat.mode !== "edition" || etat.modeOutil) return;
+      selectionnerAnnotation(a);
+      // Un texte passe directement en édition sur la carte (façon Canva/Miro).
+      if (a.type === "texte" && typeof demarrerEditionTexte === "function") {
+        demarrerEditionTexte(a);
+      }
+    })
+    // Double-clic sur un pictogramme : en changer directement.
+    .on("dblclick", () => {
+      if (etat.mode !== "edition" || etat.modeOutil) return;
+      if (etat.annotationActive !== a) selectionnerAnnotation(a);
+      if (a.type === "picto") ouvrirPictoPickerAnnotation();
+    })
+    // Commencer à glisser un élément le sélectionne aussi (façon Miro),
+    // et le cadre de sélection le suit pendant tout le déplacement.
+    .on("dragstart", () => {
+      if (etat.mode === "edition" && etat.annotationActive !== a) selectionnerAnnotation(a);
+    })
+    .on("drag", (e) => {
+      const p = e.target.getLatLng();
+      a.lat = p.lat;
+      a.lng = p.lng;
+      if (typeof majSelectionUI === "function") majSelectionUI();
     })
     .on("dragend", (e) => {
       const p = e.target.getLatLng();
       a.lat = p.lat;
       a.lng = p.lng;
       planifierSauvegarde();
+      if (typeof majSelectionUI === "function") majSelectionUI();
     });
 
   if (etat.mode === "visualisation") marker.dragging.disable();
@@ -3476,9 +3654,14 @@ function redessinerAnnotation(a) {
   // leur mise à jour est gérée par ui.js.
   if (estAnnotationVecteur(a)) {
     if (typeof majStyleAnnotationVecteur === "function") majStyleAnnotationVecteur(a);
-    return;
+  } else {
+    a.marker.setIcon(creerIconeAnnotation(a));
+    // L'icône vient d'être reconstruite : on lui rend tout de suite sa
+    // taille de zoom (sinon elle clignoterait à taille pleine).
+    if (typeof majEchellesZoom === "function") majEchellesZoom();
   }
-  a.marker.setIcon(creerIconeAnnotation(a));
+  // Le cadre de sélection suit le nouveau contour de l'élément.
+  if (etat.annotationActive === a && typeof majSelectionUI === "function") majSelectionUI();
 }
 
 /** Retire toutes les annotations de la carte et de l'état. */
@@ -3524,6 +3707,7 @@ function lireAnnotationSauvee(sa) {
       points,
       couleur: typeof sa.couleur === "string" ? sa.couleur : "#b4452f",
       epaisseur: typeof sa.epaisseur === "number" ? sa.epaisseur : 4,
+      zoomRef: typeof sa.zoomRef === "number" ? sa.zoomRef : 14,
       marker: null,
     };
   }
@@ -3538,6 +3722,7 @@ function lireAnnotationSauvee(sa) {
       lat: sa.lat, lng: sa.lng, lat2: sa.lat2, lng2: sa.lng2,
       couleur: typeof sa.couleur === "string" ? sa.couleur : "#b4452f",
       epaisseur: typeof sa.epaisseur === "number" ? sa.epaisseur : 4,
+      zoomRef: typeof sa.zoomRef === "number" ? sa.zoomRef : 14,
       remplir: !!sa.remplir,
       marker: null,
     };
@@ -3547,6 +3732,8 @@ function lireAnnotationSauvee(sa) {
   if (typeof sa.lat !== "number" || typeof sa.lng !== "number") return null;
   // Zoom de référence (les anciens éléments reçoivent un zoom moyen).
   const zoomRef = typeof sa.zoomRef === "number" ? sa.zoomRef : 14;
+  // Inclinaison éventuelle (poignée de rotation du cadre de sélection).
+  const rotation = typeof sa.rotation === "number" ? sa.rotation : 0;
   if (type === "image") {
     if (typeof sa.src !== "string" || !sa.src) return null;
     return {
@@ -3554,6 +3741,7 @@ function lireAnnotationSauvee(sa) {
       type,
       lat: sa.lat, lng: sa.lng,
       zoomRef,
+      rotation,
       src: sa.src,
       legende: typeof sa.legende === "string" ? sa.legende : "",
       taille: typeof sa.taille === "number" ? sa.taille : ANNOT_IMAGE_DEFAUT.taille,
@@ -3566,6 +3754,7 @@ function lireAnnotationSauvee(sa) {
     type,
     lat: sa.lat, lng: sa.lng,
     zoomRef,
+    rotation,
     picto: typeof sa.picto === "string" ? sa.picto : ANNOT_PICTO_DEFAUT.picto,
     texte: typeof sa.texte === "string" ? sa.texte : ANNOT_TEXTE_DEFAUT.texte,
     police: typeof sa.police === "string" ? sa.police : ANNOT_TEXTE_DEFAUT.police,
@@ -3632,56 +3821,49 @@ function creerAnnotation(type, latlng) {
   attacherMarqueurAnnotation(a);
   desarmerAjoutAnnotation();
   selectionnerAnnotation(a);
-  // Pour un texte, on met le curseur directement dans le champ de saisie.
-  if (type === "texte") {
-    const champ = document.getElementById("annot-texte");
-    champ.focus();
-    champ.select();
+  // Pour un texte, on passe directement en saisie sur la carte (façon Miro).
+  if (type === "texte" && typeof demarrerEditionTexte === "function") {
+    demarrerEditionTexte(a);
   }
   planifierSauvegarde();
 }
 
 /* ---------- Sélection et éditeur d'une annotation ---------- */
 
-/** Sélectionne une annotation : cadre visible + éditeur ouvert dans le panneau. */
+/** Sélectionne une annotation : cadre à poignées + barre flottante (selection.js). */
 function selectionnerAnnotation(a) {
   const precedente = etat.annotationActive;
+  // On referme proprement une éventuelle saisie de texte en cours.
+  if (precedente !== a && typeof terminerEditionTexte === "function") terminerEditionTexte();
   etat.annotationActive = a;
   if (precedente && precedente !== a) redessinerAnnotation(precedente);
   redessinerAnnotation(a);
-  // L'éditeur de l'élément vit dans le tiroir « Élément sélectionné » (ui.js).
-  if (typeof ouvrirPanneauElement === "function") ouvrirPanneauElement();
   majEditeurAnnotation();
 }
 
-/** Désélectionne l'annotation en cours (referme l'éditeur). */
+/** Désélectionne l'annotation en cours (cache le cadre et la barre). */
 function deselectionnerAnnotation() {
   const a = etat.annotationActive;
   if (!a) return;
+  if (typeof terminerEditionTexte === "function") terminerEditionTexte();
   etat.annotationActive = null;
   redessinerAnnotation(a);
   majEditeurAnnotation();
 }
 
-/** Recale l'éditeur du panneau sur l'annotation sélectionnée (ou le cache). */
+/** Recale la barre flottante sur l'annotation sélectionnée (ou la cache). */
 function majEditeurAnnotation() {
   const a = etat.annotationActive;
   const editeur = document.getElementById("annot-editeur");
   editeur.hidden = !a;
-  const vide = document.getElementById("element-vide");
-  if (vide) vide.hidden = !!a;
-  if (!a) return;
+  if (!a) {
+    // Le cadre à poignées disparaît avec la barre (selection.js).
+    if (typeof majSelectionUI === "function") majSelectionUI();
+    if (typeof renderElementsListe === "function" && typeof ongletOuvert !== "undefined"
+        && ongletOuvert === "outils") renderElementsListe();
+    return;
+  }
 
-  const titres = {
-    picto: "Pictogramme sélectionné",
-    texte: "Texte sélectionné",
-    image: "Photo sélectionnée",
-    trait: "Trait sélectionné",
-    forme: "Forme sélectionnée",
-    dessin: "Dessin sélectionné",
-  };
-  document.getElementById("annot-editeur-titre").textContent =
-    titres[a.type] || "Élément sélectionné";
   document.getElementById("annot-bloc-texte").hidden = a.type !== "texte";
   document.getElementById("annot-bloc-picto").hidden = a.type !== "picto";
   const blocImage = document.getElementById("annot-bloc-image");
@@ -3702,7 +3884,6 @@ function majEditeurAnnotation() {
   }
 
   if (a.type === "texte") {
-    document.getElementById("annot-texte").value = a.texte || "";
     document.getElementById("annot-couleur").value = a.couleur;
     majBoutonPolice("annot");
     majSegment("annot-align", "align", a.align);
@@ -3726,6 +3907,12 @@ function majEditeurAnnotation() {
     remplirLigne.hidden = a.type !== "forme" || a.forme === "fleche";
     document.getElementById("annot-remplir").checked = !!a.remplir;
   }
+
+  // La barre venant d'être regarnie, on la replace au-dessus de l'élément.
+  if (typeof majSelectionUI === "function") majSelectionUI();
+  // La liste des éléments met en évidence l'élément sélectionné.
+  if (typeof renderElementsListe === "function" && typeof ongletOuvert !== "undefined"
+      && ongletOuvert === "outils") renderElementsListe();
 }
 
 /** Affiche le pictogramme courant sur le bouton "Changer de pictogramme". */
@@ -3831,6 +4018,13 @@ async function sauverIndexCarnets() {
       du: c.du || "",
       au: c.au || "",
       modifieLe: c.modifieLe || "",
+      // Point de situation (carnet créé sans GPX, placé d'un point sur la carte).
+      point: (c.point && typeof c.point.lat === "number") ? { lat: c.point.lat, lng: c.point.lng } : null,
+      // Zone d'affichage du carnet (rectangle englobant, modifiable).
+      zone: normaliserZone(c.zone),
+      // Format d'impression par défaut du carnet (zone + export).
+      formatZone: typeof c.formatZone === "string" ? c.formatZone : "",
+      orientationZone: c.orientationZone === "paysage" ? "paysage" : "portrait",
       // Carnet partagé AVEC MOI : qui en est propriétaire, et mon droit.
       partage: c.partage ? { proprietaire: c.partage.proprietaire, droit: c.partage.droit } : null,
     })),
@@ -3882,6 +4076,11 @@ async function demarrerCarnets() {
       du: typeof c.du === "string" ? c.du : "",
       au: typeof c.au === "string" ? c.au : "",
       modifieLe: typeof c.modifieLe === "string" ? c.modifieLe : "",
+      point: (c.point && typeof c.point.lat === "number" && typeof c.point.lng === "number")
+        ? { lat: c.point.lat, lng: c.point.lng } : null,
+      zone: normaliserZone(c.zone),
+      formatZone: typeof c.formatZone === "string" ? c.formatZone : "",
+      orientationZone: c.orientationZone === "paysage" ? "paysage" : "portrait",
       partage: (c.partage && typeof c.partage.proprietaire === "string")
         ? { proprietaire: c.partage.proprietaire, droit: c.partage.droit === "edition" ? "edition" : "lecture" }
         : null,
@@ -3909,7 +4108,8 @@ async function demarrerCarnets() {
 
     if (etat.carnetActifId) {
       const donnees = await dbChargerCle("carnet-" + etat.carnetActifId);
-      if (donnees && donnees.trace) restaurerCarnet(donnees);
+      // Un carnet sans trace (situé d'un point) se restaure aussi.
+      if (donnees) restaurerCarnet(donnees);
     }
   } catch (e) {
     // IndexedDB indisponible : on démarre à vide, sans bruit.
@@ -3967,7 +4167,7 @@ async function ouvrirCarnet(id) {
   let donnees = null;
   try { donnees = await dbChargerCle("carnet-" + id); } catch (e) {}
 
-  if (donnees && donnees.trace) {
+  if (donnees) {
     restaurerCarnet(donnees);
   } else {
     viderCarnetCourant(); // carnet encore vide : écran d'accueil
@@ -4032,7 +4232,7 @@ async function supprimerCarnet(carnet) {
       etat.carnetActifId = etat.carnets[0].id;
       let donnees = null;
       try { donnees = await dbChargerCle("carnet-" + etat.carnetActifId); } catch (e) {}
-      if (donnees && donnees.trace) restaurerCarnet(donnees);
+      if (donnees) restaurerCarnet(donnees);
       else viderCarnetCourant();
     }
   }
@@ -4111,31 +4311,42 @@ async function afficherFantome(id) {
   if (etat.fantomes.has(id) || id === etat.carnetActifId) return;
   let donnees = null;
   try { donnees = await dbChargerCle("carnet-" + id); } catch (e) {}
-  // Un carnet encore vide (pas de trace) n'a simplement rien à afficher.
-  if (!donnees || !donnees.trace) return;
+  const fiche = etat.carnets.find((c) => c.id === id);
+  // Un carnet sans trace peut quand même être situé d'un point : on montre
+  // alors son nom à cet endroit. Sans trace NI point, il n'y a rien à afficher.
+  const aTrace = !!(donnees && donnees.trace);
+  const zoneFiche = fiche && normaliserZone(fiche.zone);
+  // Sans trace, un carnet peut être situé par sa zone de cadrage ou un point
+  // (ancien format). Sans rien de tout ça, il n'y a rien à afficher.
+  if (!aTrace && !zoneFiche && !(fiche && fiche.point)) return;
 
   const couche = L.layerGroup().addTo(etat.carte);
 
   // Sur la carte globale, un carnet ne montre QUE son tracé et son nom
   // (au style du carnet) — le détail se découvre en l'ouvrant.
-  const t = (donnees.style && donnees.style.trace) || { couleur: "#8a8a8a", epaisseur: 3, type: "plein" };
+  const style = (donnees && donnees.style) || null;
+  const t = (style && style.trace) || { couleur: "#8a8a8a", epaisseur: 3, type: "plein" };
   const points = [];
-  donnees.trace.segments.forEach((seg) => {
-    seg.forEach((p) => points.push(p));
-    L.polyline(seg, {
-      color: t.couleur,
-      weight: t.epaisseur,
-      opacity: 0.85,
-      dashArray: TYPES_LIGNE[t.type],
-    }).addTo(couche);
-  });
+  if (aTrace) {
+    donnees.trace.segments.forEach((seg) => {
+      seg.forEach((p) => points.push(p));
+      L.polyline(seg, {
+        color: t.couleur,
+        weight: t.epaisseur,
+        opacity: 0.85,
+        dashArray: TYPES_LIGNE[t.type],
+      }).addTo(couche);
+    });
+  }
 
-  // Le nom du carnet, posé au centre de son tracé, dans sa police de titre.
-  const fiche = etat.carnets.find((c) => c.id === id);
-  if (fiche && points.length) {
-    const centre = L.latLngBounds(points).getCenter();
+  // Le nom du carnet : au centre de son tracé, de sa zone, ou sur son point.
+  const centre = points.length
+    ? L.latLngBounds(points).getCenter()
+    : (zoneFiche ? bornesZone(zoneFiche).getCenter()
+      : (fiche && fiche.point ? L.latLng(fiche.point.lat, fiche.point.lng) : null));
+  if (fiche && centre) {
     L.marker(centre, {
-      icon: creerEtiquetteCarnet(fiche, donnees.style),
+      icon: creerEtiquetteCarnet(fiche, style),
       interactive: true,
     })
       .on("click", () => {
@@ -4144,7 +4355,7 @@ async function afficherFantome(id) {
       .addTo(couche);
   }
 
-  const fantome = { couche, souvenirs: [], trace: donnees.trace, pictosPerso: [] };
+  const fantome = { couche, souvenirs: [], trace: aTrace ? donnees.trace : null, pictosPerso: [] };
   etat.fantomes.set(id, fantome);
 }
 
@@ -4215,6 +4426,9 @@ function serialiserCarnet() {
       logo: carnet.logo || "",
       categorie: carnet.categorie || "",
       description: carnet.description || "",
+      zone: normaliserZone(carnet.zone),
+      formatZone: carnet.formatZone || "",
+      orientationZone: carnet.orientationZone === "paysage" ? "paysage" : "portrait",
     } : null,
     trace: etat.trace,
     // Chaque GPX du carnet (etat.trace ci-dessus est leur réunion, gardée
@@ -4267,6 +4481,7 @@ function serialiserCarnet() {
       souligne: a.souligne,
       barre: a.barre,
       zoomRef: a.zoomRef,
+      rotation: a.rotation,   // inclinaison choisie avec la poignée de rotation
       // Photo posée sur la carte.
       src: a.src,
       legende: a.legende,
@@ -4308,8 +4523,149 @@ function effacerSouvenirs() {
  * Reconstruit l'application à partir d'un carnet (objet simple) : la trace,
  * puis chaque souvenir avec son marqueur. Renvoie false si le carnet est vide.
  */
+/* ---------- Zone d'affichage d'un carnet ----------
+   Un carnet peut être borné à une région (rectangle). En édition, la carte
+   se cadre dessus, ne se laisse plus balader au loin, et l'extérieur est
+   estompé pour rester concentré sur le voyage. Modifiable à tout moment. */
+
+/** Nettoie/valide une zone {sud,ouest,nord,est}. Renvoie une zone saine ou null. */
+function normaliserZone(z) {
+  if (!z) return null;
+  let sud = Number(z.sud), ouest = Number(z.ouest), nord = Number(z.nord), est = Number(z.est);
+  if (![sud, ouest, nord, est].every((v) => Number.isFinite(v))) return null;
+  if (sud > nord) { const t = sud; sud = nord; nord = t; }
+  if (ouest > est) { const t = ouest; ouest = est; est = t; }
+  // Bornes géographiques réalistes.
+  if (sud < -90 || nord > 90 || ouest < -180 || est > 180) return null;
+  // `auto` : zone créée automatiquement autour d'un GPX (par opposition à une
+  // zone dessinée à la main, qu'on ne recalcule jamais toute seule).
+  // `format`/`orientation` : format d'impression choisi ; `ratio` : proportion
+  // largeur/hauteur (en pixels) au moment de la validation → sert au cadrage export.
+  const zone = { sud, ouest, nord, est, auto: !!z.auto };
+  if (typeof z.format === "string") zone.format = z.format;
+  if (z.orientation === "paysage" || z.orientation === "portrait") zone.orientation = z.orientation;
+  if (Number.isFinite(Number(z.ratio)) && Number(z.ratio) > 0) zone.ratio = Number(z.ratio);
+  return zone;
+}
+
+/** Rectangle Leaflet correspondant à une zone. */
+function bornesZone(z) {
+  return L.latLngBounds([z.sud, z.ouest], [z.nord, z.est]);
+}
+
+/**
+ * Zone (avec marge) englobant la trace courante, marquée `auto`.
+ * Si le carnet a un FORMAT d'impression choisi, la zone est étendue pour
+ * respecter la proportion de ce format (la trace reste toujours dedans). Null
+ * si pas de trace.
+ */
+function zoneAutourTrace() {
+  const t = etat.trace;
+  if (!t) return null;
+  const pts = [];
+  t.segments.forEach((seg) => seg.forEach((p) => pts.push(p)));
+  t.waypoints.forEach((w) => pts.push([w.lat, w.lng]));
+  if (!pts.length) return null;
+  let b = L.latLngBounds(pts).pad(0.2); // ~20 % de marge tout autour
+
+  const c = typeof carnetActif === "function" ? carnetActif() : null;
+  const format = c && c.formatZone;
+  const orientation = c && c.orientationZone;
+  const R = (format && typeof ratioZone === "function") ? ratioZone(format, orientation) : null;
+
+  let ratioFinal = null;
+  try {
+    const p1 = etat.carte.latLngToContainerPoint([b.getNorth(), b.getWest()]);
+    const p2 = etat.carte.latLngToContainerPoint([b.getSouth(), b.getEast()]);
+    let x1 = Math.min(p1.x, p2.x), x2 = Math.max(p1.x, p2.x);
+    let y1 = Math.min(p1.y, p2.y), y2 = Math.max(p1.y, p2.y);
+    let w = x2 - x1, h = y2 - y1;
+    if (w > 0 && h > 0) {
+      if (R) {
+        // On ÉTEND (jamais on ne rétrécit) pour atteindre la proportion voulue.
+        const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+        if (w / h < R) w = h * R; else h = w / R;
+        const g1 = etat.carte.containerPointToLatLng(L.point(cx - w / 2, cy - h / 2));
+        const g2 = etat.carte.containerPointToLatLng(L.point(cx + w / 2, cy + h / 2));
+        b = L.latLngBounds([g1.lat, g1.lng], [g2.lat, g2.lng]);
+        ratioFinal = R;
+      } else {
+        ratioFinal = w / h;
+      }
+    }
+  } catch (e) {}
+
+  const zone = { sud: b.getSouth(), ouest: b.getWest(), nord: b.getNorth(), est: b.getEast(), auto: true };
+  if (format) {
+    const fixe = (typeof FORMATS_ZONE !== "undefined" && FORMATS_ZONE[format]) ? FORMATS_ZONE[format].fixe : false;
+    zone.format = format;
+    zone.orientation = fixe ? "portrait" : orientation;
+  }
+  if (ratioFinal) zone.ratio = ratioFinal;
+  if (!format && ratioFinal) zone.orientation = ratioFinal >= 1 ? "paysage" : "portrait";
+  return zone;
+}
+
+/**
+ * Après (dé)chargement d'un GPX : (re)calcule la zone de cadrage autour de la
+ * trace, avec marge. On respecte une zone DESSINÉE À LA MAIN (on ne la touche
+ * pas) ; une zone automatique suit la trace.
+ */
+function majZoneAutoApresGpx() {
+  const c = typeof carnetActif === "function" ? carnetActif() : null;
+  if (!c) return;
+  const existante = normaliserZone(c.zone);
+  if (existante && !existante.auto) return; // zone manuelle : on la respecte
+  const zone = zoneAutourTrace();
+  if (!zone) {
+    // Plus de trace : on retire l'ancienne zone automatique.
+    if (existante && existante.auto) { c.zone = null; appliquerZoneCarnet(false); }
+    if (typeof majBoutonsZone === "function") majBoutonsZone();
+    return;
+  }
+  c.zone = zone;
+  c.modifieLe = new Date().toISOString();
+  appliquerZoneCarnet(true);
+  if (typeof majBoutonsZone === "function") majBoutonsZone();
+}
+
+/**
+ * Applique (ou retire) la zone du carnet ouvert : masque estompé + bornage du
+ * déplacement. Ne s'applique que dans l'éditeur. `recadrer` = ajuster la vue.
+ */
+function appliquerZoneCarnet(recadrer) {
+  if (!etat.carte) return;
+  // On repart propre : plus de masque, plus de bornage.
+  if (etat.coucheZone) { etat.coucheZone.remove(); etat.coucheZone = null; }
+  etat.carte.setMaxBounds(null);
+
+  const c = typeof carnetActif === "function" ? carnetActif() : null;
+  const z = c && normaliserZone(c.zone);
+  // Sur la carte globale (accueil), plusieurs carnets coexistent : pas de bornage.
+  if (!z || etat.vue !== "editeur") return;
+
+  const bornes = bornesZone(z);
+  // Masque : le monde entier, troué de la zone → l'extérieur est grisé.
+  const monde = [[-90, -180], [90, -180], [90, 180], [-90, 180]];
+  const trou = [[z.sud, z.ouest], [z.sud, z.est], [z.nord, z.est], [z.nord, z.ouest]];
+  etat.coucheZone = L.polygon([monde, trou], {
+    stroke: true, color: "#10302C", weight: 1.5, opacity: 0.45,
+    fill: true, fillColor: "#10302C", fillOpacity: 0.26,
+    interactive: false, className: "masque-zone",
+  }).addTo(etat.carte);
+
+  // Bornage large : la zone sert au cadrage, pas de cage. On laisse une marge
+  // généreuse (≈ 1,5× la zone de chaque côté) pour pouvoir se balader, surtout
+  // en fort dézoom. La viscosité 0 rend la limite élastique (non collante).
+  etat.carte.setMaxBounds(bornes.pad(1.5));
+  etat.carte.options.maxBoundsViscosity = 0;
+  if (recadrer) etat.carte.fitBounds(bornes, { padding: [30, 30] });
+}
+
 function restaurerCarnet(donnees) {
-  if (!donnees || !donnees.trace) return false;
+  // Un carnet peut n'avoir AUCUNE trace (créé sans GPX, situé d'un point) :
+  // on restaure alors tout le reste (souvenirs, éléments, style).
+  if (!donnees) return false;
 
   // On reconstitue d'abord le style : afficherTrace l'utilise pour dessiner.
   etat.style = fusionnerStyle(donnees.style);
@@ -4341,11 +4697,20 @@ function restaurerCarnet(donnees) {
         segments: Array.isArray(g.segments) ? g.segments : [],
         waypoints: Array.isArray(g.waypoints) ? g.waypoints : [],
       }))
-    : [{
-        id: 0, nom: donnees.trace.name || "Trace",
-        segments: donnees.trace.segments, waypoints: donnees.trace.waypoints,
-      }];
-  afficherTrace(fusionnerTraces());
+    : (donnees.trace
+        ? [{
+            id: 0, nom: donnees.trace.name || "Trace",
+            segments: donnees.trace.segments, waypoints: donnees.trace.waypoints,
+          }]
+        : []);
+  const traceFusionnee = fusionnerTraces();
+  if (traceFusionnee) {
+    afficherTrace(traceFusionnee);
+  } else {
+    // Carnet sans trace : on nettoie l'ancien tracé éventuel.
+    if (etat.coucheTrace) { etat.coucheTrace.remove(); etat.coucheTrace = null; }
+    etat.trace = null;
+  }
   if (typeof renderGpxListe === "function") renderGpxListe();
 
   (donnees.souvenirs || []).forEach((sv) => {
@@ -4442,10 +4807,25 @@ function indiquerEnregistre() {
 
 /* ---------- Export / Import en fichier .json ---------- */
 
+/**
+ * Un carnet est « exportable » dès qu'il a de quoi montrer quelque chose :
+ * une trace, une zone de cadrage, des souvenirs ou des éléments posés.
+ * (L'export ne nécessite donc plus obligatoirement un GPX.)
+ */
+function carnetExportable() {
+  const c = carnetActif();
+  const z = c && typeof normaliserZone === "function" ? normaliserZone(c.zone) : null;
+  return !!(
+    etat.trace || z ||
+    (etat.souvenirs && etat.souvenirs.length) ||
+    (etat.annotations && etat.annotations.length)
+  );
+}
+
 /** Télécharge le carnet courant sous forme d'un fichier .json autonome. */
 function exporterCarnet() {
-  if (!etat.trace) {
-    toast("Charge d'abord une trace avant d'exporter.", true);
+  if (!carnetActif()) {
+    toast("Ouvre d'abord un carnet.", true);
     return;
   }
   const json = JSON.stringify(serialiserCarnet());
@@ -4649,10 +5029,12 @@ async function composerImageCarte(zone, echelle, domtoimage) {
 
 /** Capture la carte (fond + trace + épingles + décor) et la télécharge en PNG. */
 async function exporterImagePng() {
-  if (!etat.trace) {
-    toast("Charge d'abord une trace avant d'exporter.", true);
+  if (!carnetExportable()) {
+    toast("Ce carnet est vide : ajoute une trace, une zone ou des souvenirs.", true);
     return;
   }
+  // Le cadre de sélection et la barre flottante ne doivent pas être sur l'image.
+  deselectionnerAnnotation();
   toast("Préparation de l'image… (quelques secondes)");
   try {
     const domtoimage = await chargerDomToImage();
@@ -4678,6 +5060,8 @@ const reglagesAffiche = {
   orientation: "portrait",
   police: "systeme",
   couleur: "#2f3b34",
+  zone: null,       // {sud,ouest,nord,est} : cadrage export calé sur la zone du carnet
+  zoneRatio: null,  // proportion largeur/hauteur (px) de la zone
 };
 // Comme pour etat ci-dessus : la fenêtre d'impression lit ces réglages via
 // window.opener.reglagesAffiche, ce qui exige une vraie propriété de window.
@@ -4685,9 +5069,36 @@ window.reglagesAffiche = reglagesAffiche;
 
 /** Ouvre la fenêtre de réglages de l'affiche PDF. */
 function ouvrirModalAffiche() {
-  if (!etat.trace) {
-    toast("Charge d'abord une trace avant d'exporter une affiche.", true);
+  if (!carnetExportable()) {
+    toast("Ce carnet est vide : ajoute une trace, une zone ou des souvenirs.", true);
     return;
+  }
+  // Cadrage de l'export calé sur la ZONE de cadrage du carnet, si elle existe :
+  // la carte imprimée reprend exactement la zone (et son format/orientation).
+  const c = carnetActif();
+  const z = c && typeof normaliserZone === "function" ? normaliserZone(c.zone) : null;
+  if (z) {
+    reglagesAffiche.zone = { sud: z.sud, ouest: z.ouest, nord: z.nord, est: z.est };
+    // Proportion (px) de la zone : stockée, ou recalculée par projection.
+    let ratio = z.ratio;
+    if (!(ratio > 0) && etat.carte) {
+      const p1 = etat.carte.latLngToContainerPoint([z.nord, z.ouest]);
+      const p2 = etat.carte.latLngToContainerPoint([z.sud, z.est]);
+      const w = Math.abs(p2.x - p1.x), h = Math.abs(p2.y - p1.y);
+      if (w > 0 && h > 0) ratio = w / h;
+    }
+    reglagesAffiche.zoneRatio = ratio || null;
+    if (z.format && /^A[0-5]$/.test(z.format)) {
+      // Format papier (A5→A2…) : on reprend format ET orientation.
+      reglagesAffiche.format = z.format;
+      if (z.orientation === "portrait" || z.orientation === "paysage") reglagesAffiche.orientation = z.orientation;
+    } else if (ratio > 0) {
+      // Format non-A (carré/photo/pano) ou zone auto : on aligne l'orientation.
+      reglagesAffiche.orientation = ratio >= 1 ? "paysage" : "portrait";
+    }
+  } else {
+    reglagesAffiche.zone = null;
+    reglagesAffiche.zoneRatio = null;
   }
   majSegment("affiche-format", "format", reglagesAffiche.format);
   majSegment("affiche-orientation", "orientation", reglagesAffiche.orientation);
@@ -4711,8 +5122,8 @@ function fermerModalAffiche() {
  * l'application principale n'est jamais modifiée et reste utilisable.
  */
 function exporterAffiche(reglages) {
-  if (!etat.trace) {
-    toast("Charge d'abord une trace avant d'exporter une affiche.", true);
+  if (!carnetExportable()) {
+    toast("Ce carnet est vide : ajoute une trace, une zone ou des souvenirs.", true);
     return;
   }
   const fenetre = window.open("impression.html", "_blank", "width=900,height=1000");
@@ -4770,6 +5181,9 @@ function importerCarnetFichier(fichier) {
         logo: typeof meta.logo === "string" ? meta.logo : "",
         categorie: typeof meta.categorie === "string" ? meta.categorie : "",
         description: typeof meta.description === "string" ? meta.description : "",
+        zone: normaliserZone(meta.zone),
+        formatZone: typeof meta.formatZone === "string" ? meta.formatZone : "",
+        orientationZone: meta.orientationZone === "paysage" ? "paysage" : "portrait",
         modifieLe: new Date().toISOString(),
       });
       etat.carnetActifId = id;
@@ -5436,8 +5850,6 @@ function init() {
     .addEventListener("click", supprimerAnnotationActive);
   document.getElementById("annot-choisir-picto")
     .addEventListener("click", ouvrirPictoPickerAnnotation);
-  document.getElementById("annot-texte")
-    .addEventListener("input", (e) => majAnnotationActive({ texte: e.target.value }));
   document.getElementById("annot-couleur")
     .addEventListener("input", (e) => majAnnotationActive({ couleur: e.target.value }));
   document.getElementById("annot-taille")
@@ -5455,14 +5867,14 @@ function init() {
       const a = etat.annotationActive;
       if (!a) return;
       majAnnotationActive({ gras: !a.gras });
-      e.target.classList.toggle("actif", a.gras);
+      e.currentTarget.classList.toggle("actif", a.gras);
     });
   document.getElementById("annot-italique")
     .addEventListener("click", (e) => {
       const a = etat.annotationActive;
       if (!a) return;
       majAnnotationActive({ italique: !a.italique });
-      e.target.classList.toggle("actif", a.italique);
+      e.currentTarget.classList.toggle("actif", a.italique);
     });
 
   // --- Fenêtre de choix de police (catalogue + import) ---
@@ -5620,12 +6032,12 @@ function init() {
   // Styles médiévaux prêts à l'emploi.
   brancherSegment("preset-fond", "preset", appliquerPresetFond);
 
-  // Couches géographiques affichées / masquées.
+  // Couches géographiques affichées / masquées. L'affichage se met à jour
+  // instantanément (plus besoin de recharger tout le style comme avant).
   document.querySelectorAll(".couches-liste input[data-couche]").forEach((inp) => {
     inp.addEventListener("change", () => {
       etat.style.vecteur.couches[inp.dataset.couche] = inp.checked;
-      // On recharge le style pour ré-afficher proprement une couche recochée.
-      appliquerSimplificationVecteur();
+      appliquerCouchesVisibles();
       planifierSauvegarde();
     });
   });
@@ -5758,7 +6170,11 @@ function init() {
     .then(() => { if (typeof demarrerUI === "function") demarrerUI(); });
 
   // On enregistre le service worker (pour l'installation et le hors-ligne).
-  if ("serviceWorker" in navigator) {
+  // En développement local (localhost / 127.0.0.1) on ne l'active PAS, et on
+  // nettoie un éventuel cache : sinon les modifications de code ne se voient
+  // qu'après avoir vidé le cache à la main.
+  const enLocal = ["localhost", "127.0.0.1", ""].includes(location.hostname);
+  if ("serviceWorker" in navigator && !enLocal) {
     // Quand une nouvelle version prend le contrôle, on recharge la page pour
     // l'appliquer aussitôt (sinon l'app resterait sur l'ancien code en cache).
     let rechargement = false;
@@ -5770,6 +6186,12 @@ function init() {
     navigator.serviceWorker.register("sw.js").catch(() => {
       /* sans service worker, l'app fonctionne quand même (juste pas hors-ligne) */
     });
+  } else if ("serviceWorker" in navigator && enLocal) {
+    navigator.serviceWorker.getRegistrations()
+      .then((rs) => rs.forEach((r) => r.unregister())).catch(() => {});
+    if (window.caches && caches.keys) {
+      caches.keys().then((ks) => ks.forEach((k) => caches.delete(k))).catch(() => {});
+    }
   }
 
   // --- Menu des actions (hamburger) ---

@@ -13,7 +13,7 @@
 
 (function () {
   const parent = window.opener;
-  if (!parent || !parent.etat || !parent.etat.trace) {
+  if (!parent || !parent.etat) {
     document.body.innerHTML =
       '<p style="padding:40px;font-family:sans-serif;max-width:560px;">' +
       "Impossible de récupérer le carnet depuis l'application. " +
@@ -49,7 +49,7 @@
   /* ---------- Constantes (reprises de app.js) ---------- */
 
   const FORMATS_PAPIER = {
-    A0: [841, 1189], A1: [594, 841], A2: [420, 594], A3: [297, 420], A4: [210, 297],
+    A0: [841, 1189], A1: [594, 841], A2: [420, 594], A3: [297, 420], A4: [210, 297], A5: [148, 210],
   };
   const TYPES_LIGNE = { plein: null, pointilles: "2 8", tirets: "10 9" };
   const FONDS = {
@@ -316,8 +316,12 @@
   let cartePrincipale = null;
 
   function construireCartePrincipale(largeurMm, hauteurMm) {
-    document.getElementById("zone-carte").style.width = largeurMm + "mm";
-    document.getElementById("zone-carte").style.height = hauteurMm + "mm";
+    const zoneCarteEl = document.getElementById("zone-carte");
+    zoneCarteEl.style.width = largeurMm + "mm";
+    zoneCarteEl.style.height = hauteurMm + "mm";
+    // Carte plus étroite que la page (zone au format non-A) : on la centre.
+    zoneCarteEl.style.marginLeft = "auto";
+    zoneCarteEl.style.marginRight = "auto";
 
     // Carte INTERACTIVE : l'utilisateur ajuste le cadrage (déplacement à la
     // souris, zoom précis via le champ de la barre ou la molette — zoomSnap:0
@@ -608,12 +612,13 @@
     } catch (e) { /* décor inaccessibles : l'affiche reste imprimable */ }
 
     const t = style.trace || { couleur: "#c8893d", epaisseur: 4, type: "plein" };
-    trace.segments.forEach((seg) => {
-      L.polyline(seg, { color: t.couleur, weight: t.epaisseur, opacity: 0.9, dashArray: TYPES_LIGNE[t.type] }).addTo(carte);
-    });
-
     const points = [];
-    trace.segments.forEach((seg) => seg.forEach((p) => points.push(p)));
+    if (trace) {
+      trace.segments.forEach((seg) => {
+        L.polyline(seg, { color: t.couleur, weight: t.epaisseur, opacity: 0.9, dashArray: TYPES_LIGNE[t.type] }).addTo(carte);
+      });
+      trace.segments.forEach((seg) => seg.forEach((p) => points.push(p)));
+    }
     souvenirs.forEach((s, i) => {
       L.marker([s.lat, s.lng], { icon: creerIconeSouvenir(i + 1, s.pictogramme) }).addTo(carte);
       points.push([s.lat, s.lng]);
@@ -666,10 +671,14 @@
         // Les noms de polices contiennent des guillemets : on les échappe.
         contenu = `<div class="annot-texte" style="${css.replace(/"/g, "&quot;")}">${html}</div>`;
       }
+      // L'inclinaison éventuelle (poignée de rotation) est reproduite ici.
+      const rotation = typeof a.rotation === "number" && a.rotation !== 0
+        ? ` style="transform: translate(-50%, -50%) rotate(${a.rotation}deg)"`
+        : "";
       L.marker([a.lat, a.lng], {
         icon: L.divIcon({
           className: "",
-          html: `<div class="annot-wrap">${contenu}</div>`,
+          html: `<div class="annot-wrap"${rotation}>${contenu}</div>`,
           iconSize: [0, 0],
         }),
         interactive: false,
@@ -678,7 +687,20 @@
     });
 
     carte.invalidateSize();
-    if (points.length) carte.fitBounds(points, { padding: [20, 20], animate: false });
+    // Si le carnet a une ZONE de cadrage, la carte s'y cale exactement
+    // (la zone-carte a déjà la bonne proportion). Sinon, on cadre sur le contenu.
+    if (reglages.zone) {
+      const zb = L.latLngBounds(
+        [reglages.zone.sud, reglages.zone.ouest],
+        [reglages.zone.nord, reglages.zone.est]
+      );
+      carte.fitBounds(zb, { padding: [0, 0], animate: false });
+    } else if (points.length) {
+      carte.fitBounds(points, { padding: [20, 20], animate: false });
+    } else {
+      // Carnet sans trace, sans zone ni contenu géolocalisé : vue par défaut.
+      carte.setView([46.6, 2.5], 5);
+    }
 
     const titre = (style.titre || "").trim();
     if (titre) {
@@ -783,16 +805,18 @@
     ).addTo(carte);
 
     const couche = L.layerGroup().addTo(carte);
-    trace.segments.forEach((seg) => {
-      L.polyline(seg, { color: "#c8893d", weight: 2, opacity: 0.85 }).addTo(couche);
-    });
+    if (trace) {
+      trace.segments.forEach((seg) => {
+        L.polyline(seg, { color: "#c8893d", weight: 2, opacity: 0.85 }).addTo(couche);
+      });
+    }
     L.circleMarker([souvenir.lat, souvenir.lng], {
       radius: 5, weight: 2, color: "#fff", fillColor: "#d35438", fillOpacity: 1,
     }).addTo(couche);
 
     carte.invalidateSize();
     const points = [];
-    trace.segments.forEach((seg) => seg.forEach((p) => points.push(p)));
+    if (trace) trace.segments.forEach((seg) => seg.forEach((p) => points.push(p)));
     points.push([souvenir.lat, souvenir.lng]);
     if (points.length) {
       carte.fitBounds(points, { paddingTopLeft: [8, 8], paddingBottomRight: [8, 8] });
@@ -882,7 +906,19 @@
     const hauteurPageMm = hauteur - MARGE_MM * 2;
     const hauteurUtileMm = hauteurPageMm - MARGE_SECURITE_MM;
 
-    const attenteCarte = construireCartePrincipale(largeurUtileMm, hauteurPageMm);
+    // Dimensions de la carte principale : si une zone de cadrage est définie,
+    // on respecte SA proportion (« contain » dans la zone imprimable), centrée.
+    // Sinon la carte occupe toute la page (rendu poster comme avant).
+    let mapLargeurMm = largeurUtileMm, mapHauteurMm = hauteurPageMm;
+    if (reglages.zone && reglages.zoneRatio > 0) {
+      const dispoRatio = largeurUtileMm / hauteurPageMm;
+      if (reglages.zoneRatio >= dispoRatio) {
+        mapLargeurMm = largeurUtileMm; mapHauteurMm = largeurUtileMm / reglages.zoneRatio;
+      } else {
+        mapHauteurMm = hauteurPageMm; mapLargeurMm = hauteurPageMm * reglages.zoneRatio;
+      }
+    }
+    const attenteCarte = construireCartePrincipale(mapLargeurMm, mapHauteurMm);
 
     // Sans souvenir, pas de section "Souvenirs du voyage" : la carte seule
     // (et pas de saut de page après elle, qui laisserait une feuille blanche).
@@ -1074,7 +1110,7 @@
         let nomCarnet = "carte";
         try {
           const c = (etatParent.carnets || []).find((x) => x.id === etatParent.carnetActifId);
-          nomCarnet = (c && c.nom) || trace.name || "carte";
+          nomCarnet = (c && c.nom) || (trace && trace.name) || "carte";
         } catch (e) {}
         lien.download = "affiche-" + nomCarnet.replace(/[^\w\-]+/g, "_") + ".png";
         lien.href = dataUrl;

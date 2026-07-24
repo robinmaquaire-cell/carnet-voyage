@@ -13,9 +13,9 @@
   --ocre:        #c8893d;  /* ocre / sentier */
   --ocre-clair:  #e0b878;
   --bleu-eau:    #3a7ca5;  /* bleu rivière / lac */
-  --ligne:       #d8cfba;  /* lignes de séparation */
+  --ligne:       rgba(47, 59, 52, 0.13);  /* lignes de séparation, subtiles */
   --carte-bg:    #ffffff;
-  --ombre:       0 2px 10px rgba(47, 59, 52, 0.12);
+  --ombre:       0 1px 2px rgba(47, 59, 52, 0.06), 0 6px 20px rgba(47, 59, 52, 0.06);
   --rayon:       14px;
 }
 
@@ -42,9 +42,9 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 10px 16px;
-  background: var(--foret-fonce);
-  color: var(--papier);
-  box-shadow: var(--ombre);
+  background: #f7f2e8;                 /* chrome clair (papier) */
+  color: var(--encre);
+  border-bottom: 1px solid var(--ligne);
   z-index: 1000;
 }
 
@@ -52,11 +52,11 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
 }
 .brand-mark {
-  color: var(--ocre-clair);
+  color: var(--ocre);
   font-size: 18px;
 }
 .brand-name {
@@ -69,8 +69,8 @@ body {
 /* Indicateur "Enregistré" qui apparaît brièvement après chaque sauvegarde */
 .statut-sauvegarde {
   font-size: 13px;
-  font-weight: 700;
-  color: #cfe9d8;
+  font-weight: 600;
+  color: var(--foret);
   opacity: 0;
   transition: opacity .25s ease;
 }
@@ -145,7 +145,7 @@ body.mode-visualisation .menu-groupe:not(:has(.btn:not([hidden]):not(.edition-se
   border: 1.5px solid transparent;
   border-radius: 999px;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
   user-select: none;
   transition: transform .05s ease, filter .15s ease, background .15s ease;
@@ -248,6 +248,44 @@ body.mode-visualisation .menu-groupe:not(:has(.btn:not([hidden]):not(.edition-se
   align-items: center;
   justify-content: center;
   pointer-events: none;
+}
+
+/* Choix de création d'un carnet (GPX / point sur la carte / vide). */
+.nouveau-carnet-choix {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 4px;
+}
+.nouveau-carnet-choix label.btn { cursor: pointer; justify-content: center; }
+
+/* Ligne d'import d'une image d'épingle personnalisée (onglet Fond de carte). */
+.epingle-perso-ligne {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+/* Badges des types de contenu (photo/récit/audio), sous l'épingle. */
+.pin-badges {
+  position: absolute;
+  bottom: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 1px;
+  padding: 1px 2px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(47, 59, 52, 0.18);
+  border-radius: 7px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.pin-badges span {
+  font-size: 8px;
+  line-height: 10px;
 }
 
 /* Grille de sélection du pictogramme dans la fiche */
@@ -361,6 +399,45 @@ body.mode-visualisation .menu-groupe:not(:has(.btn:not([hidden]):not(.edition-se
 /* Curseur en croix sur la carte quand on est en mode "ajout" */
 .map.mode-ajout { cursor: crosshair; }
 .map.mode-ajout .leaflet-grab { cursor: crosshair; }
+.map.mode-zone, .map.mode-zone .leaflet-grab { cursor: default; }
+
+/* ---- Éditeur de zone de cadrage (formats + poignées) ---- */
+.zone-editeur { position: absolute; inset: 0; z-index: 1200; pointer-events: none; }
+.zone-editeur-box {
+  position: absolute; box-sizing: border-box;
+  border: 2px solid #FF6B35; background: rgba(255,107,53,0.05);
+  box-shadow: 0 0 0 100vmax rgba(16,48,44,0.34);
+  cursor: move; pointer-events: auto; touch-action: none;
+}
+.zone-editeur-poignee {
+  position: absolute; width: 18px; height: 18px; margin: -10px 0 0 -10px;
+  background: #fff; border: 2px solid #FF6B35; border-radius: 50%;
+  pointer-events: auto; touch-action: none; box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+}
+.zone-editeur-poignee.nw { left: 0;    top: 0;    cursor: nwse-resize; }
+.zone-editeur-poignee.ne { left: 100%; top: 0;    cursor: nesw-resize; }
+.zone-editeur-poignee.sw { left: 0;    top: 100%; cursor: nesw-resize; }
+.zone-editeur-poignee.se { left: 100%; top: 100%; cursor: nwse-resize; }
+.zone-editeur-ratio {
+  position: absolute; top: -28px; left: 50%; transform: translateX(-50%);
+  background: #10302C; color: #fff; font-size: 12px; font-weight: 600;
+  padding: 3px 9px; border-radius: 7px; white-space: nowrap; pointer-events: none;
+}
+.zone-editeur-barre {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: center;
+  background: #fff; border: 1.5px solid #DCE6E2; border-radius: 16px;
+  padding: 8px 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.20);
+  pointer-events: auto; max-width: 94%;
+}
+.zone-editeur-barre .zeb-groupe { display: flex; gap: 4px; flex-wrap: wrap; }
+.zone-fmt-btn, .zone-ori-btn {
+  border: 1.5px solid #DCE6E2; background: #F1F6F4; color: #10302C;
+  border-radius: 9px; padding: 5px 9px; font-size: 13px; cursor: pointer; line-height: 1.1;
+}
+.zone-fmt-btn.actif, .zone-ori-btn.actif { background: #0F4C4C; color: #fff; border-color: #0F4C4C; }
+.zone-ori-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.zone-editeur-sep { width: 1px; align-self: stretch; background: #DCE6E2; margin: 0 3px; }
 
 /* Bouton "Ajouter des souvenirs" : mis en évidence quand le mode est actif */
 #btn-ajout-souvenir.actif {
@@ -401,8 +478,8 @@ body.mode-visualisation .menu-groupe:not(:has(.btn:not([hidden]):not(.edition-se
   border: 1.5px solid transparent;
   border-radius: 10px;
   padding: 8px 10px;
-  font-size: 18px;
-  font-weight: 800;
+  font-size: 17px;
+  font-weight: 650;
   font-family: inherit;
   color: var(--foret-fonce);
   background: var(--papier);
@@ -780,18 +857,21 @@ body.mode-visualisation .menu-groupe:not(:has(.btn:not([hidden]):not(.edition-se
 }
 .panneau-titre-fixe {
   flex: 1;
-  font-size: 17px;
-  font-weight: 800;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: 0.1px;
   color: var(--foret-fonce);
   padding: 8px 2px;
 }
 
-.style-section { margin-bottom: 22px; }
+.style-section { margin-bottom: 24px; }
 .style-section h3 {
   margin: 0 0 10px;
-  font-size: 15px;
-  font-weight: 800;
-  color: var(--foret-fonce);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+  color: var(--encre-douce);
 }
 .style-input {
   width: 100%;
@@ -985,41 +1065,183 @@ body.mode-visualisation .menu-groupe:not(:has(.btn:not([hidden]):not(.edition-se
     0 0 4px rgba(255, 255, 255, 0.9),
     0 0 2px rgba(255, 255, 255, 0.9);
 }
-/* Cadre en pointillés autour de l'élément sélectionné. */
-.annot-actif {
-  outline: 2px dashed var(--foret);
-  outline-offset: 5px;
-  border-radius: 4px;
+/* =========================================================
+   Sélection façon Miro : cadre à poignées + barre flottante
+   ========================================================= */
+
+/* Le cadre bleu autour de l'élément sélectionné. */
+#cadre-selection {
+  position: absolute;
+  z-index: 1050;
+  border: 1.5px solid #4262ff;
+  border-radius: 2px;
+  pointer-events: none;      /* seules les poignées se manipulent */
+  transform-origin: center center;
+}
+#cadre-selection[hidden] { display: none; }
+/* Pour une flèche, pas de boîte : seulement ses deux extrémités. */
+#cadre-selection.cadre-ligne { border-color: transparent; }
+
+/* Les poignées : angles (redimensionner), extrémités, rotation. */
+.cadre-poignee {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border: 1.5px solid #9aa3b2;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(20, 30, 60, 0.25);
+  pointer-events: auto;
+  touch-action: none;        /* le doigt manipule la poignée, pas la carte */
+}
+.cadre-poignee[hidden] { display: none; }
+.cadre-poignee:hover { border-color: #4262ff; }
+
+.cadre-coin-nw { left: -8px;  top: -8px;    cursor: nwse-resize; }
+.cadre-coin-ne { right: -8px; top: -8px;    cursor: nesw-resize; }
+.cadre-coin-se { right: -8px; bottom: -8px; cursor: nwse-resize; }
+.cadre-coin-sw { left: -8px;  bottom: -8px; cursor: nesw-resize; }
+
+/* Extrémités d'une flèche : positionnées en pixels par selection.js. */
+.cadre-bout {
+  margin: -8px 0 0 -8px;
+  border-color: #4262ff;
+  cursor: move;
 }
 
-/* Boutons "+ Pictogramme" / "+ Texte" côte à côte. */
-.annot-btns {
-  display: flex;
-  gap: 6px;
-}
-.annot-btns .btn { flex: 1; }
-
-/* Éditeur de l'élément sélectionné, encadré dans le panneau. */
-.annot-editeur {
-  margin-top: 12px;
-  border: 1.5px solid var(--ligne);
-  border-radius: 12px;
-  padding: 12px;
-  background: rgba(255, 255, 255, 0.55);
-}
-.annot-editeur[hidden] { display: none; }
-.annot-editeur-tete {
+/* Poignée de rotation, sous le cadre. */
+.cadre-rotation {
+  left: 50%;
+  bottom: -30px;
+  margin-left: -10px;
+  width: 20px;
+  height: 20px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  font-weight: 800;
-  font-size: 14px;
+  justify-content: center;
+  color: #55606f;
+  cursor: grab;
 }
-.annot-texte-input {
-  resize: vertical;
-  min-height: 44px;
+.cadre-rotation:active { cursor: grabbing; }
+
+/* Poignée de déplacement, à gauche du cadre (glisser pour déplacer). */
+.cadre-deplacer {
+  left: -30px;
+  top: 50%;
+  margin-top: -11px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #4262ff;
+  border-color: #4262ff;
+  cursor: grab;
 }
-.annot-editeur .btn-danger { margin-top: 10px; width: 100%; }
+.cadre-deplacer:active { cursor: grabbing; }
+
+/* La barre flottante d'édition, juste au-dessus de l'élément. */
+.barre-element {
+  position: absolute;
+  z-index: 1060;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  max-width: min(560px, calc(100% - 16px));
+  padding: 6px 8px;
+  background: #fff;
+  border: 1px solid rgba(47, 59, 52, 0.08);
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(20, 30, 60, 0.18);
+}
+.barre-element[hidden] { display: none; }
+.barre-groupe { display: flex; align-items: center; gap: 4px; }
+.barre-groupe[hidden] { display: none; }
+.barre-sep { width: 1px; height: 22px; background: var(--ligne); margin: 0 2px; flex: none; }
+
+/* Boutons compacts de la barre (gras, italique, alignement, corbeille…). */
+.barre-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--encre);
+  font-size: 15px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.barre-btn:hover { background: rgba(66, 98, 255, 0.08); }
+.barre-btn.actif { background: rgba(66, 98, 255, 0.16); color: #2b47cc; }
+.barre-btn b, .barre-btn i, .barre-btn u, .barre-btn s,
+.barre-btn svg { pointer-events: none; }
+.barre-danger:hover { background: rgba(180, 69, 47, 0.12); }
+
+/* Le bouton Police affiche le nom de la police courante. */
+.barre-police {
+  max-width: 130px;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  line-height: 32px;
+}
+
+/* Pastille de couleur (texte, dessins). */
+.barre-couleur { display: inline-flex; align-items: center; }
+.barre-couleur input[type="color"] {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--ligne);
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+}
+
+/* Curseurs compacts (taille, épaisseur) avec leur valeur. */
+.barre-curseur { display: inline-flex; align-items: center; gap: 6px; }
+.barre-curseur input[type="range"] { width: 88px; accent-color: #4262ff; }
+.barre-valeur { font-size: 12px; color: var(--encre-douce); min-width: 34px; text-align: right; }
+
+/* Champ texte compact (légende de photo). */
+.barre-input {
+  height: 30px;
+  width: 170px;
+  border: 1px solid var(--ligne);
+  border-radius: 8px;
+  padding: 0 8px;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+/* Bouton du pictogramme courant. */
+.barre-picto { font-size: 20px; }
+.barre-picto img { height: 22px; display: block; }
+
+/* Interrupteur « Remplir » (case cachée, aspect bouton). */
+.barre-toggle { gap: 4px; font-size: 13px; }
+.barre-toggle input { display: none; }
+.barre-toggle:has(input:checked) { background: rgba(66, 98, 255, 0.16); color: #2b47cc; }
+
+/* Texte en cours de modification directement sur la carte. */
+.annot-texte.annot-edition {
+  outline: none;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+  min-width: 8px;
+}
+
+/* Traits, formes et dessins : cliquables et déplaçables en édition. */
+.vecteur-interactif { cursor: pointer; }
+body:not(.mode-visualisation) .vecteur-interactif { touch-action: none; }
 
 /* Champs numériques de réglage fin (arrondi, simplification, tailles). */
 .style-nombre { max-width: 110px; }
@@ -1472,7 +1694,12 @@ body.mode-visualisation .menu-groupe:not(:has(.btn:not([hidden]):not(.edition-se
   padding: 24px;
   background: radial-gradient(circle at 50% 30%, rgba(243,238,226,0.85), rgba(243,238,226,0.97));
   backdrop-filter: blur(2px);
+  /* Le voile ne capte pas les clics : la carte reste utilisable autour de la
+     carte d'accueil (on peut la déplacer, zoomer, y placer un point). */
+  pointer-events: none;
 }
+/* Seule la carte blanche est cliquable. */
+.welcome-card { pointer-events: auto; }
 /* Important : sans cette règle, le "display: flex" ci-dessus l'emporterait
    sur l'attribut "hidden", et la pop up resterait affichée même cachée. */
 .welcome[hidden] { display: none; }
@@ -2198,17 +2425,17 @@ body.vue-editeur .accueil-seule { display: none !important; }
 /* ---------- Barre du haut : variantes ---------- */
 .topbar-gauche { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .btn-retour {
-  border: 1.5px solid rgba(255,255,255,0.3);
-  background: rgba(255,255,255,0.12);
-  color: #fff;
+  border: 1px solid var(--ligne);
+  background: var(--carte-bg);
+  color: var(--encre);
   border-radius: 999px;
   padding: 8px 14px;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
 }
-.btn-retour:hover { background: rgba(255,255,255,0.22); }
+.btn-retour:hover { background: var(--papier); }
 .editeur-identite {
   display: flex;
   align-items: center;
@@ -2216,15 +2443,15 @@ body.vue-editeur .accueil-seule { display: none !important; }
   min-width: 0;
   border: none;
   background: transparent;
-  color: var(--papier);
+  color: var(--encre);
   font-size: 16px;
-  font-weight: 800;
+  font-weight: 650;
   font-family: inherit;
   cursor: pointer;
   padding: 6px 10px;
   border-radius: 10px;
 }
-.editeur-identite:hover { background: rgba(255,255,255,0.12); }
+.editeur-identite:hover { background: var(--papier); }
 .editeur-identite #editeur-nom {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2237,12 +2464,13 @@ body.vue-editeur .accueil-seule { display: none !important; }
 .rail {
   flex: none;
   width: 78px;
-  background: var(--foret-fonce);
+  background: #f7f2e8;                 /* chrome clair (papier) */
+  border-right: 1px solid var(--ligne);
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  padding: 6px 0;
-  gap: 2px;
+  padding: 8px 0;
+  gap: 3px;
   overflow-y: auto;
   z-index: 950;
 }
@@ -2250,20 +2478,21 @@ body.vue-editeur .accueil-seule { display: none !important; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   padding: 10px 4px;
   border: none;
   background: transparent;
-  color: rgba(255,255,255,0.85);
+  color: var(--encre-douce);
   cursor: pointer;
-  border-radius: 10px;
-  margin: 0 5px;
+  border-radius: 11px;
+  margin: 0 6px;
   font-family: inherit;
+  transition: background .15s ease, color .15s ease;
 }
-.rail-btn:hover { background: rgba(255,255,255,0.12); }
-.rail-btn.actif { background: rgba(255,255,255,0.2); color: #fff; }
+.rail-btn:hover { background: var(--papier); }
+.rail-btn.actif { background: #e4efe7; color: var(--foret-fonce); }
 .rail-ico { font-size: 20px; line-height: 1; }
-.rail-label { font-size: 10px; font-weight: 700; text-align: center; line-height: 1.15; }
+.rail-label { font-size: 10px; font-weight: 550; text-align: center; line-height: 1.15; letter-spacing: 0.2px; }
 
 /* ---------- Tiroir : le panneau de l'onglet ouvert ---------- */
 .tiroir {
@@ -2422,15 +2651,86 @@ body.vue-editeur .accueil-seule { display: none !important; }
   background: var(--carte-bg);
   color: var(--encre);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 550;
   cursor: pointer;
   font-family: inherit;
+  transition: background .15s ease, border-color .15s ease;
 }
 .outil-btn span { font-size: 22px; line-height: 1; }
-.outil-btn:hover { background: var(--papier); }
+.outil-btn .oi { color: var(--encre); }
+.outil-btn .oi svg { width: 22px; height: 22px; display: block; }
+.rail-ico svg { width: 22px; height: 22px; display: block; }
+.outil-large .oi svg { width: 24px; height: 24px; display: block; }
+.oi-vert { color: var(--foret); }
+.outil-btn:hover { background: var(--papier); border-color: rgba(47,59,52,0.22); }
 .outil-btn.actif { border-color: var(--foret); background: #e4efe7; }
 
+/* Bouton d'outil « pleine largeur » (action principale : poser un souvenir) */
+.outil-large {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 14px;
+  border: 1.5px solid var(--ligne);
+  border-radius: 14px;
+  background: var(--carte-bg);
+  color: var(--encre);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: background .15s ease, border-color .15s ease;
+}
+.outil-large > span:first-child { font-size: 22px; line-height: 1; }
+.outil-large-txt { display: flex; flex-direction: column; gap: 2px; }
+.outil-large-txt strong { font-size: 14px; font-weight: 650; }
+.outil-large-txt small { font-size: 12px; color: var(--encre-douce); }
+.outil-large:hover { background: var(--papier); border-color: rgba(47,59,52,0.22); }
+.outil-large.actif { border-color: #d35438; background: #fdeee9; }
+.outil-large.actif small { color: #b4452f; }
+
 /* ---------- Onglet Importer : photos posées ---------- */
+/* Liste des éléments ajoutés (onglet Outils). */
+.elements-liste { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }
+.element-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1.5px solid var(--ligne);
+  border-radius: 10px;
+  padding: 6px 8px;
+  background: var(--carte-bg);
+  cursor: pointer;
+}
+.element-item:hover { background: var(--papier); }
+.element-item.actif { border-color: #4262ff; box-shadow: 0 0 0 1px #4262ff inset; }
+.element-item-icone {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+}
+.element-item-icone img {
+  width: 26px;
+  height: 26px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+.element-item-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.element-item-suppr { flex: none; opacity: 0.55; }
+.element-item-suppr:hover { opacity: 1; }
+
 .importer-liste { display: flex; flex-direction: column; gap: 8px; }
 .importer-item {
   display: flex;
@@ -2823,7 +3123,7 @@ body.vue-editeur .accueil-seule { display: none !important; }
 label.outil-btn { cursor: pointer; }
 
 /* Pendant un tracé au doigt, la carte ne doit ni bouger ni zoomer. */
-.map.mode-ajout { touch-action: none; }
+.map.mode-ajout, .map.mode-zone { touch-action: none; }
 
 /* ---------- Liste des GPX du carnet (et lignes de partage) ---------- */
 .gpx-liste, .partage-liste { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }

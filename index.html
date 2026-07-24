@@ -70,11 +70,11 @@
 
     <!-- Rail d'onglets (éditeur, façon Canva) -->
     <nav id="rail" class="rail editeur-seule">
-      <button class="rail-btn" data-onglet="carnets"><span class="rail-ico">📓</span><span class="rail-label">Carnet</span></button>
-      <button class="rail-btn" data-onglet="souvenirs"><span class="rail-ico">📍</span><span class="rail-label">Souvenirs</span></button>
-      <button class="rail-btn" data-onglet="outils"><span class="rail-ico">✏️</span><span class="rail-label">Outils</span></button>
-      <button class="rail-btn" data-onglet="fond"><span class="rail-ico">🗺️</span><span class="rail-label">Fond de carte</span></button>
-      <button class="rail-btn" data-onglet="export"><span class="rail-ico">📤</span><span class="rail-label">Export</span></button>
+      <button class="rail-btn" data-onglet="carnets"><span class="rail-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="4" width="13" height="16" rx="2"/><path d="M9.5 4v16"/></svg></span><span class="rail-label">Carnet</span></button>
+      <button class="rail-btn" data-onglet="souvenirs"><span class="rail-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-5.5-4.8-5.5-9.5A5.5 5.5 0 0 1 17.5 11.5C17.5 16.2 12 21 12 21z"/><circle cx="12" cy="11.5" r="2"/></svg></span><span class="rail-label">Souvenirs</span></button>
+      <button class="rail-btn" data-onglet="outils"><span class="rail-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l3.5-.8 9-9a2 2 0 0 0-2.8-2.8l-9 9L4 20z"/><path d="M12.5 6.5l3 3"/></svg></span><span class="rail-label">Outils</span></button>
+      <button class="rail-btn" data-onglet="fond"><span class="rail-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4.5L3.5 6.5v13L9 17.5l6 2 5.5-2v-13L15 6.5l-6-2z"/><path d="M9 4.5v13"/><path d="M15 6.5v13"/></svg></span><span class="rail-label">Fond de carte</span></button>
+      <button class="rail-btn" data-onglet="export"><span class="rail-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15.5V4.5"/><path d="M8 8.5l4-4 4 4"/><path d="M5.5 14v5a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-5"/></svg></span><span class="rail-label">Export</span></button>
     </nav>
 
     <!-- Tiroir : le panneau de l'onglet ouvert (éditeur) -->
@@ -208,23 +208,54 @@
         <div class="panneau-corps">
 
           <section class="style-section">
+            <h3>Souvenirs</h3>
+            <button id="outil-souvenir" class="outil-large">
+              <span class="oi oi-vert"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-5.5-4.8-5.5-9.5A5.5 5.5 0 0 1 17.5 11.5C17.5 16.2 12 21 12 21z"/><circle cx="12" cy="11.5" r="2"/></svg></span>
+              <span class="outil-large-txt">
+                <strong>Poser un souvenir</strong>
+                <small>Clique sur la carte pour le placer</small>
+              </span>
+            </button>
+            <p class="style-aide">Crée des souvenirs en réserve et retrouve toute la liste
+               dans l'onglet <strong>📍 Souvenirs</strong>.</p>
+          </section>
+
+          <section class="style-section">
+            <h3>Texte</h3>
             <div class="outils-grille outils-grille-3">
-              <button id="texte-ajouter-libre" class="outil-btn"><span>🔤</span>Texte</button>
-              <button id="texte-ajouter-titre" class="outil-btn"><span>𝐓</span>Titre</button>
-              <button id="texte-ajouter-lieu" class="outil-btn"><span>🏷️</span>Lieu</button>
-              <label class="outil-btn" for="importer-photo-input"><span>🖼️</span>Photo
+              <button id="texte-ajouter-libre" class="outil-btn"><span class="oi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h14"/><path d="M5 12h14"/><path d="M5 17h9"/></svg></span>Texte</button>
+              <button id="texte-ajouter-titre" class="outil-btn"><span class="oi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h14"/><path d="M12 7v11"/></svg></span>Titre</button>
+              <button id="texte-ajouter-lieu" class="outil-btn"><span class="oi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h7l9 9-7 7-9-9V4z"/><path d="M8.5 8.5h.01"/></svg></span>Lieu</button>
+            </div>
+          </section>
+
+          <section class="style-section">
+            <h3>Image &amp; pictogrammes</h3>
+            <div class="outils-grille">
+              <label class="outil-btn" for="importer-photo-input"><span class="oi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M20.5 16l-5-5-4 4-2-2-3.5 3.5"/></svg></span>Photo
                 <input id="importer-photo-input" type="file" accept="image/*" hidden />
               </label>
-              <button id="btn-ajout-annot-picto" class="outil-btn"><span>😀</span>Pictogramme</button>
-              <button class="outil-btn" data-outil="dessin"><span>✍️</span>Stylo</button>
-              <button class="outil-btn" data-outil="trait"><span>📏</span>Trait</button>
-              <button class="outil-btn" data-outil="fleche"><span>➤</span>Flèche</button>
-              <button class="outil-btn" data-outil="rect"><span>▭</span>Rectangle</button>
-              <button class="outil-btn" data-outil="cercle"><span>◯</span>Cercle</button>
+              <button id="btn-ajout-annot-picto" class="outil-btn"><span class="oi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M8.5 14a4.5 4.5 0 0 0 7 0"/><path d="M9 10h.01"/><path d="M15 10h.01"/></svg></span>Pictogramme</button>
+            </div>
+          </section>
+
+          <section class="style-section">
+            <h3>Tracés &amp; formes</h3>
+            <div class="outils-grille outils-grille-3">
+              <button class="outil-btn" data-outil="dessin"><span class="oi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l3.5-.8 9-9a2 2 0 0 0-2.8-2.8l-9 9L4 20z"/><path d="M12.5 6.5l3 3"/></svg></span>Stylo</button>
+              <button class="outil-btn" data-outil="trait"><span class="oi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19L19 5"/></svg></span>Trait</button>
+              <button class="outil-btn" data-outil="fleche"><span class="oi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h13"/><path d="M12 6l6 6-6 6"/></svg></span>Flèche</button>
+              <button class="outil-btn" data-outil="rect"><span class="oi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="6.5" width="16" height="11" rx="1.5"/></svg></span>Rectangle</button>
+              <button class="outil-btn" data-outil="cercle"><span class="oi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7.5"/></svg></span>Cercle</button>
             </div>
             <p class="style-aide">Texte, photo, pictogramme : touche ensuite la carte pour poser
                l'élément. Stylo, formes et flèche : garde le doigt (ou le clic) appuyé et fais
                glisser. Trait : touche point par point puis « Terminer ».</p>
+            <p class="style-aide">Ensuite, clique sur un élément de la carte pour le modifier :
+               une barre d'options apparaît au-dessus, les <strong>poignées d'angle</strong> le
+               redimensionnent, la poignée ronde le fait <strong>pivoter</strong>, et tu peux le
+               <strong>glisser</strong> pour le déplacer. Touche <strong>Suppr</strong> (ou la
+               corbeille 🗑) pour le supprimer, <strong>Échap</strong> pour désélectionner.</p>
           </section>
 
           <section class="style-section">
@@ -238,9 +269,21 @@
           </section>
 
           <section class="style-section">
-            <h3>Photos posées sur la carte</h3>
-            <div id="importer-liste" class="importer-liste"></div>
-            <p id="importer-vide" class="galerie-vide">Aucune photo posée sur la carte.</p>
+            <h3>Éléments ajoutés</h3>
+            <p class="style-aide">Retrouve, sélectionne et modifie tout ce que tu as posé
+               sur la carte. Filtre par type ci-dessous.</p>
+            <div id="elements-filtre" class="chips" role="group">
+              <button class="chip actif" data-elemfiltre="tous">Tous</button>
+              <button class="chip" data-elemfiltre="texte" title="Textes">🔤</button>
+              <button class="chip" data-elemfiltre="picto" title="Pictogrammes">😀</button>
+              <button class="chip" data-elemfiltre="image" title="Photos">🖼️</button>
+              <button class="chip" data-elemfiltre="dessin" title="Formes, traits et dessins">✏️</button>
+            </div>
+            <div id="elements-liste" class="elements-liste"></div>
+            <p id="elements-vide" class="galerie-vide">Aucun élément ajouté pour l'instant.</p>
+            <!-- Conservé pour d'anciens appels : liste des photos (désormais incluse ci-dessus). -->
+            <div id="importer-liste" hidden></div>
+            <p id="importer-vide" hidden></p>
           </section>
         </div>
       </section>
@@ -252,6 +295,20 @@
           <button id="fermer-fond" class="icone-btn" title="Fermer">✕</button>
         </header>
         <div class="panneau-corps">
+
+          <!-- Zone de cadrage : la région à laquelle le carnet est restreint -->
+          <section class="style-section">
+            <h3>Zone de cadrage</h3>
+            <p class="style-aide">Délimite la région du voyage : la carte se cadre dessus
+               et le reste est estompé. Importer un GPX en crée une automatiquement.</p>
+            <p id="zone-etat" class="style-aide">Aucune zone définie.</p>
+            <button id="zone-definir" class="btn btn-primary btn-petit" style="width:100%">
+              🗺️ Définir la zone
+            </button>
+            <button id="zone-retirer" class="btn btn-ghost btn-petit" style="width:100%" hidden>
+              Retirer la zone
+            </button>
+          </section>
 
           <!-- Cartouche de titre affiché sur la carte -->
           <section class="style-section">
@@ -308,10 +365,18 @@
               <div class="couches-liste">
                 <label class="style-switch"><input type="checkbox" data-couche="noms" checked /><span>Noms de lieux</span></label>
                 <label class="style-switch"><input type="checkbox" data-couche="frontiere" checked /><span>Frontières</span></label>
-                <label class="style-switch"><input type="checkbox" data-couche="riviere" checked /><span>Rivières</span></label>
                 <label class="style-switch"><input type="checkbox" data-couche="route" checked /><span>Routes &amp; chemins</span></label>
                 <label class="style-switch"><input type="checkbox" data-couche="bati" checked /><span>Bâtiments</span></label>
+                <label class="style-switch"><input type="checkbox" data-couche="eau" checked /><span>Mers &amp; lacs</span></label>
+                <label class="style-switch"><input type="checkbox" data-couche="riviere" checked /><span>Rivières</span></label>
+                <label class="style-switch"><input type="checkbox" data-couche="foret" checked /><span>Forêts</span></label>
+                <label class="style-switch"><input type="checkbox" data-couche="reserve" checked /><span>Réserves &amp; parcs</span></label>
+                <label class="style-switch"><input type="checkbox" data-couche="prairie" checked /><span>Prairies &amp; cultures</span></label>
+                <label class="style-switch"><input type="checkbox" data-couche="glacier" checked /><span>Glaciers</span></label>
               </div>
+              <p class="style-aide">Décoche ce que tu ne veux pas voir. Ces réglages
+                 s'appliquent dès le chargement de la carte (plus d'apparition
+                 puis disparition), et sont réversibles à tout moment.</p>
 
               <label class="style-label">Couleurs des zones</label>
               <div class="zone-rangees">
@@ -408,7 +473,17 @@
               <button class="segment-btn" data-forme="rond">⭕ Rond</button>
               <button class="segment-btn" data-forme="carre">🔲 Carré</button>
               <button class="segment-btn" data-forme="minimal">◦ Minimal</button>
+              <button class="segment-btn" data-forme="perso" id="epingle-forme-perso" hidden>🖼️ Mon image</button>
             </div>
+            <div class="epingle-perso-ligne">
+              <label class="btn btn-ghost btn-petit" for="epingle-image-input" style="flex:1">
+                🖼️ Importer une image d'épingle
+                <input id="epingle-image-input" type="file" accept="image/*" hidden />
+              </label>
+              <button id="epingle-image-retirer" class="icone-btn" title="Retirer l'image importée" hidden>🗑</button>
+            </div>
+            <p class="style-aide">Ton image (PNG transparent conseillé) remplace la forme de l'épingle.
+               Le numéro reste affiché dans le coin.</p>
 
             <label class="style-label">Couleur</label>
             <div id="epingle-couleurs" class="nuancier"></div>
@@ -504,92 +579,6 @@
         </div>
       </section>
 
-      <!-- ========== Panneau ÉLÉMENT SÉLECTIONNÉ (hors rail) ========== -->
-      <section id="panneau-element" class="tiroir-section" hidden>
-        <header class="panneau-tete">
-          <span class="panneau-titre-fixe">🎯 Élément sélectionné</span>
-          <button class="icone-btn tiroir-fermer" title="Fermer">✕</button>
-        </header>
-        <div class="panneau-corps">
-          <!-- Éditeur de l'élément sélectionné -->
-          <div id="annot-editeur" class="annot-editeur" hidden>
-            <div class="annot-editeur-tete">
-              <span id="annot-editeur-titre">Élément sélectionné</span>
-              <button id="annot-terminer" class="icone-btn" title="Terminer">✓</button>
-            </div>
-
-            <!-- Réglages propres au TEXTE -->
-            <div id="annot-bloc-texte" hidden>
-              <label class="style-label">Texte</label>
-              <textarea id="annot-texte" class="style-input annot-texte-input" rows="2"
-                        placeholder="Ton texte (plusieurs lignes possibles)"></textarea>
-
-              <label class="style-label">Police</label>
-              <button id="police-btn-annot" class="btn btn-ghost police-btn" type="button">Système</button>
-
-              <label class="style-label-couleur">
-                Couleur
-                <input id="annot-couleur" type="color" value="#2f3b34" />
-              </label>
-
-              <label class="style-label">Alignement</label>
-              <div id="annot-align" class="segment" role="group">
-                <button class="segment-btn" data-align="gauche">Gauche</button>
-                <button class="segment-btn" data-align="centre">Centré</button>
-                <button class="segment-btn" data-align="droite">Droite</button>
-              </div>
-
-              <label class="style-label">Mise en forme</label>
-              <div class="segment" role="group">
-                <button id="annot-gras" class="segment-btn annot-btn-gras" title="Gras"><b>G</b></button>
-                <button id="annot-italique" class="segment-btn annot-btn-italique" title="Italique"><i>I</i></button>
-                <button id="annot-souligne" class="segment-btn" title="Souligné"><u>S</u></button>
-                <button id="annot-barre" class="segment-btn" title="Barré"><s>B</s></button>
-              </div>
-            </div>
-
-            <!-- Réglages propres au PICTOGRAMME -->
-            <div id="annot-bloc-picto" hidden>
-              <button id="annot-choisir-picto" class="btn btn-ghost picto-actuel-btn" type="button">
-                <span id="annot-picto-glyph" class="picto-actuel-glyph">⛰️</span>
-                <span>Changer de pictogramme</span>
-              </button>
-            </div>
-
-            <!-- Réglages propres à la PHOTO posée sur la carte -->
-            <div id="annot-bloc-image" hidden>
-              <label class="style-label">Légende</label>
-              <input id="annot-legende" class="style-input" type="text" maxlength="140"
-                     placeholder="Légende de la photo…" />
-            </div>
-
-            <!-- Réglages propres aux TRAITS, FORMES et DESSINS -->
-            <div id="annot-bloc-vecteur" hidden>
-              <label class="style-label-couleur">
-                Couleur
-                <input id="annot-trait-couleur" type="color" value="#b4452f" />
-              </label>
-              <label class="style-label">Épaisseur : <span id="annot-trait-epaisseur-val">4</span> px</label>
-              <input id="annot-trait-epaisseur" class="style-range" type="range" min="1" max="14" step="1" value="4" />
-              <label class="style-switch" id="annot-remplir-ligne">
-                <input id="annot-remplir" type="checkbox" />
-                <span>Remplir la forme</span>
-              </label>
-            </div>
-
-            <!-- Réglages communs (taille : texte, picto, photo) -->
-            <div id="annot-bloc-taille">
-              <label class="style-label">Taille : <span id="annot-taille-val">18</span> px</label>
-              <input id="annot-taille" class="style-range" type="range" min="10" max="48" step="1" value="18" />
-            </div>
-
-            <p class="style-aide">Astuce : glisse l'élément directement sur la carte pour le déplacer.</p>
-            <button id="annot-supprimer" class="btn btn-danger btn-petit">Supprimer cet élément</button>
-          </div>
-          <p id="element-vide" class="galerie-vide">Clique sur un élément de la carte (texte, pictogramme,
-             photo, trait, forme ou dessin) pour le modifier ici.</p>
-        </div>
-      </section>
     </div>
 
     <!-- ===================== Panneau ACCUEIL (liste des carnets) ===================== -->
@@ -673,6 +662,7 @@
             <input id="gpx-input-welcome" type="file" accept=".gpx,application/gpx+xml" hidden />
           </label>
           <div class="welcome-secondaires">
+            <button id="welcome-point" class="btn btn-accent">🗺️ Délimiter une zone sur la carte</button>
             <button id="btn-exemple" class="btn btn-ghost">✨ Essayer avec l'exemple</button>
           </div>
         </div>
@@ -701,6 +691,79 @@
         <span id="banniere-annot-texte">🖌️ Clique sur la carte pour placer l'élément.</span>
         <button id="terminer-outil" class="banniere-terminer" hidden>Terminer</button>
         <button id="annuler-annot" class="banniere-annuler">Annuler</button>
+      </div>
+
+      <!-- Barre flottante d'édition de l'élément sélectionné (façon Miro).
+           Elle apparaît juste au-dessus de l'élément, avec les réglages
+           propres à son type (texte, pictogramme, photo, trait, forme…). -->
+      <div id="annot-editeur" class="barre-element" hidden>
+
+        <!-- Réglages propres au TEXTE -->
+        <div id="annot-bloc-texte" class="barre-groupe" hidden>
+          <button id="annot-modifier-texte" class="barre-btn" type="button"
+                  title="Modifier le texte (ou double-clique dessus)">✏️</button>
+          <button id="police-btn-annot" class="barre-btn barre-police police-btn" type="button"
+                  title="Changer de police">Système</button>
+          <label class="barre-couleur" title="Couleur du texte">
+            <input id="annot-couleur" type="color" value="#2f3b34" />
+          </label>
+          <span class="barre-sep"></span>
+          <button id="annot-gras" class="barre-btn" title="Gras"><b>G</b></button>
+          <button id="annot-italique" class="barre-btn" title="Italique"><i>I</i></button>
+          <button id="annot-souligne" class="barre-btn" title="Souligné"><u>S</u></button>
+          <button id="annot-barre" class="barre-btn" title="Barré"><s>B</s></button>
+          <span class="barre-sep"></span>
+          <div id="annot-align" class="barre-groupe" role="group">
+            <button class="barre-btn segment-btn" data-align="gauche" title="Aligner à gauche">
+              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M2 3h12M2 6.4h8M2 9.8h12M2 13.2h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>
+            </button>
+            <button class="barre-btn segment-btn" data-align="centre" title="Centrer">
+              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M2 3h12M4 6.4h8M2 9.8h12M4 13.2h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>
+            </button>
+            <button class="barre-btn segment-btn" data-align="droite" title="Aligner à droite">
+              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M2 3h12M6 6.4h8M2 9.8h12M6 13.2h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Réglages propres au PICTOGRAMME -->
+        <div id="annot-bloc-picto" class="barre-groupe" hidden>
+          <button id="annot-choisir-picto" class="barre-btn barre-picto" type="button"
+                  title="Changer de pictogramme">
+            <span id="annot-picto-glyph" class="picto-actuel-glyph">⛰️</span>
+          </button>
+        </div>
+
+        <!-- Réglages propres à la PHOTO posée sur la carte -->
+        <div id="annot-bloc-image" class="barre-groupe" hidden>
+          <input id="annot-legende" class="barre-input" type="text" maxlength="140"
+                 placeholder="Légende de la photo…" />
+        </div>
+
+        <!-- Réglages propres aux TRAITS, FORMES et DESSINS -->
+        <div id="annot-bloc-vecteur" class="barre-groupe" hidden>
+          <label class="barre-couleur" title="Couleur">
+            <input id="annot-trait-couleur" type="color" value="#b4452f" />
+          </label>
+          <div class="barre-curseur" title="Épaisseur du trait">
+            <input id="annot-trait-epaisseur" type="range" min="1" max="14" step="1" value="4" />
+            <span class="barre-valeur"><span id="annot-trait-epaisseur-val">4</span> px</span>
+          </div>
+          <label id="annot-remplir-ligne" class="barre-btn barre-toggle" title="Remplir la forme">
+            <input id="annot-remplir" type="checkbox" />
+            <span>Remplir</span>
+          </label>
+        </div>
+
+        <!-- Réglage commun : taille (texte, picto, photo) -->
+        <div id="annot-bloc-taille" class="barre-groupe barre-curseur" title="Taille">
+          <input id="annot-taille" type="range" min="10" max="48" step="1" value="18" />
+          <span class="barre-valeur"><span id="annot-taille-val">18</span> px</span>
+        </div>
+
+        <span class="barre-sep"></span>
+        <button id="annot-supprimer" class="barre-btn barre-danger" title="Supprimer (touche Suppr)">🗑</button>
+        <button id="annot-terminer" class="barre-btn" title="Terminer">✓</button>
       </div>
     </div>
 
@@ -893,6 +956,7 @@
 
       <label class="style-label">Format de papier</label>
       <div id="affiche-format" class="segment segment-grille" role="group">
+        <button class="segment-btn" data-format="A5">A5</button>
         <button class="segment-btn" data-format="A4">A4</button>
         <button class="segment-btn" data-format="A3">A3</button>
         <button class="segment-btn" data-format="A2">A2</button>
@@ -1092,13 +1156,41 @@
   <div id="modal-nouveau-carnet" class="modal-overlay" hidden>
     <div class="modal-card">
       <h2>📓 Nouveau carnet</h2>
-      <p class="modal-sous-titre">Donne-lui un nom — tu ajouteras ensuite sa trace
-         GPX et son style dans l'onglet Carnet.</p>
+      <p class="modal-sous-titre">Donne-lui un nom et un format d'impression, puis choisis
+         comment le situer : importe une trace GPX, ou délimite la région sur la carte.</p>
       <input id="nouveau-carnet-nom" type="text" maxlength="60"
              placeholder="Ex : Tour du Queyras 2026" />
+
+      <label class="style-label">Format d'impression de la zone</label>
+      <div id="nouveau-carnet-format" class="segment segment-grille" role="group">
+        <button class="segment-btn" data-nformat="A5">A5</button>
+        <button class="segment-btn" data-nformat="A4">A4</button>
+        <button class="segment-btn" data-nformat="A3">A3</button>
+        <button class="segment-btn" data-nformat="A2">A2</button>
+        <button class="segment-btn" data-nformat="carre">Carré</button>
+        <button class="segment-btn" data-nformat="photo">Photo 3:2</button>
+        <button class="segment-btn" data-nformat="pano">Pano 16:9</button>
+      </div>
+      <div id="nouveau-carnet-orientation" class="segment" role="group">
+        <button class="segment-btn" data-norientation="portrait">Portrait</button>
+        <button class="segment-btn" data-norientation="paysage">Paysage</button>
+      </div>
+      <p class="style-aide">Ce format cadre la zone et l'export PDF/image. Tu pourras le changer ensuite.</p>
+
+      <div class="nouveau-carnet-choix">
+        <label class="btn btn-accent" for="nouveau-carnet-gpx-input" style="width:100%">
+          🥾 Importer un GPX
+          <input id="nouveau-carnet-gpx-input" type="file" accept=".gpx,application/gpx+xml" hidden />
+        </label>
+        <button id="nouveau-carnet-zone" class="btn btn-ghost" style="width:100%">
+          🗺️ Délimiter une zone sur la carte
+        </button>
+        <button id="nouveau-carnet-creer" class="btn btn-ghost btn-petit" style="width:100%">
+          Créer un carnet vide (sans lieu)
+        </button>
+      </div>
       <div class="modal-actions">
         <button id="nouveau-carnet-annuler" class="btn btn-ghost">Annuler</button>
-        <button id="nouveau-carnet-creer" class="btn btn-accent">Créer</button>
       </div>
     </div>
   </div>
@@ -1123,6 +1215,15 @@
         <button class="segment-btn" data-gambiance="doux">Doux</button>
         <button class="segment-btn" data-gambiance="medieval">Médiéval</button>
       </div>
+      <label class="style-label">Décor</label>
+      <label class="style-switch">
+        <input id="global-titre" type="checkbox" />
+        <span>Afficher le titre « LogBookMap de… »</span>
+      </label>
+      <label class="style-switch">
+        <input id="global-rose" type="checkbox" />
+        <span>Afficher une rose des vents</span>
+      </label>
       <div class="modal-actions">
         <button id="carte-globale-fermer" class="btn btn-accent">Fermer</button>
       </div>
@@ -1184,6 +1285,8 @@
   <script src="app.js"></script>
   <!-- La nouvelle interface (accueil + éditeur façon Canva) -->
   <script src="ui.js"></script>
+  <!-- Sélection façon Miro : cadre, poignées, barre flottante -->
+  <script src="selection.js"></script>
   <!-- Compte et sauvegarde en ligne -->
   <script src="config.js"></script>
   <script src="nuage.js"></script>
