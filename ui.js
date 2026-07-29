@@ -401,12 +401,17 @@ function renderAccueilListe() {
     tete.appendChild(titres);
     // Pastille « pas encore en ligne » : mise à jour sans reconstruire la carte
     // (voir rafraichirBadgesSyncAccueil).
-    const attente = document.createElement("span");
+    const attente = document.createElement("button");
     attente.className = "carnet-carte-attente";
     attente.dataset.attenteCarnet = c.id;
     attente.textContent = "● non synchronisé";
-    attente.title = "Des modifications de ce carnet ne sont pas encore enregistrées en ligne.";
+    attente.title = "Pas encore en ligne — clique pour synchroniser ce carnet seul.";
     attente.hidden = typeof carnetEnAttenteNuage !== "function" || !carnetEnAttenteNuage(c);
+    // Un clic sur la pastille synchronise CE carnet uniquement.
+    attente.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (typeof synchroniserCarnet === "function") synchroniserCarnet(c);
+    });
     tete.appendChild(attente);
     if (c.partage) {
       const badge = document.createElement("span");
@@ -439,14 +444,7 @@ function renderAccueilListe() {
       basculerVersEditeur(c.id);
     });
     actions.appendChild(editer);
-    // Gestion du carnet, directement depuis la carte générale.
-    const dupl = document.createElement("button");
-    dupl.className = "icone-btn";
-    dupl.title = "Dupliquer ce carnet";
-    dupl.textContent = "📑";
-    dupl.addEventListener("click", (e) => { e.stopPropagation(); dupliquerCarnet(c.id); });
-    actions.appendChild(dupl);
-    // (L'archivage se fait depuis l'onglet « Carnet » du carnet ouvert.)
+    // (Dupliquer et archiver se font depuis l'onglet « Carnet » du carnet ouvert.)
     carte.appendChild(actions);
 
     // Clic sur la carte (hors boutons) : zoom sur ce carnet sur la carte.
@@ -2303,13 +2301,19 @@ function brancherUI() {
       cont.hidden = !cont.hidden;
     });
 
-  /* --- Onglet Carnet : archiver le carnet ouvert --- */
-  document.getElementById("carnet-archiver")
-    .addEventListener("click", () => {
+  /* --- Onglet Carnet : agir sur le carnet ouvert --- */
+  const surCarnetOuvert = (idBouton, action) => {
+    document.getElementById(idBouton).addEventListener("click", () => {
       const c = carnetActif();
       if (!c) { toast("Ouvre d'abord un carnet.", true); return; }
-      archiverCarnet(c);
+      action(c);
     });
+  };
+  surCarnetOuvert("carnet-archiver", (c) => archiverCarnet(c));
+  surCarnetOuvert("carnet-dupliquer", (c) => dupliquerCarnet(c.id));
+  surCarnetOuvert("carnet-synchroniser", (c) => {
+    if (typeof synchroniserCarnet === "function") synchroniserCarnet(c);
+  });
 
   /* --- Accueil : filtres --- */
   document.getElementById("accueil-recherche")

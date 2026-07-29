@@ -202,19 +202,63 @@ async function pousserCarnet(c) {
     // Carnet partagé en édition : on met à jour la fiche du propriétaire, MAIS
     // pas le statut (archiver de mon côté ne doit pas archiver chez lui).
     const { statut, ...ficheSansStatut } = fiche;
-    const { error } = await sbClient.from("carnets").update(ficheSansStatut)
-      .eq("uuid", c.uuid).eq("user_id", c.partage.proprietaire);
-    if (error) throw error;
+    await ecrireFiche(ficheSansStatut, (donnees) =>
+      sbClient.from("carnets").update(donnees)
+        .eq("uuid", c.uuid).eq("user_id", c.partage.proprietaire));
   } else {
-    const { error } = await sbClient.from("carnets").upsert({
-      user_id: sessionNuage.user.id, uuid: c.uuid, ...fiche,
-    });
-    if (error) throw error;
+    await ecrireFiche({ user_id: sessionNuage.user.id, uuid: c.uuid, ...fiche },
+      (donnees) => sbClient.from("carnets").upsert(donnees));
   }
 
   // Envoi réussi : cette version est maintenant celle qui est en ligne.
   c.modifieLe = horodatage;
   marquerCarnetSynchronise(c, horodatage);
+}
+
+/* ---------- Résistance aux colonnes manquantes ---------- */
+// Chaque nouveauté (zone, format, statut…) ajoute une colonne à la table
+// `carnets`, via un script .sql à coller dans Supabase. Si ce script n'a pas
+// encore été joué, l'ancienne version du code plantait sur CHAQUE envoi et la
+// synchronisation entière échouait sans dire pourquoi. Désormais on retire la
+// colonne inconnue et on réessaie : la synchro fonctionne quand même (sans
+// cette information-là), et on le signale une fois à l'utilisateur.
+
+const colonnesAbsentes = new Set();
+
+/** Nom de la colonne inconnue mentionnée par une erreur Supabase, ou null. */
+function colonneManquante(error) {
+  const m = (error && error.message) || "";
+  const trouve = m.match(/'([a-z_]+)' column/i) || m.match(/column "?([a-z_]+)"? .* does not exist/i);
+  return trouve ? trouve[1] : null;
+}
+
+/** Écrit la fiche, en retirant au besoin les colonnes que la base ignore. */
+async function ecrireFiche(fiche, envoyer) {
+  const donnees = { ...fiche };
+  // On enlève d'emblée celles déjà repérées comme absentes.
+  colonnesAbsentes.forEach((col) => { delete donnees[col]; });
+  for (let essai = 0; essai < 6; essai++) {
+    const { error } = await envoyer(donnees);
+    if (!error) return;
+    const col = colonneManquante(error);
+    if (!col || !(col in donnees)) throw error;
+    colonnesAbsentes.add(col);
+    delete donnees[col];
+  }
+  throw new Error("Trop de colonnes manquantes dans la table des carnets.");
+}
+
+/** Message à afficher si la base en ligne n'est pas à jour (ou "" si tout va bien). */
+function messageColonnesAbsentes() {
+  if (!colonnesAbsentes.size) return "";
+  const scripts = new Set();
+  colonnesAbsentes.forEach((col) => {
+    if (["zone", "format_zone", "orientation_zone"].includes(col)) scripts.add("supabase-setup-3-zone.sql");
+    if (col === "statut") scripts.add("supabase-setup-4-statut.sql");
+  });
+  return "Ta base en ligne n'a pas encore tout : la synchronisation marche, mais " +
+    `« ${[...colonnesAbsentes].join(", ")} » ne suit pas d'un appareil à l'autre. ` +
+    (scripts.size ? `Colle ${[...scripts].join(" puis ")} dans Supabase pour compléter.` : "");
 }
 
 /** Supprime définitivement un carnet en ligne (seulement s'il est à moi). */
@@ -308,26 +352,47 @@ async function descendreCarnetDepuisNuage(local, r, partage) {
   }
 }
 
+/** Synchronise UN seul carnet (bouton « Synchroniser ce carnet »). */
+async function synchroniserCarnet(c) {
+  if (!c) return;
+  if (!nuageConnecte()) {
+    toast("Connecte-toi à ton compte (bouton ☁️ en haut) pour synchroniser.", true);
+    return;
+  }
+  await synchroniserNuage(c);
+}
+
 /**
- * Synchronisation complète, dans les deux sens :
+ * Synchronisation dans les deux sens :
  * - les carnets en ligne (les miens + partagés avec moi) absents ou plus
  *   récents sont téléchargés ;
  * - les carnets locaux absents ou plus récents sont envoyés ;
  * - un carnet modifié DES DEUX CÔTÉS depuis la dernière synchronisation
  *   confirmée n'est jamais écrasé en silence : il est mis de côté et
  *   l'utilisateur choisit quoi garder (voir ouvrirConflitsNuage).
+ *
+ * `cible` = un carnet précis à synchroniser seul ; sans elle, tout le compte.
+ * Synchroniser carnet par carnet évite qu'un carnet en panne (ou un gros
+ * carnet lent) bloque tous les autres.
  */
-async function synchroniserNuage() {
+async function synchroniserNuage(cible) {
   if (!nuageConnecte() || syncEnCours) return;
+  const uuidCible = (cible && cible.uuid) ? cible.uuid : null;
+  const nomCible = cible ? cible.nom : "";
   syncEnCours = true;
-  statutCompte("Synchronisation en cours…");
+  const enCours = uuidCible ? `Synchronisation de « ${nomCible} »…` : "Synchronisation en cours…";
+  statutCompte(enCours);
+  if (uuidCible) toast("🔄 " + enCours);
   let recus = 0, envoyes = 0, erreurs = 0;
   const conflits = [];
   const noms = [];
+  let detailErreur = "";
 
   try {
     await chargerDroitsPartages();
-    const { data: lignes, error } = await sbClient.from("carnets").select("*");
+    let requete = sbClient.from("carnets").select("*");
+    if (uuidCible) requete = requete.eq("uuid", uuidCible);
+    const { data: lignes, error } = await requete;
     if (error) throw error;
     const distants = lignes || [];
     const monId = sessionNuage.user.id;
@@ -413,19 +478,26 @@ async function synchroniserNuage() {
           // Plus récent ici : la phase 2 l'enverra.
           local.partage = partage;
         }
-      } catch (e) { erreurs++; noms.push(r.nom || "carnet"); }
+      } catch (e) {
+        erreurs++; noms.push(r.nom || "carnet");
+        detailErreur = detailErreur || (e && e.message) || "";
+      }
     }
 
     // 2) De l'appareil vers le nuage (jamais les partages en lecture seule).
     const enConflit = new Set(conflits.map((x) => x.uuid));
     for (const c of etat.carnets) {
+      if (uuidCible && c.uuid !== uuidCible) continue;
       if (!peutEcrireNuage(c) || enConflit.has(c.uuid)) continue;
       const r = distants.find((x) => x.uuid === c.uuid);
       const dateLocale = tempsDe(c.modifieLe);
       const dateDistante = r ? tempsDe(r.modifie_le) : -1;
       if (!r || dateLocale > dateDistante) {
         try { await pousserCarnet(c); envoyes++; }
-        catch (e) { erreurs++; noms.push(c.nom || "carnet"); }
+        catch (e) {
+          erreurs++; noms.push(c.nom || "carnet");
+          detailErreur = detailErreur || (e && e.message) || "";
+        }
       } else if (dateLocale === dateDistante) {
         marquerCarnetSynchronise(c);
       }
@@ -443,22 +515,33 @@ async function synchroniserNuage() {
       ajusterVueMonde();
     }
 
+    const avertissement = messageColonnesAbsentes();
     if (erreurs > 0) {
-      // On nomme les carnets qui ont coincé : « réessaie plus tard » tout seul
-      // ne dit pas où regarder.
+      // On nomme les carnets qui ont coincé ET la raison technique : sans elle,
+      // impossible de savoir s'il faut compléter la base, se reconnecter, etc.
       const liste = [...new Set(noms)].map((n) => `« ${n} »`).join(", ");
-      statutCompte(`Synchronisation partielle : ${liste || erreurs + " carnet(s)"} ` +
-        `n'a pas pu être synchronisé. Réessaie dans un moment.`, true);
+      const message = `Synchronisation partielle : ${liste || erreurs + " carnet(s)"} ` +
+        `n'a pas pu être synchronisé.` + (detailErreur ? ` Raison : ${detailErreur}` : "");
+      statutCompte(message, true);
+      toast(message, true);
     } else if (conflits.length) {
       statutCompte(`${conflits.length} carnet(s) modifié(s) ici ET en ligne : ` +
         `à toi de choisir quoi garder.`);
     } else {
-      statutCompte("✓ Carnets synchronisés" +
-        (recus || envoyes ? ` (${recus} reçu(s), ${envoyes} envoyé(s))` : ""));
+      const bilan = uuidCible
+        ? `✓ « ${nomCible} » synchronisé`
+        : "✓ Carnets synchronisés" +
+          (recus || envoyes ? ` (${recus} reçu(s), ${envoyes} envoyé(s))` : "");
+      statutCompte(bilan + (avertissement ? " — " + avertissement : ""));
+      if (uuidCible) toast(bilan);
+      if (avertissement) toast(avertissement, true);
       indiquerNuage();
     }
   } catch (e) {
-    statutCompte("Synchronisation impossible (connexion ?).", true);
+    const message = "Synchronisation impossible : " +
+      ((e && e.message) || "vérifie ta connexion Internet.");
+    statutCompte(message, true);
+    toast(message, true);
   } finally {
     syncEnCours = false;
     majCompteUI();
@@ -629,6 +712,31 @@ function majEtatSyncUI() {
       ? "Des modifications de ce carnet ne sont pas encore enregistrées en ligne."
       : "";
   }
+  // Onglet Carnet : où en est le carnet ouvert vis-à-vis du compte en ligne ?
+  const etatCarnet = document.getElementById("carnet-sync-etat");
+  if (etatCarnet) {
+    const c = typeof carnetActif === "function" ? carnetActif() : null;
+    if (!nuageConfigure()) {
+      etatCarnet.textContent = "Le service en ligne n'est pas configuré sur cette version.";
+    } else if (!nuageConnecte()) {
+      etatCarnet.textContent = "Pas connecté : ce carnet n'existe que sur cet appareil. " +
+        "Connecte-toi avec le bouton ☁️ en haut.";
+    } else if (!c) {
+      etatCarnet.textContent = "—";
+    } else if (c.partage && c.partage.droit !== "edition") {
+      etatCarnet.textContent = "🤝 Carnet partagé avec toi en lecture : tes modifications " +
+        "restent sur cet appareil.";
+    } else if (!c.syncLe) {
+      // Cas le plus parlant en premier : jamais envoyé du tout.
+      etatCarnet.textContent = "● Ce carnet n'a encore jamais été envoyé en ligne.";
+    } else if (carnetEnAttenteNuage(c)) {
+      etatCarnet.textContent = "● Des modifications ne sont pas encore en ligne " +
+        "(dernier envoi le " + dateLisible(c.syncLe) + ").";
+    } else {
+      etatCarnet.textContent = "☁️ À jour en ligne (dernier envoi le " + dateLisible(c.syncLe) + ").";
+    }
+  }
+
   const compteur = document.getElementById("accueil-attente");
   if (compteur) {
     const n = nbCarnetsEnAttente();
@@ -802,8 +910,10 @@ function brancherCompteUI() {
     });
   document.getElementById("compte-deconnecter")
     .addEventListener("click", deconnecterNuage);
+  // Attention : surtout pas `addEventListener("click", synchroniserNuage)` —
+  // l'événement serait passé comme carnet cible.
   document.getElementById("compte-synchroniser")
-    .addEventListener("click", synchroniserNuage);
+    .addEventListener("click", () => synchroniserNuage());
   // Le bandeau « N carnets ne sont pas encore en ligne » lance la synchro.
   const attente = document.getElementById("accueil-attente");
   if (attente) attente.addEventListener("click", () => synchroniserNuage());

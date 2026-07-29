@@ -2950,9 +2950,11 @@ body.vue-editeur.mode-visualisation .rail { display: none !important; }
 .accueil-attente::before { content: "☁️ "; }
 .accueil-attente:hover { background: rgba(200, 137, 61, 0.17); }
 
-/* Pastille « pas encore en ligne » sur la carte d'un carnet. */
+/* Pastille « pas encore en ligne » sur la carte d'un carnet : cliquable, elle
+   synchronise ce carnet-là uniquement. */
 .carnet-carte-attente {
   flex: none;
+  font-family: inherit;
   font-size: 11px;
   font-weight: 800;
   background: rgba(200, 137, 61, 0.14);
@@ -2961,7 +2963,9 @@ body.vue-editeur.mode-visualisation .rail { display: none !important; }
   border-radius: 999px;
   padding: 2px 8px;
   white-space: nowrap;
+  cursor: pointer;
 }
+.carnet-carte-attente:hover { background: rgba(200, 137, 61, 0.26); }
 
 .carnet-carte-categorie {
   flex: none;
