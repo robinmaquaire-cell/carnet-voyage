@@ -111,17 +111,62 @@ async function sauvegarderCopieSecours(id) {
   } catch (e) {}
 }
 
-/** Chemin du fichier JSON d'un carnet (dans le dossier de son propriétaire). */
-function cheminNuage(c) {
-  const proprietaire = (c.partage && c.partage.proprietaire) || sessionNuage.user.id;
-  return `${proprietaire}/${c.uuid}.json`;
+/** Le propriétaire d'un carnet (moi, ou l'ami qui l'a partagé avec moi). */
+function proprietaireNuage(c) {
+  return (c.partage && c.partage.proprietaire) || sessionNuage.user.id;
 }
 
-/** Télécharge le contenu complet d'un carnet depuis le stockage. */
+/** Chemin du fichier JSON d'un carnet (dans le dossier de son propriétaire). */
+function cheminNuage(c) {
+  return `${proprietaireNuage(c)}/${c.uuid}.json`;
+}
+
+/** Chemin d'un média (photo/son) dans le dossier du propriétaire du carnet. */
+function cheminMedia(c, empreinte) {
+  return `${proprietaireNuage(c)}/medias/${empreinte}`;
+}
+
+// Empreintes des médias déjà présents en ligne pendant CETTE session : évite
+// de re-téléverser une photo qu'on vient d'envoyer (dédoublonnage).
+const empreintesEnLigne = new Set();
+
+/** Téléverse un média (une seule fois) sous son empreinte. */
+async function televerserMedia(c, empreinte, media) {
+  if (empreintesEnLigne.has(empreinte)) return;
+  const blob = new Blob([media.octets], { type: media.type });
+  // upsert:false → si le fichier existe déjà (même contenu = même nom), l'appel
+  // échoue avec « déjà présent » : c'est le comportement voulu, on ne renvoie
+  // pas les octets pour rien.
+  const { error } = await sbClient.storage.from("carnets")
+    .upload(cheminMedia(c, empreinte), blob, { upsert: false, contentType: media.type });
+  if (error && !/exist|duplicate|resource already/i.test(error.message || "")) throw error;
+  empreintesEnLigne.add(empreinte);
+}
+
+/** Télécharge les octets d'un média du carnet (ou null s'il est absent). */
+async function telechargerMediaNuage(c, empreinte) {
+  const { data, error } = await sbClient.storage.from("carnets").download(cheminMedia(c, empreinte));
+  if (error || !data) return null;
+  return new Uint8Array(await data.arrayBuffer());
+}
+
+/**
+ * Télécharge le fichier d'un carnet. Renvoie le JSON BRUT : les photos/sons y
+ * sont encore sous forme de renvois « #media:… » (léger, suffisant pour
+ * compter les souvenirs et comparer les versions). Pour l'enregistrer sur
+ * l'appareil, il faut d'abord résoudre les médias (voir telechargerCarnetResolu).
+ */
 async function telechargerCarnetNuage(c) {
   const { data, error } = await sbClient.storage.from("carnets").download(cheminNuage(c));
   if (error) throw error;
   return JSON.parse(await data.text());
+}
+
+/** Télécharge un carnet ET rétablit ses photos/sons (prêt à stocker localement). */
+async function telechargerCarnetResolu(c) {
+  const donnees = await telechargerCarnetNuage(c);
+  if (typeof resoudreMediasNuage !== "function") return donnees; // module médias absent
+  return resoudreMediasNuage(donnees, (empreinte) => telechargerMediaNuage(c, empreinte));
 }
 
 /** Peut-on écrire ce carnet en ligne ? (le mien, ou partagé en édition) */
@@ -175,7 +220,18 @@ async function pousserCarnet(c) {
     ? serialiserCarnet()
     : await dbChargerCle("carnet-" + c.id).catch(() => null);
   if (carnetADuContenu(donnees)) {
-    const blob = new Blob([JSON.stringify(donnees)], { type: "application/json" });
+    // Les photos/sons partent d'abord, comme fichiers séparés ; le fichier du
+    // carnet ne garde que de petits renvois vers eux. C'est ce qui empêche le
+    // carnet de dépasser la taille maximale du stockage en ligne.
+    let aEnvoyer = donnees;
+    if (typeof extraireMediasPourNuage === "function") {
+      const { allege, medias } = await extraireMediasPourNuage(donnees);
+      for (const [empreinte, media] of medias) {
+        await televerserMedia(c, empreinte, media);
+      }
+      aEnvoyer = allege;
+    }
+    const blob = new Blob([JSON.stringify(aEnvoyer)], { type: "application/json" });
     const { error } = await sbClient.storage.from("carnets")
       .upload(cheminNuage(c), blob, { upsert: true, contentType: "application/json" });
     if (error) throw error;
@@ -335,7 +391,7 @@ function risqueDePerte(contenuLocal, contenuDistant) {
 async function descendreCarnetDepuisNuage(local, r, partage) {
   await sauvegarderCopieSecours(local.id);
   appliquerFicheDistante(local, r, partage);
-  const donnees = await telechargerCarnetNuage(local).catch(() => null);
+  const donnees = await telechargerCarnetResolu(local).catch(() => null);
   if (carnetADuContenu(donnees)) {
     await dbSauverCle("carnet-" + local.id, donnees);
     if (local.id === etat.carnetActifId) restaurerCarnet(donnees);
@@ -438,7 +494,7 @@ async function synchroniserNuage(cible) {
             partage,
           };
           etat.carnets.push(entree);
-          const donnees = await telechargerCarnetNuage(entree).catch(() => null);
+          const donnees = await telechargerCarnetResolu(entree).catch(() => null);
           if (carnetADuContenu(donnees)) await dbSauverCle("carnet-" + id, donnees);
           marquerCarnetSynchronise(entree);
           recus++;

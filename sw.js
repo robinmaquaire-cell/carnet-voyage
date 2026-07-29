@@ -7,7 +7,7 @@
    images de carte, elles, viennent d'Internet à la demande.
    ========================================================= */
 
-const CACHE = "logbookmap-v68";
+const CACHE = "logbookmap-v69";
 
 // Les fichiers locaux de l'application à garder en cache.
 const ASSETS = [
@@ -18,6 +18,7 @@ const ASSETS = [
   "ui.js",
   "selection.js",
   "config.js",
+  "medias.js",
   "nuage.js",
   "gpx.js",
   "db.js",

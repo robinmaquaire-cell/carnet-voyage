@@ -2230,7 +2230,10 @@ function afficherAudios(souvenir) {
 
 // Taille maximale (en pixels) du plus grand côté d'une photo importée.
 // On réduit les photos pour garder un carnet léger à sauvegarder/partager.
-const PHOTO_TAILLE_MAX = 1600;
+// 1200 px : net à l'écran et à l'impression courante, tout en divisant le
+// poids par ~1,8 vs 1600 px (marge confortable sous la limite du stockage
+// gratuit). Une future offre payante pourra relever cette valeur.
+const PHOTO_TAILLE_MAX = 1200;
 
 /**
  * Lit un fichier image choisi par l'utilisateur, le redimensionne si besoin,
