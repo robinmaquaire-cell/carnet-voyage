@@ -78,6 +78,7 @@ function demarrerNuage() {
     sessionNuage = session;
     try { if (session) sessionStorage.setItem(CLE_SESSION_VUE, "1"); } catch (e) {}
     majCompteUI();
+    majEtatSyncUI();
     if (typeof majTitreCarteGlobale === "function") majTitreCarteGlobale();
 
     if (evenement === "SIGNED_IN" && session) {
@@ -95,6 +96,20 @@ function demarrerNuage() {
 /* =========================================================
    Synchronisation
    ========================================================= */
+
+/**
+ * Filet de sécurité : avant qu'une synchro remplace ou efface le contenu
+ * local d'un carnet (parce que le nuage semble plus récent), on garde une
+ * copie de secours (un seul niveau, écrasé à chaque fois) sous une clé
+ * séparée. Si la comparaison de dates s'est trompée, rien n'est perdu
+ * définitivement — récupérable via dbChargerCle("carnet-<id>-secours").
+ */
+async function sauvegarderCopieSecours(id) {
+  try {
+    const ancien = await dbChargerCle("carnet-" + id);
+    if (ancien) await dbSauverCle("carnet-" + id + "-secours", ancien);
+  } catch (e) {}
+}
 
 /** Chemin du fichier JSON d'un carnet (dans le dossier de son propriétaire). */
 function cheminNuage(c) {
@@ -114,16 +129,52 @@ function peutEcrireNuage(c) {
   return !c.partage || c.partage.droit === "edition";
 }
 
+/* ---------- État de synchronisation d'un carnet ---------- */
+
+/** Petit raccourci : une date ISO en nombre comparable (0 si vide/illisible). */
+function tempsDe(dateIso) {
+  return Date.parse(dateIso || 0) || 0;
+}
+
+/**
+ * Ce carnet a-t-il des modifications pas encore envoyées en ligne ?
+ * (Faux si on n'est pas connecté : sans compte, la question n'a pas de sens.)
+ */
+function carnetEnAttenteNuage(c) {
+  if (!c || !nuageConnecte() || !peutEcrireNuage(c)) return false;
+  return tempsDe(c.modifieLe) > tempsDe(c.syncLe);
+}
+
+/** Combien de carnets attendent d'être envoyés en ligne ? */
+function nbCarnetsEnAttente() {
+  if (!nuageConnecte()) return 0;
+  return etat.carnets.filter((c) => c.statut !== "archive" && carnetEnAttenteNuage(c)).length;
+}
+
+/**
+ * Note qu'un carnet est désormais identique à la version en ligne. On aligne
+ * `syncLe` sur `modifieLe` : tant que le carnet n'est pas retouché, il compte
+ * comme « à jour en ligne ».
+ */
+function marquerCarnetSynchronise(c, horodatage) {
+  if (!c) return;
+  c.syncLe = horodatage || c.modifieLe || new Date().toISOString();
+}
+
 /** Envoie un carnet en ligne (contenu + fiche pour la liste). */
 async function pousserCarnet(c) {
   if (!nuageConnecte() || !c || !c.uuid || !peutEcrireNuage(c)) return;
+
+  // L'horodatage exact qu'on met en ligne. On le fige AVANT l'envoi pour
+  // pouvoir marquer le carnet « à jour » avec la même valeur ensuite.
+  const horodatage = c.modifieLe || new Date().toISOString();
 
   // Le contenu complet : celui en mémoire pour le carnet ouvert, sinon la
   // sauvegarde locale. Un carnet encore vide n'a pas de fichier à envoyer.
   const donnees = c.id === etat.carnetActifId
     ? serialiserCarnet()
     : await dbChargerCle("carnet-" + c.id).catch(() => null);
-  if (donnees && donnees.trace) {
+  if (carnetADuContenu(donnees)) {
     const blob = new Blob([JSON.stringify(donnees)], { type: "application/json" });
     const { error } = await sbClient.storage.from("carnets")
       .upload(cheminNuage(c), blob, { upsert: true, contentType: "application/json" });
@@ -137,7 +188,7 @@ async function pousserCarnet(c) {
     description: c.description || "",
     du: c.du || "",
     au: c.au || "",
-    modifie_le: c.modifieLe || new Date().toISOString(),
+    modifie_le: horodatage,
     // Zone de cadrage + format d'impression : suivent le carnet d'un appareil
     // à l'autre (nécessite les colonnes ajoutées par supabase-setup-3-zone.sql).
     zone: (typeof normaliserZone === "function" ? normaliserZone(c.zone) : (c.zone || null)),
@@ -160,6 +211,10 @@ async function pousserCarnet(c) {
     });
     if (error) throw error;
   }
+
+  // Envoi réussi : cette version est maintenant celle qui est en ligne.
+  c.modifieLe = horodatage;
+  marquerCarnetSynchronise(c, horodatage);
 }
 
 /** Supprime définitivement un carnet en ligne (seulement s'il est à moi). */
@@ -197,16 +252,78 @@ async function chargerDroitsPartages() {
 }
 
 /**
+ * Recopie dans le carnet local les informations de sa fiche en ligne
+ * (nom, dates, zone, statut…). Ne touche pas au contenu (souvenirs, tracé).
+ */
+function appliquerFicheDistante(local, r, partage) {
+  Object.assign(local, {
+    nom: r.nom || local.nom, logo: r.logo || "", categorie: r.categorie || "",
+    description: r.description || "", du: r.du || "", au: r.au || "",
+    modifieLe: r.modifie_le || "",
+    zone: (typeof normaliserZone === "function" ? normaliserZone(r.zone) : (r.zone || null)),
+    formatZone: r.format_zone || "",
+    orientationZone: r.orientation_zone === "paysage" ? "paysage" : "portrait",
+    statut: r.statut === "archive" ? "archive" : "actif",
+    partage,
+  });
+}
+
+/** Nombre de souvenirs d'une version de carnet (posés + en réserve). */
+function compterSouvenirs(donnees) {
+  if (!donnees) return 0;
+  return (donnees.souvenirs || []).length + (donnees.stock || []).length;
+}
+
+/**
+ * Remplacer le contenu local par celui du nuage ferait-il PERDRE des
+ * souvenirs ? Garde-fou utile quand on n'a pas d'historique de synchro fiable
+ * (carnets d'avant cette version) : plutôt que d'écraser sur la foi d'une
+ * date, on préfère demander.
+ */
+function risqueDePerte(contenuLocal, contenuDistant) {
+  return compterSouvenirs(contenuLocal) > compterSouvenirs(contenuDistant);
+}
+
+/**
+ * Descend la version en ligne d'un carnet déjà présent sur l'appareil, en
+ * gardant une copie de secours de l'ancienne version locale.
+ */
+async function descendreCarnetDepuisNuage(local, r, partage) {
+  await sauvegarderCopieSecours(local.id);
+  appliquerFicheDistante(local, r, partage);
+  const donnees = await telechargerCarnetNuage(local).catch(() => null);
+  if (carnetADuContenu(donnees)) {
+    await dbSauverCle("carnet-" + local.id, donnees);
+    if (local.id === etat.carnetActifId) restaurerCarnet(donnees);
+  }
+  marquerCarnetSynchronise(local);
+  // Le carnet ouvert vient d'etre archive ailleurs : on bascule ailleurs.
+  if (local.statut !== "actif" && local.id === etat.carnetActifId &&
+      typeof basculerVersAutreCarnetActif === "function") {
+    await basculerVersAutreCarnetActif();
+  } else if (local.id === etat.carnetActifId) {
+    // La zone/format viennent peut-etre de changer : on rafraichit.
+    if (typeof appliquerZoneCarnet === "function" && etat.vue === "editeur") appliquerZoneCarnet(true);
+    if (typeof majBoutonsZone === "function") majBoutonsZone();
+  }
+}
+
+/**
  * Synchronisation complète, dans les deux sens :
  * - les carnets en ligne (les miens + partagés avec moi) absents ou plus
  *   récents sont téléchargés ;
- * - les carnets locaux absents ou plus récents sont envoyés.
+ * - les carnets locaux absents ou plus récents sont envoyés ;
+ * - un carnet modifié DES DEUX CÔTÉS depuis la dernière synchronisation
+ *   confirmée n'est jamais écrasé en silence : il est mis de côté et
+ *   l'utilisateur choisit quoi garder (voir ouvrirConflitsNuage).
  */
 async function synchroniserNuage() {
   if (!nuageConnecte() || syncEnCours) return;
   syncEnCours = true;
   statutCompte("Synchronisation en cours…");
   let recus = 0, envoyes = 0, erreurs = 0;
+  const conflits = [];
+  const noms = [];
 
   try {
     await chargerDroitsPartages();
@@ -229,6 +346,7 @@ async function synchroniserNuage() {
         // carnets supprimes qui reapparaissent a la synchro).
         if (r.statut === "supprime") {
           if (local) {
+            await sauvegarderCopieSecours(local.id);
             try { await dbEffacerCle("carnet-" + local.id); } catch (e) {}
             if (typeof retirerFantome === "function") retirerFantome(local.id);
             const etaitActif = local.id === etat.carnetActifId;
@@ -256,48 +374,60 @@ async function synchroniserNuage() {
           };
           etat.carnets.push(entree);
           const donnees = await telechargerCarnetNuage(entree).catch(() => null);
-          if (donnees && donnees.trace) await dbSauverCle("carnet-" + id, donnees);
+          if (carnetADuContenu(donnees)) await dbSauverCle("carnet-" + id, donnees);
+          marquerCarnetSynchronise(entree);
           recus++;
-        } else if (dateDistante > (Date.parse(local.modifieLe || 0) || 0)) {
-          Object.assign(local, {
-            nom: r.nom || local.nom, logo: r.logo || "", categorie: r.categorie || "",
-            description: r.description || "", du: r.du || "", au: r.au || "",
-            modifieLe: r.modifie_le || "",
-            zone: (typeof normaliserZone === "function" ? normaliserZone(r.zone) : (r.zone || null)),
-            formatZone: r.format_zone || "",
-            orientationZone: r.orientation_zone === "paysage" ? "paysage" : "portrait",
-            statut: r.statut === "archive" ? "archive" : "actif",
-            partage,
-          });
-          const donnees = await telechargerCarnetNuage(local).catch(() => null);
-          if (donnees && donnees.trace) {
-            await dbSauverCle("carnet-" + local.id, donnees);
-            if (local.id === etat.carnetActifId) restaurerCarnet(donnees);
-          }
-          // Le carnet ouvert vient d'etre archive ailleurs : on bascule ailleurs.
-          if (local.statut !== "actif" && local.id === etat.carnetActifId &&
-              typeof basculerVersAutreCarnetActif === "function") {
-            await basculerVersAutreCarnetActif();
-          } else if (local.id === etat.carnetActifId) {
-            // La zone/format viennent peut-etre de changer : on rafraichit.
-            if (typeof appliquerZoneCarnet === "function" && etat.vue === "editeur") appliquerZoneCarnet(true);
-            if (typeof majBoutonsZone === "function") majBoutonsZone();
-          }
-          recus++;
-        } else if (local) {
-          local.partage = partage; // les droits peuvent avoir changé
+          continue;
         }
-      } catch (e) { erreurs++; }
+
+        const dateLocale = tempsDe(local.modifieLe);
+        const dateSync = tempsDe(local.syncLe);
+        // Modifié depuis la dernière synchronisation confirmée ? Sans `syncLe`
+        // (carnet d'avant cette version), on ne peut pas savoir : on s'en tient
+        // alors à l'ancienne règle « le plus récent gagne », sans conflit.
+        const historiqueConnu = !!local.syncLe;
+        const bougeEnLigne = dateDistante > dateSync;
+        const bougeIci = dateLocale > dateSync;
+
+        if (dateDistante === dateLocale) {
+          // Les deux côtés portent la même version : rien à faire.
+          local.partage = partage;
+          marquerCarnetSynchronise(local);
+        } else if (historiqueConnu && bougeEnLigne && bougeIci && peutEcrireNuage(local)) {
+          // VRAI CONFLIT : modifié ici ET en ligne depuis la dernière fois.
+          // On ne touche à rien, l'utilisateur tranchera.
+          conflits.push({ uuid: r.uuid, id: local.id, r, partage });
+        } else if (dateDistante > dateLocale) {
+          // Le nuage est plus récent. Dernier garde-fou avant d'écraser : si la
+          // version locale contient PLUS de souvenirs, la date ment
+          // probablement (c'est le bug des souvenirs disparus) — on demande.
+          const avant = await lireContenuLocal(local.id);
+          const apres = await telechargerCarnetNuage(local).catch(() => null);
+          if (peutEcrireNuage(local) && risqueDePerte(avant, apres)) {
+            conflits.push({ uuid: r.uuid, id: local.id, r, partage });
+          } else {
+            await descendreCarnetDepuisNuage(local, r, partage);
+            recus++;
+          }
+        } else {
+          // Plus récent ici : la phase 2 l'enverra.
+          local.partage = partage;
+        }
+      } catch (e) { erreurs++; noms.push(r.nom || "carnet"); }
     }
 
     // 2) De l'appareil vers le nuage (jamais les partages en lecture seule).
+    const enConflit = new Set(conflits.map((x) => x.uuid));
     for (const c of etat.carnets) {
-      if (!peutEcrireNuage(c)) continue;
+      if (!peutEcrireNuage(c) || enConflit.has(c.uuid)) continue;
       const r = distants.find((x) => x.uuid === c.uuid);
-      const dateLocale = Date.parse(c.modifieLe || 0) || 0;
-      const dateDistante = r ? (Date.parse(r.modifie_le || 0) || 0) : -1;
+      const dateLocale = tempsDe(c.modifieLe);
+      const dateDistante = r ? tempsDe(r.modifie_le) : -1;
       if (!r || dateLocale > dateDistante) {
-        try { await pousserCarnet(c); envoyes++; } catch (e) { erreurs++; }
+        try { await pousserCarnet(c); envoyes++; }
+        catch (e) { erreurs++; noms.push(c.nom || "carnet"); }
+      } else if (dateLocale === dateDistante) {
+        marquerCarnetSynchronise(c);
       }
     }
 
@@ -314,7 +444,14 @@ async function synchroniserNuage() {
     }
 
     if (erreurs > 0) {
-      statutCompte(`Synchronisation partielle (${erreurs} erreur(s)) — réessaie plus tard.`, true);
+      // On nomme les carnets qui ont coincé : « réessaie plus tard » tout seul
+      // ne dit pas où regarder.
+      const liste = [...new Set(noms)].map((n) => `« ${n} »`).join(", ");
+      statutCompte(`Synchronisation partielle : ${liste || erreurs + " carnet(s)"} ` +
+        `n'a pas pu être synchronisé. Réessaie dans un moment.`, true);
+    } else if (conflits.length) {
+      statutCompte(`${conflits.length} carnet(s) modifié(s) ici ET en ligne : ` +
+        `à toi de choisir quoi garder.`);
     } else {
       statutCompte("✓ Carnets synchronisés" +
         (recus || envoyes ? ` (${recus} reçu(s), ${envoyes} envoyé(s))` : ""));
@@ -325,8 +462,138 @@ async function synchroniserNuage() {
   } finally {
     syncEnCours = false;
     majCompteUI();
+    majEtatSyncUI();
     if (typeof majPopupsAccueil === "function") majPopupsAccueil();
   }
+
+  // Les conflits se règlent une fois la synchronisation terminée (la fenêtre
+  // de choix peut relancer un envoi).
+  if (conflits.length) await ouvrirConflitsNuage(conflits);
+}
+
+/* =========================================================
+   Conflits : « modifié ici ET en ligne »
+   ---------------------------------------------------------
+   Plutôt que d'écraser une des deux versions en silence (ce qui faisait
+   disparaître des souvenirs), on montre les deux et on laisse choisir.
+   ========================================================= */
+
+/** Résumé lisible d'une version de carnet : « 26 souvenirs · 3 photos posées ». */
+function resumerVersionCarnet(donnees) {
+  if (!donnees) return "contenu introuvable";
+  const bouts = [];
+  const nbSouvenirs = (donnees.souvenirs || []).length + (donnees.stock || []).length;
+  bouts.push(nbSouvenirs + (nbSouvenirs > 1 ? " souvenirs" : " souvenir"));
+  const nbAnnot = (donnees.annotations || []).length;
+  if (nbAnnot) bouts.push(nbAnnot + (nbAnnot > 1 ? " éléments posés" : " élément posé"));
+  const nbGpx = (donnees.gpx || []).length;
+  if (nbGpx) bouts.push(nbGpx + (nbGpx > 1 ? " tracés" : " tracé"));
+  return bouts.join(" · ");
+}
+
+/** « le 29/07/2026 à 07:55 » à partir d'une date ISO. */
+function dateLisible(dateIso) {
+  const t = Date.parse(dateIso || 0);
+  if (!t) return "date inconnue";
+  const d = new Date(t);
+  return d.toLocaleDateString("fr-FR") + " à " +
+    d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Contenu local d'un carnet (celui en mémoire s'il est ouvert). */
+async function lireContenuLocal(id) {
+  if (id === etat.carnetActifId) return serialiserCarnet();
+  return await dbChargerCle("carnet-" + id).catch(() => null);
+}
+
+/** Traite les conflits l'un après l'autre. */
+async function ouvrirConflitsNuage(conflits) {
+  for (const conflit of conflits) {
+    const local = etat.carnets.find((c) => c.uuid === conflit.uuid);
+    if (!local) continue;
+    try { await reglerUnConflit(local, conflit.r, conflit.partage); }
+    catch (e) { toast("Ce conflit n'a pas pu être réglé — il te sera reproposé.", true); }
+  }
+  await sauverIndexCarnets();
+  renderCarnets();
+  majEtatSyncUI();
+}
+
+/** Affiche la fenêtre de choix pour UN carnet, et applique la décision. */
+async function reglerUnConflit(local, r, partage) {
+  const contenuLocal = await lireContenuLocal(local.id);
+  const contenuDistant = await telechargerCarnetNuage(local).catch(() => null);
+
+  const choix = await demanderChoixConflit({
+    nom: local.nom,
+    resumeIci: resumerVersionCarnet(contenuLocal),
+    dateIci: dateLisible(local.modifieLe),
+    resumeLigne: resumerVersionCarnet(contenuDistant),
+    dateLigne: dateLisible(r.modifie_le),
+  });
+
+  if (choix === "ligne") {
+    await descendreCarnetDepuisNuage(local, r, partage);
+    toast(`« ${local.nom} » : version en ligne conservée.`);
+    return;
+  }
+
+  if (choix === "deux") {
+    // On met la version de CET APPAREIL à l'abri dans un nouveau carnet, puis
+    // on aligne l'original sur la version en ligne.
+    const id = Math.max(0, ...etat.carnets.map((c) => c.id)) + 1;
+    const copie = {
+      id, uuid: genUuid(), visible: true,
+      nom: (local.nom + " (version de cet appareil)").slice(0, 80),
+      logo: local.logo || "", categorie: local.categorie || "",
+      description: local.description || "", du: local.du || "", au: local.au || "",
+      modifieLe: new Date().toISOString(), syncLe: "",
+      zone: local.zone || null, formatZone: local.formatZone || "",
+      orientationZone: local.orientationZone === "paysage" ? "paysage" : "portrait",
+      statut: "actif", partage: null,
+    };
+    etat.carnets.push(copie);
+    if (carnetADuContenu(contenuLocal)) await dbSauverCle("carnet-" + id, contenuLocal);
+    await descendreCarnetDepuisNuage(local, r, partage);
+    try { await pousserCarnet(copie); } catch (e) { /* partira à la prochaine synchro */ }
+    toast(`Les deux versions de « ${local.nom} » sont gardées.`);
+    return;
+  }
+
+  // « ici » : ma version devient la version officielle en ligne.
+  local.modifieLe = new Date().toISOString();
+  await pousserCarnet(local);
+  toast(`« ${local.nom} » : ta version a été envoyée en ligne.`);
+}
+
+/** Ouvre la fenêtre et renvoie « ici » | « ligne » | « deux ». */
+function demanderChoixConflit(infos) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("modal-conflit");
+    document.getElementById("conflit-nom").textContent = infos.nom;
+    document.getElementById("conflit-ici-resume").textContent = infos.resumeIci;
+    document.getElementById("conflit-ici-date").textContent = "Modifié le " + infos.dateIci;
+    document.getElementById("conflit-ligne-resume").textContent = infos.resumeLigne;
+    document.getElementById("conflit-ligne-date").textContent = "Modifié le " + infos.dateLigne;
+    modal.hidden = false;
+
+    const boutons = [
+      ["conflit-garder-ici", "ici"],
+      ["conflit-garder-ligne", "ligne"],
+      ["conflit-garder-deux", "deux"],
+    ];
+    const nettoyer = [];
+    boutons.forEach(([id, valeur]) => {
+      const el = document.getElementById(id);
+      const gestionnaire = () => {
+        nettoyer.forEach((f) => f());
+        modal.hidden = true;
+        resolve(valeur);
+      };
+      el.addEventListener("click", gestionnaire);
+      nettoyer.push(() => el.removeEventListener("click", gestionnaire));
+    });
+  });
 }
 
 /* ---------- Poussée automatique après chaque modification ---------- */
@@ -336,13 +603,41 @@ let timerNuage = null;
 /** Replanifie l'envoi du carnet ouvert (appelé après chaque sauvegarde). */
 function planifierPousseeNuage() {
   if (!nuageConnecte()) return;
+  majEtatSyncUI(); // il y a maintenant des modifications en attente
   clearTimeout(timerNuage);
   timerNuage = setTimeout(async () => {
     try {
       await pousserCarnet(carnetActif());
+      await sauverIndexCarnets();
       indiquerNuage();
     } catch (e) { /* hors ligne : la prochaine synchronisation rattrapera */ }
+    majEtatSyncUI();
   }, 6000);
+}
+
+/**
+ * Met à jour partout l'indication « ce qui n'est pas encore en ligne » :
+ * la pastille de la barre du haut (carnet ouvert) et les cartes de l'accueil.
+ */
+function majEtatSyncUI() {
+  const pastille = document.getElementById("statut-attente");
+  if (pastille) {
+    const c = typeof carnetActif === "function" ? carnetActif() : null;
+    const attente = carnetEnAttenteNuage(c);
+    pastille.hidden = !attente;
+    pastille.title = attente
+      ? "Des modifications de ce carnet ne sont pas encore enregistrées en ligne."
+      : "";
+  }
+  const compteur = document.getElementById("accueil-attente");
+  if (compteur) {
+    const n = nbCarnetsEnAttente();
+    compteur.hidden = n === 0;
+    compteur.textContent = n === 1
+      ? "1 carnet n'est pas encore en ligne"
+      : `${n} carnets ne sont pas encore en ligne`;
+  }
+  if (typeof rafraichirBadgesSyncAccueil === "function") rafraichirBadgesSyncAccueil();
 }
 
 /** Affiche brièvement « ☁️ En ligne » à côté de « ✓ Enregistré ». */
@@ -507,6 +802,9 @@ function brancherCompteUI() {
     .addEventListener("click", deconnecterNuage);
   document.getElementById("compte-synchroniser")
     .addEventListener("click", synchroniserNuage);
+  // Le bandeau « N carnets ne sont pas encore en ligne » lance la synchro.
+  const attente = document.getElementById("accueil-attente");
+  if (attente) attente.addEventListener("click", () => synchroniserNuage());
   document.getElementById("compte-pseudo")
     .addEventListener("change", (e) => enregistrerPseudo(e.target.value));
 

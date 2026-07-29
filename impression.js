@@ -1,1139 +1,1229 @@
 /* =========================================================
-   impression.js — Fenêtre d'impression, entièrement indépendante
+   impression.js — Écran « Mise en page & impression » (in-app)
    ---------------------------------------------------------
-   Cette page lit les données du carnet (trace, souvenirs, style) depuis
-   la fenêtre qui l'a ouverte (window.opener), mais construit ENTIÈREMENT
-   sa propre carte et ses propres cartes de souvenirs elle-même, dans sa
-   propre fenêtre.
+   4e écran du schéma : un éditeur libre façon « affiche ».
+   L'utilisateur pose et dimensionne comme il veut :
+     • la carte du carnet, ses souvenirs,
+     • des blocs de texte (mis en forme),
+     • des formes (rectangle, cercle, ligne),
+     • des images importées, des pictos du thème,
+   puis imprime (ou enregistre en PDF via le navigateur).
 
-   Objectif : quoi qu'il se passe ici (y compris une impression annulée
-   par l'utilisateur), l'application principale n'est JAMAIS modifiée et
-   reste utilisable — il suffit de fermer cette fenêtre.
+   Choix de page par RATIO (1:1, 3:4, 16:9…), plus de format papier.
+   Panneau de propriétés contextuel, rotation, fond de page,
+   annuler / rétablir. Disposition mémorisée par carnet.
    ========================================================= */
 
-(function () {
-  const parent = window.opener;
-  if (!parent || !parent.etat) {
-    document.body.innerHTML =
-      '<p style="padding:40px;font-family:sans-serif;max-width:560px;">' +
-      "Impossible de récupérer le carnet depuis l'application. " +
-      "Ferme cette fenêtre et réessaie depuis le bouton « Affiche PDF ».</p>";
-    return;
-  }
+const Impression = (function () {
+  "use strict";
 
-  // Lecture seule : on ne modifie jamais rien chez le parent.
-  const etatParent = parent.etat;
-  const trace = etatParent.trace;
-  const souvenirs = etatParent.souvenirs;
-  const annotations = etatParent.annotations || []; // pictogrammes/textes libres
-  const style = etatParent.style || {};
-  const pictosPerso = etatParent.pictosPerso || [];
-  const reglages = parent.reglagesAffiche || {
-    format: "A4", orientation: "portrait", police: "systeme", couleur: "#2f3b34",
+  /* Ratios proposés (largeur : hauteur). */
+  const RATIOS = [
+    { k: "1:1", r: 1 },
+    { k: "3:4", r: 3 / 4 },
+    { k: "4:3", r: 4 / 3 },
+    { k: "2:3", r: 2 / 3 },
+    { k: "3:2", r: 3 / 2 },
+    { k: "9:16", r: 9 / 16 },
+    { k: "16:9", r: 16 / 9 },
+  ];
+  const ratioDe = (k) => (RATIOS.find((x) => x.k === k) || RATIOS[1]).r;
+
+  /* Polices disponibles (déjà chargées par l'application). */
+  const POLICES = {
+    systeme: { label: "Système", css: "system-ui, sans-serif" },
+    serif: { label: "Serif", css: "Georgia, 'Times New Roman', serif" },
+    titre: { label: "Titre", css: "'Bricolage Grotesque', 'Avenir Next', sans-serif" },
+    medievale: { label: "Médiévale", css: "'UnifrakturMaguntia', fantasy" },
+    pirate: { label: "Pirate", css: "'Pirata One', fantasy" },
   };
 
-  // Disposition choisie dans la fenêtre « Livre photo » : ordre des pages et
-  // souvenirs décochés. La CARTE, elle, garde toutes les épingles avec leur
-  // numéro d'origine — seules les pages de souvenirs suivent la disposition.
-  const exclusions = Array.isArray(reglages.exclusions) ? reglages.exclusions : [];
-  const ordre = Array.isArray(reglages.ordre) ? reglages.ordre : null;
-  let souvenirsImprimes = souvenirs.map((s, i) => ({ s, numero: i + 1 }));
-  if (ordre) {
-    souvenirsImprimes.sort((a, b) => {
-      const ia = ordre.indexOf(a.s.id), ib = ordre.indexOf(b.s.id);
-      return (ia === -1 ? 999999 : ia) - (ib === -1 ? 999999 : ib);
-    });
-  }
-  souvenirsImprimes = souvenirsImprimes.filter((x) => !exclusions.includes(x.s.id));
+  /* Filtres d'image (CSS). */
+  const FILTRES = {
+    aucun: { label: "Aucun", css: "none" },
+    nb: { label: "Noir & blanc", css: "grayscale(1)" },
+    sepia: { label: "Sépia", css: "sepia(0.75)" },
+    satur: { label: "Saturé", css: "saturate(1.6)" },
+    doux: { label: "Doux", css: "saturate(0.6) brightness(1.05)" },
+    contraste: { label: "Contrasté", css: "contrast(1.25)" },
+  };
 
-  /* ---------- Constantes (reprises de app.js) ---------- */
-
-  const FORMATS_PAPIER = {
-    A0: [841, 1189], A1: [594, 841], A2: [420, 594], A3: [297, 420], A4: [210, 297], A5: [148, 210],
+  /* Fonds « image » pour la carte imprimée (vectoriel/perso → repli « clair »). */
+  const FONDS = {
+    topo: { url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", opts: { maxZoom: 17 } },
+    clair: { url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", opts: { maxZoom: 20, subdomains: "abcd" } },
+    epure: { url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", opts: { maxZoom: 20, subdomains: "abcd" } },
   };
   const TYPES_LIGNE = { plein: null, pointilles: "2 8", tirets: "10 9" };
-  const FONDS = {
-    topo: {
-      url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
-      options: { maxZoom: 17, attribution: 'Carte : © <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA) · Données : © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' },
-    },
-    clair: {
-      url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
-      options: { maxZoom: 20, subdomains: "abcd", attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · © <a href="https://carto.com/attributions">CARTO</a>' },
-    },
-    epure: {
-      url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-      options: { maxZoom: 20, subdomains: "abcd", attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · © <a href="https://carto.com/attributions">CARTO</a>' },
-    },
-  };
-  const POLICES = {
-    systeme: { css: '"Avenir Next", system-ui, sans-serif' },
-    serif:   { css: 'Georgia, "Times New Roman", serif' },
-    etroite: { css: '"Arial Narrow", "Roboto Condensed", sans-serif' },
-    titre:   { css: '"Bricolage Grotesque", "Avenir Next", sans-serif' },
-    medievale: { css: '"UnifrakturMaguntia", "Luminari", fantasy' },
-    pirate:    { css: '"Pirata One", "Luminari", fantasy' },
-  };
 
-  // Polices importées dans l'application : on les déclare aussi ici pour
-  // que l'affiche puisse les utiliser.
-  (etatParent.policesPerso || []).forEach((p) => {
+  /* ---------- État de l'écran ---------- */
+  let ratioKey = "3:4";
+  let pageBg = "#ffffff";
+  let blocs = [];          // éléments de la PAGE en cours (référence vers pages[pageIdx].blocs)
+  let pages = [];          // le livre = liste de pages { bg, blocs }
+  let pageIdx = 0;         // index de la page en cours d'édition
+  let selId = null;
+  let carte = null;
+  let carnetId = null;
+  let cleLayout = null;
+  let seq = 1, zTop = 1;
+  let histo = [], histoIdx = -1;
+
+  const $ = (id) => document.getElementById(id);
+  const page = () => $("impr2-page");
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const echapper = (t) => String(t).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  /* ============================================================
+     Ouverture / fermeture
+     ============================================================ */
+
+  function ouvrir() {
+    if (typeof etat === "undefined" || etat.vue !== "editeur" || !etat.carnetActifId) {
+      if (typeof toast === "function") toast("Ouvre d'abord un carnet.", true);
+      return;
+    }
+    carnetId = etat.carnetActifId;
+    const fiche = (typeof carnetActif === "function") ? carnetActif() : null;
+    $("impr2-nom").textContent = (fiche && fiche.nom) || "Carnet";
+    cleLayout = "logbookmap-impr-" + ((fiche && fiche.uuid) || carnetId);
+
+    ratioKey = ratioDefautCarnet(fiche);
+    pageBg = "#ffffff";
+
+    $("impression-ecran").hidden = false;
+    document.body.classList.add("vue-impression");
+
+    if (!chargerLayout()) dispositionParDefaut();
+    chargerPage(pageIdx);
+
+    construireBarreRatio();
+    majRatioUI();
+    rendreListeSouvenirs();
+    rendreThemePictos();
+    rendreIllustrations();
+    $("impr2-bg").value = pageBg;
+    ajusterPage();
+    reconstruireTout();
+    rendreBarrePages();
+    select(null);
+    histo = []; histoIdx = -1; pushHisto();
+    setTimeout(() => { if (carte) carte.invalidateSize(); }, 120);
+  }
+
+  function fermer() {
+    sauverLayout();
+    detruireCarte();
+    $("impression-ecran").hidden = true;
+    document.body.classList.remove("vue-impression");
+  }
+
+  function ratioDefautCarnet(fiche) {
+    // On repart du ratio du carnet (zone), traduit vers le ratio le plus proche.
+    let r = null;
     try {
-      const face = new FontFace("PolicePerso" + p.id, `url(${p.data})`);
-      face.load().then((f) => document.fonts.add(f)).catch(() => {});
-    } catch (e) { /* la police restera en repli système */ }
-  });
-
-  // Familles Google déjà demandées dans CETTE fenêtre.
-  const famillesDemandees = new Set();
-
-  /** Traduit une clé de police (catalogue du parent, importée, ou repli). */
-  function cssPolice(cle) {
-    try {
-      if (typeof cle === "string" && cle.startsWith("fontperso:")) {
-        return `"PolicePerso${cle.slice("fontperso:".length)}", sans-serif`;
+      if (fiche && fiche.formatZone && typeof ratioZone === "function") {
+        r = ratioZone(fiche.formatZone, fiche.orientationZone);
       }
-      const catalogue = parent.CATALOGUE_POLICES || [];
-      const entree = catalogue.find((p) => p.cle === cle);
-      if (entree) {
-        if (entree.famille && !famillesDemandees.has(entree.famille)) {
-          famillesDemandees.add(entree.famille);
-          const lien = document.createElement("link");
-          lien.rel = "stylesheet";
-          lien.crossOrigin = "anonymous";
-          lien.href = "https://fonts.googleapis.com/css2?family=" +
-            encodeURIComponent(entree.famille).replace(/%20/g, "+") + "&display=swap";
-          document.head.appendChild(lien);
-        }
-        return entree.css;
-      }
-    } catch (e) { /* catalogue inaccessible : repli */ }
-    return (POLICES[cle] || POLICES.systeme).css;
-  }
-  const PICTOS = [
-    { cle: "souvenir", glyph: "" },
-    { cle: "depart",   glyph: "🚩" },
-    { cle: "arrivee",  glyph: "🏁" },
-    { cle: "montagne", glyph: "⛰️" },
-    { cle: "foret",    glyph: "🌲" },
-    { cle: "lac",      glyph: "🏞️" },
-    { cle: "mer",      glyph: "🌊" },
-    { cle: "pont",     glyph: "🌉" },
-    { cle: "tunnel",   glyph: "🚇" },
-    { cle: "ferry",    glyph: "⛴️" },
-    { cle: "avion",    glyph: "✈️" },
-    { cle: "village",  glyph: "🏘️" },
-    { cle: "ville",    glyph: "🏙️" },
-  ];
-  const PICTO_GLYPH = Object.fromEntries(PICTOS.map((p) => [p.cle, p.glyph]));
-
-  // "emoji:🦄" = émoji librement choisi ; sinon clé prédéfinie (ou rien).
-  function glyphDePicto(cle) {
-    if (typeof cle === "string" && cle.startsWith("emoji:")) return cle.slice("emoji:".length);
-    return PICTO_GLYPH[cle] || "";
-  }
-  const STYLE_VECTORIEL_URL = "https://tiles.openfreemap.org/styles/liberty";
-
-  // Marge de page réduite au minimum : la carte doit occuper la feuille
-  // presque bord à bord (rendu poster). Les en-têtes/pieds de page du
-  // navigateur doivent être désactivés pour un résultat vraiment propre.
-  const MARGE_MM = 5;
-  // Petite réserve (mm) sur la hauteur des pages de SOUVENIRS uniquement,
-  // pour absorber les arrondis d'impression sans déborder sur 2 pages.
-  const MARGE_SECURITE_MM = 6;
-  const ECART_MM = 5;
-  const ECART_CARTES_MM = 6;
-  const MM_EN_PX = 96 / 25.4; // résolution CSS standard : 96px = 1 pouce = 25,4mm
-
-  /* ---------- Petites fonctions utilitaires (reprises de app.js) ---------- */
-
-  function echapperHtml(texte) {
-    const div = document.createElement("div");
-    div.textContent = texte;
-    return div.innerHTML;
+    } catch (e) {}
+    if (!(r > 0)) return "3:4";
+    let best = RATIOS[1], bd = Infinity;
+    RATIOS.forEach((x) => { const d = Math.abs(Math.log(x.r / r)); if (d < bd) { bd = d; best = x; } });
+    return best.k;
   }
 
-  function obtenirPictoPerso(cle) {
-    if (!cle || !cle.startsWith("perso:")) return null;
-    const id = Number(cle.slice("perso:".length));
-    return pictosPerso.find((p) => p.id === id) || null;
+  /* ============================================================
+     Souvenirs du carnet
+     ============================================================ */
+
+  function souvenirs() {
+    return (typeof etat !== "undefined" && Array.isArray(etat.souvenirs)) ? etat.souvenirs : [];
+  }
+  function coverSrc(s) {
+    if (!s || !Array.isArray(s.photos) || s.photos.length === 0) return null;
+    const i = (typeof s.couverture === "number" && s.photos[s.couverture]) ? s.couverture : 0;
+    return s.photos[i] ? s.photos[i].src : null;
   }
 
-  function creerIconeSouvenir(numero, pictoCle) {
-    // L'application fabrique les épingles (avec le style choisi : forme,
-    // couleur, taille, numéro) — on lui demande le même rendu pour le papier.
-    try {
-      if (parent.fabriquerEpingle) {
-        const ep = parent.fabriquerEpingle(numero, pictoCle, pictosPerso, style.epingles);
-        return L.divIcon({
-          className: "",
-          html: ep.html,
-          iconSize: ep.iconSize,
-          iconAnchor: ep.iconAnchor,
-          popupAnchor: ep.popupAnchor,
-        });
-      }
-    } catch (e) { /* repli : l'épingle classique ci-dessous */ }
-    const perso = obtenirPictoPerso(pictoCle);
-    const glyph = perso ? "" : glyphDePicto(pictoCle);
-    const pin = `
-      <svg class="pin-souvenir" width="34" height="44" viewBox="0 0 34 44" xmlns="http://www.w3.org/2000/svg">
-        <path d="M17 1 C8 1 1 8 1 17 C1 29 17 43 17 43 C17 43 33 29 33 17 C33 8 26 1 17 1 Z"
-              fill="#d35438" stroke="#ffffff" stroke-width="2"/>
-        <circle cx="17" cy="16" r="8.5" fill="#ffffff"/>
-      </svg>`;
-    const contenu = perso
-      ? `<img class="pin-image" src="${perso.src}" alt=""><span class="pin-num">${numero}</span>`
-      : glyph
-        ? `<span class="pin-glyph">${glyph}</span><span class="pin-num">${numero}</span>`
-        : `<span class="pin-chiffre">${numero}</span>`;
-    return L.divIcon({
-      className: "",
-      html: `<div class="pin-wrap">${pin}${contenu}</div>`,
-      iconSize: [34, 44],
-      iconAnchor: [17, 43],
-      popupAnchor: [0, -40],
+  /* ============================================================
+     Modèle de blocs
+     ============================================================ */
+
+  function nouveauBloc(type, extra) {
+    const b = { id: seq++, type: type, x: 22, y: 22, w: 32, h: 22, z: zTop++, rot: 0 };
+    if (type === "texte") Object.assign(b, {
+      w: 46, h: 12, contenu: "Ton texte ici", police: "titre", taille: 46,
+      couleur: "#10302c", gras: false, italique: false, souligne: false,
+      align: "center", fond: "none",
     });
-  }
-
-  function photoCouverture(souvenir) {
-    const i = souvenir.couverture;
-    if (i === null || i === undefined) return null;
-    return souvenir.photos[i] || null;
-  }
-
-  /**
-   * Largeur d'un souvenir dans la mosaïque, en unités de grille, selon la
-   * richesse de son contenu : un souvenir bien rempli occupe un grand
-   * rectangle, un souvenir léger un petit — c'est ce qui fait varier la
-   * taille des cases.
-   */
-  function classifierTailleSouvenir(souvenir) {
-    const aPhoto = !!(photoCouverture(souvenir) || souvenir.photos[0]);
-    const longueurTexte = (souvenir.textes || "").length;
-    const nbAutresPhotos = Math.max(0, souvenir.photos.length - 1);
-    if (aPhoto && longueurTexte > 150) return 2;   // photo + long récit
-    if (longueurTexte > 400) return 2;             // très long récit seul
-    if (nbAutresPhotos >= 3) return 2;             // beaucoup de photos
-    return 1;
-  }
-
-  function classeZone(couche) {
-    const id = (couche.id || "").toLowerCase();
-    const sl = (couche["source-layer"] || "").toLowerCase();
-    if (id === "background") return "fond";
-    if (sl === "waterway" || /waterway|stream|canal/.test(id)) return "riviere";
-    if (/ice|glacier|snow/.test(id)) return "glacier";
-    if (sl === "water" || /water|ocean|sea|lake|river|bay/.test(id)) return "eau";
-    if (sl === "park" || /national_park|nature_reserve|protected|park/.test(id)) return "reserve";
-    if (/wood|forest|golf|cemetery|orchard|vineyard/.test(id)) return "foret";
-    if (/grass|meadow|scrub|heath|wetland|farmland|landcover|landuse/.test(id)) return "prairie";
-    if (sl === "building" || /building/.test(id)) return "bati";
-    if (sl === "boundary" || /boundary|admin/.test(id)) return "frontiere";
-    if (sl === "transportation" || sl === "transportation_name" ||
-        /road|highway|street|path|track|bridge|tunnel|rail|ferry/.test(id)) return "route";
-    return null;
-  }
-
-  function masquerDetail(couche) {
-    const id = (couche.id || "").toLowerCase();
-    const sl = (couche["source-layer"] || "").toLowerCase();
-    if (["building", "housenumber", "poi", "aeroway"].includes(sl)) return true;
-    if (/building|housenumber|poi|aeroway|ferry/.test(id)) return true;
-    if (sl === "transportation" || sl === "transportation_name" || /road|bridge|tunnel|rail|path|track|service/.test(id)) {
-      return !/motorway|trunk|primary/.test(id);
-    }
-    return false;
-  }
-
-  /* ---------- Carte principale ---------- */
-
-  // Teinte d'ambiance + arrondi des contours : mêmes filtres que dans app.js,
-  // composés en une seule variable CSS posée sur la carte.
-  const AMBIANCE_FILTRES = {
-    naturel: "",
-    ancien: "sepia(0.35) saturate(0.8) brightness(1.03)",
-    doux: "saturate(0.55) brightness(1.06)",
-    medieval: "sepia(0.78) saturate(0.6) contrast(1.08) brightness(1.07)",
-  };
-
-  /** Nombre de passes d'arrondi des formes (0 à 4), comme dans app.js. */
-  function lireArrondi(valeur) {
-    const n = Number(valeur);
-    return (Number.isFinite(n) && n >= 0 && n <= 4) ? Math.round(n) : 0;
-  }
-
-  /** Les points d'une flèche : la ligne + les deux branches (comme ui.js). */
-  function pointsFleche(a) {
-    const k = Math.cos(((a.lat + a.lat2) / 2) * Math.PI / 180) || 1;
-    const dx = (a.lng2 - a.lng) * k;
-    const dy = a.lat2 - a.lat;
-    const longueur = Math.hypot(dx, dy) || 1e-9;
-    const ux = dx / longueur;
-    const uy = dy / longueur;
-    const t = longueur * 0.22;
-    const branche = (angle) => {
-      const cos = Math.cos(angle), sin = Math.sin(angle);
-      const bx = -ux * cos + uy * sin;
-      const by = -ux * sin - uy * cos;
-      return [a.lat2 + t * by, a.lng2 + (t * bx) / k];
-    };
-    return [[a.lat, a.lng], [a.lat2, a.lng2], branche(0.45), [a.lat2, a.lng2], branche(-0.45)];
-  }
-
-  /** Calque Leaflet d'un trait / forme / dessin, identique à l'application. */
-  function coucheVecteurImpression(a, carte) {
-    const style = {
-      color: a.couleur || "#b4452f",
-      weight: a.epaisseur || 4,
-      opacity: 0.9,
-      interactive: false,
-    };
-    if (a.type === "trait" || a.type === "dessin") {
-      if (!Array.isArray(a.points) || a.points.length < 2) return null;
-      return L.polyline(a.points, style);
-    }
-    if ([a.lat, a.lng, a.lat2, a.lng2].some((v) => typeof v !== "number")) return null;
-    if (a.forme === "rect") {
-      return L.rectangle([[a.lat, a.lng], [a.lat2, a.lng2]], {
-        ...style, fill: !!a.remplir, fillColor: style.color, fillOpacity: a.remplir ? 0.25 : 0,
-      });
-    }
-    if (a.forme === "cercle") {
-      const centre = [(a.lat + a.lat2) / 2, (a.lng + a.lng2) / 2];
-      const rayon = carte.distance(centre, [centre[0], a.lng2]);
-      return L.circle(centre, {
-        radius: Math.max(rayon, 1),
-        ...style, fill: !!a.remplir, fillColor: style.color, fillOpacity: a.remplir ? 0.25 : 0,
-      });
-    }
-    if (a.forme === "fleche") return L.polyline(pointsFleche(a), style);
-    return null;
-  }
-
-  // La carte principale, gardée accessible pour recaler ses tuiles juste
-  // avant l'impression (sinon Firefox peut imprimer une vue décalée).
-  let cartePrincipale = null;
-
-  function construireCartePrincipale(largeurMm, hauteurMm) {
-    const zoneCarteEl = document.getElementById("zone-carte");
-    zoneCarteEl.style.width = largeurMm + "mm";
-    zoneCarteEl.style.height = hauteurMm + "mm";
-    // Carte plus étroite que la page (zone au format non-A) : on la centre.
-    zoneCarteEl.style.marginLeft = "auto";
-    zoneCarteEl.style.marginRight = "auto";
-
-    // Carte INTERACTIVE : l'utilisateur ajuste le cadrage (déplacement à la
-    // souris, zoom précis via le champ de la barre ou la molette — zoomSnap:0
-    // autorise les niveaux de zoom intermédiaires). Pas de boutons +/- ni
-    // d'attribution : rien qui puisse finir sur le papier.
-    const carte = L.map("map", {
-      zoomControl: false,
-      attributionControl: false,
-      zoomSnap: 0,
-      zoomDelta: 0.25,
+    else if (type === "forme") Object.assign(b, {
+      forme: (extra && extra.forme) || "rect", remplissage: "#2c7da0",
+      bordureCouleur: "#10302c", bordure: 0, opacite: 1,
     });
-    cartePrincipale = carte;
-    const attentes = [];
+    else if (type === "ligne") Object.assign(b, { type: "forme", forme: "ligne", h: 1.5, remplissage: "#10302c", bordure: 3, bordureCouleur: "#10302c", opacite: 1 });
+    else if (type === "image") Object.assign(b, { w: 30, h: 24, src: (extra && extra.src) || "", filtre: "aucun", opacite: 1 });
+    else if (type === "carte") Object.assign(b, { w: 84, h: 52 });
+    else if (type === "souvenir") Object.assign(b, { w: 30, h: 22, sid: extra && extra.sid });
+    return Object.assign(b, extra || {});
+  }
 
-    if (style.fond === "vectoriel" && L.maplibreGL) {
-      // Simplification des tracés (même logique que dans app.js) : on
-      // plafonne le zoom des DONNÉES vectorielles pour afficher des
-      // contours généralisés. Si le téléchargement du style échoue, on
-      // retombe simplement sur le fond vectoriel standard.
-      const ANCIENS_NIVEAUX = { aucune: 14, legere: 12, moyenne: 10, forte: 8 };
-      let maxzoomSimplification = (style.vecteur && style.vecteur.simplification);
-      if (typeof maxzoomSimplification === "string") {
-        maxzoomSimplification = ANCIENS_NIVEAUX[maxzoomSimplification] || 14;
-      }
-      maxzoomSimplification = Number(maxzoomSimplification) || 14;
-      const passesArrondi = lireArrondi(style.arrondi);
-
-      // Arrondi des formes : mêmes outils que dans app.js (tuiles décodées,
-      // lissées par l'algorithme de Chaikin, ré-encodées via un protocole).
-      let modulesMvt = null;
-      const chargerModulesMvt = async () => {
-        if (modulesMvt) return modulesMvt;
-        const [vt, pbf, vtpbf] = await Promise.all([
-          import("https://esm.sh/@mapbox/vector-tile@1.3.1"),
-          import("https://esm.sh/pbf@3.2.1"),
-          import("https://esm.sh/vt-pbf@3.1.3"),
-        ]);
-        modulesMvt = { VectorTile: vt.VectorTile, Pbf: pbf.default || pbf, vtpbf: vtpbf.default || vtpbf };
-        return modulesMvt;
-      };
-      const lisserChaikin = (points, passes, fermee) => {
-        for (let p = 0; p < passes; p++) {
-          const n = points.length;
-          if (n < 3) break;
-          const res = [];
-          if (!fermee) res.push(points[0]);
-          const fin = fermee ? n : n - 1;
-          for (let i = 0; i < fin; i++) {
-            const a = points[i], b = points[(i + 1) % n];
-            res.push({ x: 0.75 * a.x + 0.25 * b.x, y: 0.75 * a.y + 0.25 * b.y });
-            res.push({ x: 0.25 * a.x + 0.75 * b.x, y: 0.25 * a.y + 0.75 * b.y });
-          }
-          if (!fermee) res.push(points[n - 1]);
-          points = res;
-        }
-        return points;
-      };
-      const tuileArrondie = (brut, passes) => {
-        const { VectorTile, Pbf, vtpbf } = modulesMvt;
-        const tuile = new VectorTile(new Pbf(new Uint8Array(brut)));
-        const couches = {};
-        Object.keys(tuile.layers).forEach((nom) => {
-          const src = tuile.layers[nom];
-          couches[nom] = {
-            version: src.version || 2, name: nom, extent: src.extent, length: src.length,
-            feature: (i) => {
-              const f = src.feature(i);
-              const geometrie = f.loadGeometry().map((ligne) => {
-                if (f.type === 1) return ligne;
-                if (f.type === 3) {
-                  const ouvert = ligne.slice(0, ligne.length - 1);
-                  const lisse = lisserChaikin(ouvert, passes, true);
-                  lisse.push({ x: lisse[0].x, y: lisse[0].y });
-                  return lisse;
-                }
-                return lisserChaikin(ligne, passes, false);
-              });
-              return { id: f.id, type: f.type, properties: f.properties, loadGeometry: () => geometrie };
-            },
-          };
-        });
-        return vtpbf.fromVectorTileJs({ layers: couches });
-      };
-      if (passesArrondi > 0 && typeof maplibregl !== "undefined" && maplibregl.addProtocol) {
-        maplibregl.addProtocol("lisse", async (params) => {
-          const m = params.url.match(/^lisse:\/\/(\d+)\/(.+)$/);
-          if (!m) throw new Error("adresse invalide");
-          const reponse = await fetch("https://" + m[2]);
-          if (!reponse.ok) throw new Error("tuile indisponible");
-          const brut = await reponse.arrayBuffer();
-          try {
-            await chargerModulesMvt();
-            const d = tuileArrondie(brut, Number(m[1]));
-            return { data: d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength) };
-          } catch (e) {
-            return { data: brut };
-          }
-        });
-      }
-
-      const obtenirStyleGl = async () => {
-        if (maxzoomSimplification >= 14 && passesArrondi === 0) return STYLE_VECTORIEL_URL;
-        try {
-          const reponse = await fetch(STYLE_VECTORIEL_URL);
-          const json = await reponse.json();
-          for (const src of Object.values(json.sources || {})) {
-            if (src.type !== "vector") continue;
-            if (maxzoomSimplification < 14) src.maxzoom = Math.min(src.maxzoom || 14, maxzoomSimplification);
-            if (passesArrondi > 0) {
-              let tuiles = src.tiles;
-              if (!tuiles && src.url) {
-                const infos = await (await fetch(src.url)).json();
-                tuiles = infos.tiles;
-                if (!src.maxzoom && infos.maxzoom) {
-                  src.maxzoom = maxzoomSimplification < 14
-                    ? Math.min(infos.maxzoom, maxzoomSimplification) : infos.maxzoom;
-                }
-                if (infos.minzoom !== undefined) src.minzoom = infos.minzoom;
-              }
-              if (Array.isArray(tuiles)) {
-                src.tiles = tuiles.map((u) => "lisse://" + passesArrondi + "/" + u.replace(/^https?:\/\//, ""));
-                delete src.url;
-              }
-            }
-          }
-          return json;
-        } catch (e) {
-          return STYLE_VECTORIEL_URL;
-        }
-      };
-
-      // Toute cette partie (couleurs des zones, préréglage "ancienne") est du
-      // pur embellissement : si elle échoue pour une raison quelconque, la
-      // carte doit quand même s'imprimer avec le fond vectoriel standard,
-      // plutôt que de faire échouer TOUTE l'affiche (souvenirs compris).
-      attentes.push(obtenirStyleGl().then((styleGl) => {
-        const coucheGl = L.maplibreGL({
-          pane: "tilePane",
-          style: styleGl,
-          attribution:
-            '© <a href="https://openfreemap.org">OpenFreeMap</a> · © OpenMapTiles · ' +
-            '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-          // Sans ça, le tampon WebGL est effacé juste après chaque image
-          // affichée : le fond disparaîtrait à l'impression.
-          preserveDrawingBuffer: true,
-        }).addTo(carte);
-
-        return new Promise((resolve) => {
-        let fini = false;
-        const terminer = () => { if (!fini) { fini = true; resolve(); } };
-        // Avec l'arrondi des formes, les tuiles mettent plus de temps :
-        // on laisse jusqu'à 20 s avant d'abandonner la mise en beauté.
-        setTimeout(terminer, 20000);
-
-        try {
-          const appliquerStyleVecteur = (glMap) => {
-            try {
-              const zones = (style.vecteur && style.vecteur.zones) || {};
-              Object.keys(zones).forEach((cat) => {
-                const couleur = zones[cat];
-                if (!couleur) return;
-                // Catégorie spéciale "noms" : couleur du texte des lieux.
-                if (cat === "noms") {
-                  glMap.getStyle().layers.forEach((c) => {
-                    if (c.type !== "symbol") return;
-                    try { glMap.setPaintProperty(c.id, "text-color", couleur); } catch (e) {}
-                  });
-                  return;
-                }
-                glMap.getStyle().layers.forEach((c) => {
-                  if (classeZone(c) !== cat) return;
-                  try {
-                    if (c.type === "fill") glMap.setPaintProperty(c.id, "fill-color", couleur);
-                    else if (c.type === "line") glMap.setPaintProperty(c.id, "line-color", couleur);
-                    else if (c.type === "background") glMap.setPaintProperty(c.id, "background-color", couleur);
-                    else if (c.type === "fill-extrusion") glMap.setPaintProperty(c.id, "fill-extrusion-color", couleur);
-                  } catch (e) { /* couche non colorable */ }
-                });
-              });
-              // Niveau de détail "épuré" : masque petites routes, bâtiments, POI.
-              if (style.vecteur && style.vecteur.detail === "epure") {
-                glMap.getStyle().layers.forEach((l) => {
-                  if (masquerDetail(l)) { try { glMap.setLayoutProperty(l.id, "visibility", "none"); } catch (e) {} }
-                });
-              }
-              // Préréglages médiévaux (carte ancienne, parchemins, pirate) :
-              // grosse maille + noms de lieux stylisés + grain de parchemin,
-              // aux couleurs propres au préréglage choisi (mêmes valeurs
-              // que PRESETS_FOND dans app.js).
-              const PRESETS_IMPRESSION = {
-                ancienne: { noms: "#5a4632", halo: "#e9e0c4", teinte: "ancienne" },
-                clair:    { noms: "#6b5233", halo: "#f4ecd6", teinte: "claire" },
-                sombre:   { noms: "#4a3620", halo: "#d8c49a", teinte: "sombre" },
-                pirate:   { noms: "#5a3a22", halo: "#e7d7b1", teinte: "pirate" },
-              };
-              const preset = style.vecteur && PRESETS_IMPRESSION[style.vecteur.preset];
-              if (preset) {
-                glMap.getStyle().layers.forEach((l) => {
-                  if (masquerDetail(l)) { try { glMap.setLayoutProperty(l.id, "visibility", "none"); } catch (e) {} }
-                });
-                glMap.getStyle().layers.forEach((l) => {
-                  if (l.type !== "symbol" || !(l.layout && l.layout["text-field"])) return;
-                  try { if (glMap.getLayoutProperty(l.id, "visibility") === "none") return; } catch (e) {}
-                  try { glMap.setLayoutProperty(l.id, "text-font", ["Noto Sans Italic"]); } catch (e) {}
-                  try { glMap.setPaintProperty(l.id, "text-color", preset.noms); } catch (e) {}
-                  try { glMap.setPaintProperty(l.id, "text-halo-color", preset.halo); } catch (e) {}
-                  try { glMap.setPaintProperty(l.id, "text-halo-width", 1.4); } catch (e) {}
-                });
-                document.getElementById("map").classList.add("vecteur-ancienne");
-                document.getElementById("parchemin").classList.add("teinte-" + preset.teinte);
-              }
-              // Couches décochées dans l'application (noms, frontières…).
-              const couchesMasquees = (style.vecteur && style.vecteur.couches) || {};
-              glMap.getStyle().layers.forEach((l) => {
-                let cat = classeZone(l);
-                if (l.type === "symbol") cat = "noms";
-                if (!cat || couchesMasquees[cat] !== false) return;
-                try { glMap.setLayoutProperty(l.id, "visibility", "none"); } catch (e) {}
-              });
-            } catch (e) { /* embellissement seulement : on continue quand même */ }
-            terminer();
-          };
-
-          // getMaplibreMap() peut renvoyer undefined juste après l'ajout du
-          // calque (la carte MapLibre sous-jacente n'existe pas encore tout
-          // à fait) : on sonde jusqu'à ce qu'elle soit là ET son style chargé,
-          // plutôt que de supposer qu'elle est prête immédiatement.
-          let appliquee = false;
-          const tenter = () => {
-            if (appliquee) return;
-            const glMap = coucheGl.getMaplibreMap();
-            if (!glMap) return;
-            // isStyleLoaded() peut rester faux longtemps (tuiles en cours,
-            // surtout avec l'arrondi) : il suffit que la LISTE des couches
-            // soit disponible pour pouvoir repeindre les couleurs.
-            let pret = false;
-            try {
-              const st = glMap.getStyle();
-              pret = !!(st && st.layers && st.layers.length > 0);
-            } catch (e) { pret = false; }
-            if (!pret) return;
-            appliquee = true;
-            clearInterval(sondage);
-            appliquerStyleVecteur(glMap);
-          };
-          const sondage = setInterval(tenter, 200);
-          tenter();
-        } catch (e) {
-          terminer();
-        }
-        });
+  function dispositionParDefaut() {
+    seq = 1; zTop = 1;
+    const bl = [];
+    bl.push(nouveauBloc("carte", { x: 4, y: 4, w: 92, h: 54 }));
+    const liste = souvenirs().slice(0, 6);
+    const cols = 3, gap = 2, larg = (92 - gap * (cols - 1)) / cols, haut = 17;
+    liste.forEach((s, i) => {
+      const col = i % cols, ligne = Math.floor(i / cols);
+      bl.push(nouveauBloc("souvenir", {
+        sid: s.id, x: 4 + col * (larg + gap), y: 60 + ligne * (haut + gap), w: larg, h: haut,
       }));
-    } else {
-      const fond = FONDS[style.fond] || FONDS.topo;
-      const coucheFond = L.tileLayer(fond.url, fond.options).addTo(carte);
-      attentes.push(new Promise((resolve) => {
-        let fini = false;
-        const terminer = () => { if (!fini) { fini = true; resolve(); } };
-        setTimeout(terminer, 6000);
-        coucheFond.once("load", terminer);
-      }));
-    }
-
-    // Ambiance : classe (pour le parchemin) + teinte posée en variable CSS.
-    // (L'arrondi des formes est géré en amont, dans les tuiles vectorielles.)
-    const mapEl = document.getElementById("map");
-    mapEl.classList.add("ambiance-" + (style.ambiance || "naturel"));
-    const fa = AMBIANCE_FILTRES[style.ambiance] || "";
-    mapEl.style.setProperty("--filtre-fond", fa || "none");
-
-    // Décor choisi dans l'application : on recopie tel quel la bordure et la
-    // rose des vents affichées dans la fenêtre principale (même variante,
-    // même image importée), en lisant leur rendu chez window.opener.
-    try {
-      if (style.decor && style.decor.bordure) {
-        const source = parent.document.getElementById("bordure-carte");
-        const cible = document.getElementById("bordure-carte");
-        cible.className = source.className;
-        cible.style.borderImageSource = source.style.borderImageSource;
-        cible.hidden = false;
-      }
-      if (style.decor && style.decor.rose) {
-        const roseSource = parent.document.getElementById("rose-carte");
-        const roseCible = document.getElementById("rose-vents");
-        if (roseSource && roseSource.innerHTML.trim()) roseCible.innerHTML = roseSource.innerHTML;
-        roseCible.hidden = false;
-      }
-    } catch (e) { /* décor inaccessibles : l'affiche reste imprimable */ }
-
-    const t = style.trace || { couleur: "#c8893d", epaisseur: 4, type: "plein" };
-    const points = [];
-    if (trace) {
-      trace.segments.forEach((seg) => {
-        L.polyline(seg, { color: t.couleur, weight: t.epaisseur, opacity: 0.9, dashArray: TYPES_LIGNE[t.type] }).addTo(carte);
-      });
-      trace.segments.forEach((seg) => seg.forEach((p) => points.push(p)));
-    }
-    souvenirs.forEach((s, i) => {
-      L.marker([s.lat, s.lng], { icon: creerIconeSouvenir(i + 1, s.pictogramme) }).addTo(carte);
-      points.push([s.lat, s.lng]);
     });
-
-    // Éléments posés librement sur le fond de carte : pictogrammes, textes,
-    // photos, traits, formes et dessins (même rendu que dans l'application).
-    const ALIGN_CSS = { gauche: "left", centre: "center", droite: "right" };
-    annotations.forEach((a) => {
-      // Traits, formes et dessins : des calques dessinés.
-      if (a.type === "trait" || a.type === "dessin" || a.type === "forme") {
-        const calque = coucheVecteurImpression(a, carte);
-        if (calque) {
-          calque.addTo(carte);
-          if (Array.isArray(a.points)) a.points.forEach((p) => points.push(p));
-          else if (typeof a.lat === "number") {
-            points.push([a.lat, a.lng]);
-            points.push([a.lat2, a.lng2]);
-          }
-        }
-        return;
-      }
-      if (typeof a.lat !== "number" || typeof a.lng !== "number") return;
-      let contenu;
-      if (a.type === "picto") {
-        const perso = obtenirPictoPerso(a.picto);
-        contenu = perso
-          ? `<img class="annot-picto-img" src="${perso.src}" style="height:${a.taille}px" alt="">`
-          : `<span class="annot-picto" style="font-size:${a.taille}px">${glyphDePicto(a.picto) || "⛰️"}</span>`;
-      } else if (a.type === "image") {
-        // Photo posée sur la carte (façon polaroid, avec sa légende).
-        if (typeof a.src !== "string" || !a.src) return;
-        const legende = a.legende
-          ? `<figcaption>${echapperHtml(a.legende)}</figcaption>` : "";
-        contenu = `<figure class="annot-image" style="width:${a.taille || 170}px">` +
-          `<img src="${a.src}" alt="">${legende}</figure>`;
-      } else {
-        const deco = [a.souligne ? "underline" : "", a.barre ? "line-through" : ""]
-          .filter(Boolean).join(" ") || "none";
-        const css = [
-          `font-family:${cssPolice(a.police)}`,
-          `color:${a.couleur}`,
-          `font-size:${a.taille}px`,
-          `text-align:${ALIGN_CSS[a.align] || "center"}`,
-          `font-weight:${a.gras ? "800" : "400"}`,
-          `font-style:${a.italique ? "italic" : "normal"}`,
-          `text-decoration:${deco}`,
-        ].join(";");
-        const html = echapperHtml(a.texte || "").replace(/\n/g, "<br>");
-        // Les noms de polices contiennent des guillemets : on les échappe.
-        contenu = `<div class="annot-texte" style="${css.replace(/"/g, "&quot;")}">${html}</div>`;
-      }
-      // L'inclinaison éventuelle (poignée de rotation) est reproduite ici.
-      const rotation = typeof a.rotation === "number" && a.rotation !== 0
-        ? ` style="transform: translate(-50%, -50%) rotate(${a.rotation}deg)"`
-        : "";
-      L.marker([a.lat, a.lng], {
-        icon: L.divIcon({
-          className: "",
-          html: `<div class="annot-wrap"${rotation}>${contenu}</div>`,
-          iconSize: [0, 0],
-        }),
-        interactive: false,
-      }).addTo(carte);
-      points.push([a.lat, a.lng]);
-    });
-
-    carte.invalidateSize();
-    // Si le carnet a une ZONE de cadrage, la carte s'y cale exactement
-    // (la zone-carte a déjà la bonne proportion). Sinon, on cadre sur le contenu.
-    if (reglages.zone) {
-      const zb = L.latLngBounds(
-        [reglages.zone.sud, reglages.zone.ouest],
-        [reglages.zone.nord, reglages.zone.est]
-      );
-      carte.fitBounds(zb, { padding: [0, 0], animate: false });
-    } else if (points.length) {
-      carte.fitBounds(points, { padding: [20, 20], animate: false });
-    } else {
-      // Carnet sans trace, sans zone ni contenu géolocalisé : vue par défaut.
-      carte.setView([46.6, 2.5], 5);
-    }
-
-    const titre = (style.titre || "").trim();
-    if (titre) {
-      const titreEl = document.getElementById("carte-titre");
-      titreEl.textContent = titre;
-      titreEl.style.fontFamily = cssPolice(style.titrePolice || "titre");
-      // Même habillage du cartouche que dans l'application (classes CSS partagées).
-      const fondsTitre = ["classique", "parchemin", "pirate", "sombre"];
-      const fondTitre = fondsTitre.includes(style.titreFond) ? style.titreFond : "classique";
-      titreEl.className = "carte-titre" + (fondTitre === "classique" ? "" : " titre-" + fondTitre);
-      titreEl.hidden = false;
-    }
-
-    return Promise.all(attentes);
+    pages = [{ bg: "#ffffff", blocs: bl }];
+    pageIdx = 0;
   }
 
-  /* ---------- Cartes souvenirs (mosaïque) ---------- */
+  /* ============================================================
+     Pages du livre (barre de miniatures, ajout / duplication /
+     suppression / réordonnancement / navigation)
+     ============================================================ */
 
-  function construireCarteImpression(souvenir, numero) {
-    const carte = document.createElement("article");
-    carte.className = "impression-carte";
-    const interieur = document.createElement("div");
-    interieur.className = "impression-carte-interieur";
-    carte.appendChild(interieur);
+  /* Recopie la page en cours d'édition dans la structure du livre. */
+  function syncPage() {
+    if (pages[pageIdx]) { pages[pageIdx].bg = pageBg; pages[pageIdx].blocs = blocs; }
+  }
 
-    const entete = document.createElement("div");
-    entete.className = "impression-carte-entete";
+  /* Charge la page d'index i comme page active (met à jour blocs / pageBg). */
+  function chargerPage(i) {
+    if (!pages.length) pages = [{ bg: "#ffffff", blocs: [] }];
+    pageIdx = clamp(i, 0, pages.length - 1);
+    const p = pages[pageIdx];
+    pageBg = (typeof p.bg === "string") ? p.bg : "#ffffff";
+    blocs = Array.isArray(p.blocs) ? p.blocs : (p.blocs = []);
+    seq = 1; zTop = 1;
+    blocs.forEach((b) => { b.id = seq++; if (!(b.z > 0)) b.z = zTop; if (typeof b.rot !== "number") b.rot = 0; zTop = Math.max(zTop, b.z + 1); });
+  }
 
-    const pin = document.createElement("span");
-    pin.className = "impression-carte-pin";
-    pin.textContent = numero;
-    entete.appendChild(pin);
+  /* Réaffiche entièrement la page active + la barre de pages. */
+  function rafraichirScene() {
+    $("impr2-bg").value = pageBg;
+    ajusterPage();
+    reconstruireTout();
+    rendreBarrePages();
+  }
 
-    const titre = document.createElement("h3");
-    titre.className = "impression-carte-titre";
-    titre.textContent = souvenir.nom || "Souvenir";
-    entete.appendChild(titre);
+  function allerPage(i) {
+    i = clamp(i, 0, pages.length - 1);
+    if (i === pageIdx) return;
+    syncPage();
+    select(null);
+    chargerPage(i);
+    rafraichirScene();
+    sauverLayout();
+  }
 
-    const miniMapEl = document.createElement("div");
-    miniMapEl.className = "impression-mini-map";
-    entete.appendChild(miniMapEl);
+  function ajouterPage() {
+    syncPage();
+    pages.splice(pageIdx + 1, 0, { bg: "#ffffff", blocs: [] });
+    select(null);
+    chargerPage(pageIdx + 1);
+    rafraichirScene();
+    pushHisto(); sauverLayout();
+  }
 
-    interieur.appendChild(entete);
+  function dupliquerPage(i) {
+    syncPage();
+    const src = pages[i];
+    if (!src) return;
+    const copie = { bg: src.bg, blocs: (src.blocs || []).map((b) => Object.assign({}, b)) };
+    pages.splice(i + 1, 0, copie);
+    select(null);
+    chargerPage(i + 1);
+    rafraichirScene();
+    pushHisto(); sauverLayout();
+  }
 
-    const couv = photoCouverture(souvenir) || souvenir.photos[0] || null;
-    if (couv) {
+  function supprimerPage(i) {
+    if (pages.length <= 1) {
+      if (typeof toast === "function") toast("Ton livre doit garder au moins une page.");
+      return;
+    }
+    if (typeof confirm === "function" && !confirm("Supprimer la page " + (i + 1) + " ?\n(tu pourras revenir en arrière avec Ctrl+Z)")) return;
+    syncPage();
+    pages.splice(i, 1);
+    let cible = pageIdx;
+    if (i < pageIdx) cible = pageIdx - 1;
+    else if (i === pageIdx) cible = Math.min(pageIdx, pages.length - 1);
+    select(null);
+    chargerPage(cible);
+    rafraichirScene();
+    pushHisto(); sauverLayout();
+  }
+
+  function deplacerPage(i, dir) {
+    const j = i + dir;
+    if (j < 0 || j >= pages.length) return;
+    syncPage();
+    const tmp = pages[i]; pages[i] = pages[j]; pages[j] = tmp;
+    if (pageIdx === i) pageIdx = j;
+    else if (pageIdx === j) pageIdx = i;
+    rendreBarrePages();
+    pushHisto(); sauverLayout();
+  }
+
+  function rendreBarrePages() {
+    const cont = $("impr2-pages");
+    if (!cont) return;
+    cont.innerHTML = "";
+    const r = ratioDe(ratioKey);
+    const H = 58, W = Math.round(H * r);
+    pages.forEach((p, i) => {
+      const item = document.createElement("div");
+      item.className = "impr2-vign" + (i === pageIdx ? " actif" : "");
+      item.dataset.i = i;
+
+      const mini = document.createElement("div");
+      mini.className = "impr2-vign-page";
+      mini.style.width = W + "px"; mini.style.height = H + "px";
+      remplirMini(mini, p);
+      mini.addEventListener("click", () => allerPage(i));
+      item.appendChild(mini);
+
+      const num = document.createElement("span");
+      num.className = "impr2-vign-num"; num.textContent = i + 1;
+      item.appendChild(num);
+
+      const ops = document.createElement("div");
+      ops.className = "impr2-vign-ops";
+      ops.appendChild(vignBtn("◀", "Déplacer avant", (e) => { e.stopPropagation(); deplacerPage(i, -1); }, i === 0));
+      ops.appendChild(vignBtn("⧉", "Dupliquer cette page", (e) => { e.stopPropagation(); dupliquerPage(i); }, false));
+      ops.appendChild(vignBtn("🗑", "Supprimer cette page", (e) => { e.stopPropagation(); supprimerPage(i); }, pages.length <= 1));
+      ops.appendChild(vignBtn("▶", "Déplacer après", (e) => { e.stopPropagation(); deplacerPage(i, 1); }, i === pages.length - 1));
+      item.appendChild(ops);
+
+      cont.appendChild(item);
+    });
+
+    const add = document.createElement("button");
+    add.className = "impr2-vign-add"; add.title = "Ajouter une page vierge";
+    add.innerHTML = "＋<span>Page</span>";
+    add.addEventListener("click", ajouterPage);
+    cont.appendChild(add);
+  }
+
+  function vignBtn(txt, title, fn, disabled) {
+    const b = document.createElement("button");
+    b.className = "impr2-vign-op"; b.textContent = txt; b.title = title;
+    if (disabled) b.disabled = true;
+    b.addEventListener("click", fn);
+    return b;
+  }
+
+  /* Mini-aperçu d'une page (léger : pas de carte Leaflet dans la miniature). */
+  function remplirMini(mini, p) {
+    mini.innerHTML = "";
+    mini.style.background = (p && typeof p.bg === "string") ? p.bg : "#ffffff";
+    const list = (p && Array.isArray(p.blocs)) ? p.blocs.slice().sort((a, b) => (a.z || 0) - (b.z || 0)) : [];
+    list.forEach((b) => {
+      const e = document.createElement("div");
+      e.className = "impr2-mini-bloc";
+      e.style.left = b.x + "%"; e.style.top = b.y + "%";
+      e.style.width = b.w + "%"; e.style.height = b.h + "%";
+      if (b.rot) e.style.transform = "rotate(" + b.rot + "deg)";
+      if (b.type === "carte") {
+        e.style.background = "#dbe7df";
+        e.textContent = "🗺"; e.style.fontSize = "9px";
+        e.style.display = "flex"; e.style.alignItems = "center"; e.style.justifyContent = "center";
+      } else if (b.type === "souvenir") {
+        const s = souvenirs().find((x) => x.id === b.sid); const c = coverSrc(s);
+        if (c) { e.style.backgroundImage = "url(" + c + ")"; e.style.backgroundSize = "cover"; e.style.backgroundPosition = "center"; }
+        else e.style.background = "#cdd8d0";
+      } else if (b.type === "image") {
+        if (b.src) { e.style.backgroundImage = "url(" + b.src + ")"; e.style.backgroundSize = "cover"; e.style.backgroundPosition = "center"; }
+        else e.style.background = "#e2e2e2";
+      } else if (b.type === "forme") {
+        if (b.forme === "ligne") e.style.background = b.remplissage || "#10302c";
+        else { e.style.background = b.remplissage || "#2c7da0"; if (b.forme === "ellipse") e.style.borderRadius = "50%"; }
+        e.style.opacity = (typeof b.opacite === "number") ? b.opacite : 1;
+      } else if (b.type === "texte") {
+        e.style.background = (b.fond && b.fond !== "none") ? b.fond : "transparent";
+        e.style.color = b.couleur || "#10302c";
+        e.style.fontSize = "5px"; e.style.overflow = "hidden"; e.style.lineHeight = "1.1";
+        e.style.padding = "1px"; e.style.textAlign = b.align || "left";
+        e.textContent = (b.contenu || "").slice(0, 40);
+      }
+      mini.appendChild(e);
+    });
+  }
+
+  /* Rafraîchit seulement la miniature de la page en cours (après une édition). */
+  function rafraichirVignetteCourante() {
+    if (!pages[pageIdx]) return;
+    syncPage();
+    const mini = document.querySelector('#impr2-pages .impr2-vign[data-i="' + pageIdx + '"] .impr2-vign-page');
+    if (mini) remplirMini(mini, pages[pageIdx]);
+  }
+
+  /* ============================================================
+     Sauvegarde / restauration
+     ============================================================ */
+
+  function sauverLayout() {
+    if (!cleLayout) return;
+    syncPage();
+    try { localStorage.setItem(cleLayout, JSON.stringify({ ratioKey, pageIdx, pages })); } catch (e) {}
+  }
+  function chargerLayout() {
+    if (!cleLayout) return false;
+    let brut = null;
+    try { brut = localStorage.getItem(cleLayout); } catch (e) {}
+    if (!brut) return false;
+    try {
+      const d = JSON.parse(brut);
+      if (!d) return false;
+      if (RATIOS.some((x) => x.k === d.ratioKey)) ratioKey = d.ratioKey;
+      // Nouveau format : un livre de pages.
+      if (Array.isArray(d.pages) && d.pages.length) {
+        pages = d.pages.map((p) => ({
+          bg: (typeof p.bg === "string") ? p.bg : "#ffffff",
+          blocs: (Array.isArray(p.blocs) ? p.blocs : []).filter((b) => b && b.type),
+        }));
+        pageIdx = clamp((typeof d.pageIdx === "number") ? d.pageIdx : 0, 0, pages.length - 1);
+        return true;
+      }
+      // Rétrocompat : ancien format « une seule page ».
+      if (Array.isArray(d.blocs)) {
+        pages = [{ bg: (typeof d.pageBg === "string") ? d.pageBg : "#ffffff", blocs: d.blocs.filter((b) => b && b.type) }];
+        pageIdx = 0;
+        return pages[0].blocs.length > 0;
+      }
+      return false;
+    } catch (e) { return false; }
+  }
+
+  /* ============================================================
+     Historique (annuler / rétablir)
+     ============================================================ */
+
+  function snapshot() { syncPage(); return JSON.stringify({ ratioKey, pageIdx, pages }); }
+  function pushHisto() {
+    const s = snapshot();
+    if (histo[histoIdx] === s) return;
+    histo = histo.slice(0, histoIdx + 1);
+    histo.push(s);
+    if (histo.length > 60) histo.shift();
+    histoIdx = histo.length - 1;
+    majUndoRedo();
+    rafraichirVignetteCourante();
+  }
+  function appliquerSnapshot(s) {
+    try {
+      const d = JSON.parse(s);
+      ratioKey = d.ratioKey;
+      pages = Array.isArray(d.pages) ? d.pages : [{ bg: d.pageBg || "#ffffff", blocs: d.blocs || [] }];
+      chargerPage(typeof d.pageIdx === "number" ? d.pageIdx : 0);
+    } catch (e) { return; }
+    $("impr2-bg").value = pageBg;
+    majRatioUI(); ajusterPage(); reconstruireTout(); rendreBarrePages(); select(null); sauverLayout();
+  }
+  function annuler() { if (histoIdx > 0) { histoIdx--; appliquerSnapshot(histo[histoIdx]); majUndoRedo(); } }
+  function retablir() { if (histoIdx < histo.length - 1) { histoIdx++; appliquerSnapshot(histo[histoIdx]); majUndoRedo(); } }
+  function majUndoRedo() {
+    const u = $("impr2-undo"), r = $("impr2-redo");
+    if (u) u.disabled = histoIdx <= 0;
+    if (r) r.disabled = histoIdx >= histo.length - 1;
+  }
+
+  /* ============================================================
+     Rendu des blocs
+     ============================================================ */
+
+  function reconstruireTout() {
+    detruireCarte();
+    const pg = page();
+    pg.style.background = pageBg;
+    pg.innerHTML = "";
+    blocs.forEach((b) => pg.appendChild(construireBlocEl(b)));
+    pg.appendChild(construireSelection());
+    majSelection();
+    const bc = blocs.find((b) => b.type === "carte");
+    if (bc) construireCarte(bc);
+  }
+
+  function construireBlocEl(bloc) {
+    const el = document.createElement("div");
+    el.className = "impr2-bloc impr2-bloc-" + bloc.type + (bloc.id === selId ? " selected" : "");
+    el.dataset.id = bloc.id;
+    appliquerGeo(el, bloc);
+    el.appendChild(contenuBloc(bloc));
+
+    el.addEventListener("pointerdown", (e) => {
+      if (el.classList.contains("edition-texte")) return; // en cours d'édition de texte
+      select(bloc.id);
+      commencerDrag(e, bloc, el);
+    });
+    if (bloc.type === "texte") {
+      el.addEventListener("dblclick", () => editerTexte(bloc, el));
+    }
+    return el;
+  }
+
+  function appliquerGeo(el, bloc) {
+    el.style.left = bloc.x + "%";
+    el.style.top = bloc.y + "%";
+    el.style.width = bloc.w + "%";
+    el.style.height = bloc.h + "%";
+    el.style.zIndex = bloc.z;
+    el.style.transform = bloc.rot ? ("rotate(" + bloc.rot + "deg)") : "";
+  }
+
+  function contenuBloc(bloc) {
+    if (bloc.type === "carte") {
+      const wrap = document.createElement("div");
+      const m = document.createElement("div");
+      m.className = "impr2-map"; m.id = "impr2-map-" + bloc.id;
+      wrap.appendChild(m);
+      const nf = document.createElement("div");
+      nf.className = "impr2-carte-nofond"; nf.textContent = "Carte du carnet";
+      wrap.appendChild(nf);
+      wrap.style.width = "100%"; wrap.style.height = "100%";
+      return wrap;
+    }
+    if (bloc.type === "souvenir") return carteSouvenir(bloc.sid);
+    if (bloc.type === "texte") return blocTexte(bloc);
+    if (bloc.type === "forme") return blocForme(bloc);
+    if (bloc.type === "image") return blocImage(bloc);
+    return document.createElement("div");
+  }
+
+  function carteSouvenir(sid) {
+    const wrap = document.createElement("div");
+    wrap.className = "impr2-cs";
+    const s = souvenirs().find((x) => x.id === sid);
+    const num = s ? (souvenirs().indexOf(s) + 1) : "?";
+    const cover = coverSrc(s);
+    if (cover) {
+      const ph = document.createElement("div");
+      ph.className = "impr2-cs-photo";
+      ph.style.backgroundImage = "url(" + cover + ")";
+      wrap.appendChild(ph);
+    }
+    const corps = document.createElement("div");
+    corps.className = "impr2-cs-corps";
+    corps.innerHTML = '<div class="impr2-cs-titre">' + num + ". " + echapper((s && s.nom) || "Souvenir") +
+      '</div><div class="impr2-cs-texte">' + echapper((s && s.textes) || "") + "</div>";
+    wrap.appendChild(corps);
+    return wrap;
+  }
+
+  function blocTexte(bloc) {
+    const t = document.createElement("div");
+    t.className = "impr2-txt";
+    majTexteStyle(t, bloc);
+    t.textContent = bloc.contenu || "";
+    return t;
+  }
+  function majTexteStyle(t, bloc) {
+    t.style.setProperty("--taille", bloc.taille || 40);
+    t.style.color = bloc.couleur || "#10302c";
+    t.style.fontFamily = (POLICES[bloc.police] || POLICES.systeme).css;
+    t.style.fontWeight = bloc.gras ? "800" : "500";
+    t.style.fontStyle = bloc.italique ? "italic" : "normal";
+    t.style.textDecoration = bloc.souligne ? "underline" : "none";
+    t.style.textAlign = bloc.align || "left";
+    t.style.background = (bloc.fond && bloc.fond !== "none") ? bloc.fond : "transparent";
+  }
+
+  function blocForme(bloc) {
+    const f = document.createElement("div");
+    f.className = "impr2-forme impr2-forme-" + bloc.forme;
+    if (bloc.forme === "ligne") {
+      f.style.background = bloc.remplissage || "#10302c";
+      f.style.height = (bloc.bordure || 3) + "px";
+      f.style.top = "50%"; f.style.transform = "translateY(-50%)";
+    } else {
+      f.style.background = bloc.remplissage || "#2c7da0";
+      f.style.borderRadius = bloc.forme === "ellipse" ? "50%" : "6px";
+      f.style.border = (bloc.bordure > 0) ? (bloc.bordure + "px solid " + (bloc.bordureCouleur || "#10302c")) : "none";
+    }
+    f.style.opacity = (typeof bloc.opacite === "number") ? bloc.opacite : 1;
+    return f;
+  }
+
+  function blocImage(bloc) {
+    const wrap = document.createElement("div");
+    wrap.className = "impr2-img-wrap";
+    if (bloc.src) {
       const img = document.createElement("img");
-      img.className = "impression-photo-couverture";
-      img.src = couv.src;
-      interieur.appendChild(img);
-      if (couv.legende) {
-        const legende = document.createElement("p");
-        legende.className = "impression-legende";
-        legende.textContent = couv.legende;
-        interieur.appendChild(legende);
-      }
+      img.src = bloc.src;
+      img.draggable = false;
+      img.style.filter = (FILTRES[bloc.filtre] || FILTRES.aucun).css;
+      img.style.opacity = (typeof bloc.opacite === "number") ? bloc.opacite : 1;
+      wrap.appendChild(img);
+    } else {
+      wrap.classList.add("impr2-img-vide");
+      wrap.textContent = "Image";
     }
-
-    if (souvenir.textes) {
-      const h4 = document.createElement("h4");
-      h4.className = "impression-recit-titre";
-      h4.textContent = "Récit";
-      interieur.appendChild(h4);
-
-      const texte = document.createElement("p");
-      texte.className = "impression-carte-texte";
-      texte.textContent = souvenir.textes;
-      interieur.appendChild(texte);
-    }
-
-    const autres = souvenir.photos.filter((p) => p !== couv);
-    if (autres.length) {
-      const galerie = document.createElement("div");
-      galerie.className = "impression-galerie";
-      autres.forEach((p) => {
-        const mini = document.createElement("img");
-        mini.className = "impression-photo-mini";
-        mini.src = p.src;
-        galerie.appendChild(mini);
-      });
-      interieur.appendChild(galerie);
-    }
-
-    return { carte, miniMapEl };
+    return wrap;
   }
 
-  function creerMiniCarteImpression(conteneur, souvenir) {
-    const carte = L.map(conteneur, {
-      zoomControl: false,
-      attributionControl: false,
-      dragging: false,
-      scrollWheelZoom: false,
-      doubleClickZoom: false,
-      boxZoom: false,
-      keyboard: false,
-      touchZoom: false,
-      tap: false,
-    });
-    const fond = L.tileLayer(
-      "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
-      { subdomains: "abcd", maxZoom: 20 }
-    ).addTo(carte);
-
-    const couche = L.layerGroup().addTo(carte);
-    if (trace) {
-      trace.segments.forEach((seg) => {
-        L.polyline(seg, { color: "#c8893d", weight: 2, opacity: 0.85 }).addTo(couche);
-      });
+  /* Met à jour le contenu (sans reconstruire toute la page). */
+  function rafraichirBloc(bloc) {
+    const el = page().querySelector('.impr2-bloc[data-id="' + bloc.id + '"]');
+    if (!el) return;
+    appliquerGeo(el, bloc);
+    if (bloc.type === "texte") {
+      const t = el.querySelector(".impr2-txt");
+      if (t) { majTexteStyle(t, bloc); if (!el.classList.contains("edition-texte")) t.textContent = bloc.contenu || ""; }
+    } else if (bloc.type === "forme" || bloc.type === "image") {
+      const anc = el.querySelector(".impr2-forme, .impr2-img-wrap");
+      const neuf = contenuBloc(bloc);
+      if (anc) el.replaceChild(neuf, anc);
     }
-    L.circleMarker([souvenir.lat, souvenir.lng], {
-      radius: 5, weight: 2, color: "#fff", fillColor: "#d35438", fillOpacity: 1,
-    }).addTo(couche);
-
-    carte.invalidateSize();
-    const points = [];
-    if (trace) trace.segments.forEach((seg) => seg.forEach((p) => points.push(p)));
-    points.push([souvenir.lat, souvenir.lng]);
-    if (points.length) {
-      carte.fitBounds(points, { paddingTopLeft: [8, 8], paddingBottomRight: [8, 8] });
-    }
-
-    return new Promise((resolve) => {
-      let fini = false;
-      const terminer = () => { if (!fini) { fini = true; resolve(); } };
-      setTimeout(terminer, 5000);
-      fond.once("load", terminer);
-    });
   }
 
-  /**
-   * Empaquetage "skyline" en mosaïque, optimisé pour l'espace : les grands
-   * rectangles se placent d'abord, puis les plus petits viennent boucher
-   * les trous — y compris sur les pages déjà entamées (chaque souvenir garde
-   * son numéro visible, la lecture ne dépend donc pas de sa position).
-   * Renvoie un tableau de pages ; chaque page = { hauteurPx, cartes:
-   * [{ info, colDepart, largeurUnites, top }] }.
-   */
-  function paginerSouvenirsMosaique(cartesInfo, nbUnites, hauteurPageDisponiblePx) {
-    const pages = [];
-    function creerPage() {
-      const p = { cartes: [], hauteursUnites: new Array(nbUnites).fill(0) };
-      pages.push(p);
-      return p;
-    }
+  /* ============================================================
+     Bloc carte : mini-carte Leaflet
+     ============================================================ */
 
-    // Larges puis hauts d'abord : les petits combleront les trous restants.
-    const ordonnees = [...cartesInfo].sort(
-      (a, b) => (b.largeurUnites - a.largeurUnites) || (b.hauteurPx - a.hauteurPx)
-    );
+  function detruireCarte() { if (carte) { try { carte.remove(); } catch (e) {} carte = null; } }
 
-    ordonnees.forEach((info) => {
-      const largeur = Math.min(info.largeurUnites, nbUnites);
-
-      // Première page où la carte tient, à la position la plus haute possible.
-      let place = null;
-      for (const page of pages) {
-        let meilleureCol = 0;
-        let meilleureHauteur = Infinity;
-        for (let c = 0; c <= nbUnites - largeur; c++) {
-          let h = 0;
-          for (let k = c; k < c + largeur; k++) h = Math.max(h, page.hauteursUnites[k]);
-          if (h < meilleureHauteur) { meilleureHauteur = h; meilleureCol = c; }
-        }
-        if (meilleureHauteur + info.hauteurPx <= hauteurPageDisponiblePx) {
-          place = { page, col: meilleureCol, top: meilleureHauteur };
-          break;
-        }
-      }
-      // Aucune page ne peut l'accueillir : nouvelle page (même si la carte
-      // est plus haute qu'une page entière, il faut bien la poser quelque part).
-      if (!place) place = { page: creerPage(), col: 0, top: 0 };
-
-      place.page.cartes.push({ info, colDepart: place.col, largeurUnites: largeur, top: place.top });
-      const nouvelleHauteur = place.top + info.hauteurPx + ECART_CARTES_MM * MM_EN_PX;
-      for (let k = place.col; k < place.col + largeur; k++) {
-        place.page.hauteursUnites[k] = nouvelleHauteur;
-      }
-    });
-
-    pages.forEach((p) => {
-      p.hauteurPx = p.cartes.reduce((m, c) => Math.max(m, c.top + c.info.hauteurPx), 0);
-      delete p.hauteursUnites;
-    });
-    return pages;
-  }
-
-  /* ---------- Orchestration ---------- */
-
-  async function preparer() {
-    const [lPortrait, hPortrait] = FORMATS_PAPIER[reglages.format] || FORMATS_PAPIER.A4;
-    const [largeur, hauteur] = reglages.orientation === "paysage" ? [hPortrait, lPortrait] : [lPortrait, hPortrait];
-
-    const styleDyn = document.createElement("style");
-    styleDyn.textContent = `@media print { @page { size: ${largeur}mm ${hauteur}mm; margin: ${MARGE_MM}mm; } }`;
-    document.head.appendChild(styleDyn);
-
-    document.documentElement.style.setProperty("--impression-police", cssPolice(reglages.police));
-    document.documentElement.style.setProperty("--impression-couleur-texte", reglages.couleur || "#2f3b34");
-
-    const largeurUtileMm = largeur - MARGE_MM * 2;
-    // La carte occupe TOUTE la hauteur imprimable (rendu poster, sans bande) ;
-    // seules les pages de souvenirs gardent une petite réserve de sécurité.
-    const hauteurPageMm = hauteur - MARGE_MM * 2;
-    const hauteurUtileMm = hauteurPageMm - MARGE_SECURITE_MM;
-
-    // Dimensions de la carte principale : si une zone de cadrage est définie,
-    // on respecte SA proportion (« contain » dans la zone imprimable), centrée.
-    // Sinon la carte occupe toute la page (rendu poster comme avant).
-    let mapLargeurMm = largeurUtileMm, mapHauteurMm = hauteurPageMm;
-    if (reglages.zone && reglages.zoneRatio > 0) {
-      const dispoRatio = largeurUtileMm / hauteurPageMm;
-      if (reglages.zoneRatio >= dispoRatio) {
-        mapLargeurMm = largeurUtileMm; mapHauteurMm = largeurUtileMm / reglages.zoneRatio;
-      } else {
-        mapHauteurMm = hauteurPageMm; mapLargeurMm = hauteurPageMm * reglages.zoneRatio;
-      }
-    }
-    const attenteCarte = construireCartePrincipale(mapLargeurMm, mapHauteurMm);
-
-    // Sans souvenir, pas de section "Souvenirs du voyage" : la carte seule
-    // (et pas de saut de page après elle, qui laisserait une feuille blanche).
-    if (souvenirsImprimes.length === 0) {
-      document.getElementById("impression").hidden = true;
-      const zoneCarte = document.getElementById("zone-carte");
-      zoneCarte.style.breakAfter = "auto";
-      zoneCarte.style.pageBreakAfter = "auto";
-    }
-
-    const zoneMesure = document.getElementById("impression-mesure");
-    const cartesInfo = [];
-    const attentesMini = [];
-    souvenirsImprimes.forEach(({ s, numero }) => {
-      const { carte, miniMapEl } = construireCarteImpression(s, numero);
-      zoneMesure.appendChild(carte);
-      cartesInfo.push({ carte, largeurUnites: classifierTailleSouvenir(s) });
-      attentesMini.push(creerMiniCarteImpression(miniMapEl, s));
-    });
-
-    await Promise.all([attenteCarte, ...attentesMini]);
-
-    const hauteurPageDisponiblePx = hauteurUtileMm * MM_EN_PX;
-
-    /**
-     * Pose les largeurs (et le mode "étroit" pour les petites unités) sur
-     * chaque carte pour une grille de nbUnites, puis mesure leurs hauteurs
-     * réelles. Renvoie la largeur d'unité correspondante.
-     */
-    function appliquerEtMesurer(nbUnites) {
-      const largeurUniteMm = (largeurUtileMm - (nbUnites - 1) * ECART_MM) / nbUnites;
-      cartesInfo.forEach((info) => {
-        const unites = Math.min(info.largeurUnites, nbUnites);
-        const largeurMm = unites * largeurUniteMm + (unites - 1) * ECART_MM;
-        info.carte.style.width = largeurMm + "mm";
-        // Sur une unité étroite, la mini-carte et les photos se compactent
-        // (sinon le titre n'aurait plus de place à côté de la mini-carte).
-        info.carte.classList.toggle("impression-carte-etroite", largeurMm < 75);
+  function construireCarte(bloc) {
+    detruireCarte();
+    if (typeof L === "undefined") return;
+    const cible = $("impr2-map-" + bloc.id);
+    if (!cible) return;
+    try {
+      carte = L.map(cible, {
+        zoomControl: false, attributionControl: false, dragging: false,
+        scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false,
+        keyboard: false, tap: false, touchZoom: false,
       });
-      cartesInfo.forEach((info) => { info.hauteurPx = info.carte.getBoundingClientRect().height; });
-      return largeurUniteMm;
-    }
+    } catch (e) { carte = null; return; }
 
-    // Choix de la grille PAR LE CONTENU : on essaie plusieurs tailles de
-    // grille (des unités de ~58 mm minimum pour rester lisible), on mesure
-    // l'encombrement réel des souvenirs dans chacune, et on garde celle qui
-    // remplit le moins de pages — à pages égales, la plus compacte, et à
-    // compacité égale, les cartes les plus larges (plus confortables à lire).
-    const MIN_UNITE_MM = 58;
-    const maxUnites = Math.max(2, Math.floor((largeurUtileMm + ECART_MM) / (MIN_UNITE_MM + ECART_MM)));
-    let meilleur = null;
-    for (let u = 2; u <= maxUnites; u++) {
-      const largeurUniteMm = appliquerEtMesurer(u);
-      const pages = paginerSouvenirsMosaique(cartesInfo, u, hauteurPageDisponiblePx);
-      const hauteurTotale = pages.reduce((somme, p) => somme + p.hauteurPx, 0);
-      const score = pages.length * 1000000 + hauteurTotale / 100 + u; // pages >> compacité >> largeur
-      if (!meilleur || score < meilleur.score) {
-        meilleur = { nbUnites: u, largeurUniteMm, score };
-      }
-    }
+    const st = (typeof etat !== "undefined" && etat.style) || {};
+    const f = FONDS[st.fond] ? FONDS[st.fond] : FONDS.clair;
+    try { L.tileLayer(f.url, Object.assign({ maxZoom: 19, subdomains: "abc" }, f.opts)).addTo(carte); } catch (e) {}
 
-    // Ré-applique la meilleure grille (les mesures/pages doivent correspondre
-    // aux largeurs réellement posées sur les cartes).
-    const { nbUnites, largeurUniteMm } = meilleur;
-    appliquerEtMesurer(nbUnites);
-    const pages = paginerSouvenirsMosaique(cartesInfo, nbUnites, hauteurPageDisponiblePx);
-
-    const zoneFinale = document.getElementById("impression-souvenirs");
-    pages.forEach((page) => {
-      const pageEl = document.createElement("div");
-      pageEl.className = "impression-page";
-      pageEl.style.height = (page.hauteurPx / MM_EN_PX) + "mm";
-      page.cartes.forEach((c) => {
-        const gauche = c.colDepart * (largeurUniteMm + ECART_MM);
-        const largeurCarte = c.largeurUnites * largeurUniteMm + (c.largeurUnites - 1) * ECART_MM;
-        c.info.carte.style.left = gauche + "mm";
-        c.info.carte.style.top = (c.top / MM_EN_PX) + "mm";
-        c.info.carte.style.width = largeurCarte + "mm";
-        pageEl.appendChild(c.info.carte);
-      });
-      zoneFinale.appendChild(pageEl);
-    });
-
-    // Crédit discret POSÉ SUR LA CARTE, en bas : la licence OpenStreetMap
-    // demande de créditer les données, même sur un poster.
-    const credit = document.createElement("p");
-    credit.className = "impression-credit";
-    credit.textContent = "Fond de carte © OpenStreetMap";
-    document.getElementById("zone-carte").appendChild(credit);
-
-    // Tout est prêt : l'utilisateur ajuste le cadrage (déplacement à la
-    // souris, zoom précis en %, rotation en degrés) puis lance lui-même
-    // l'impression. On recale les tuiles juste avant, pour que le papier
-    // corresponde exactement à l'écran.
-    document.getElementById("barre-texte").textContent = "Cadrage :";
-    document.getElementById("barre-reglages").hidden = false;
-
-    const champZoom = document.getElementById("champ-zoom");
-    const champRotation = document.getElementById("champ-rotation");
-    const rose = document.getElementById("rose-vents");
-
-    // Le zoom au moment du cadrage automatique initial vaut 100 %.
-    const zoomReference = cartePrincipale.getZoom();
-
-    champZoom.addEventListener("change", () => {
-      const pct = parseFloat(String(champZoom.value).replace(",", "."));
-      if (!isFinite(pct) || pct <= 0) return;
-      // 100 % = zoom initial ; doubler le pourcentage double l'échelle.
-      cartePrincipale.setZoom(zoomReference + Math.log2(pct / 100), { animate: false });
-    });
-    // La molette et le champ restent synchronisés (au centième de %).
-    cartePrincipale.on("zoomend", () => {
-      champZoom.value = (Math.pow(2, cartePrincipale.getZoom() - zoomReference) * 100).toFixed(2);
-    });
-
-    function appliquerRotation() {
-      const deg = parseFloat(String(champRotation.value).replace(",", ".")) || 0;
-      const mapEl = document.getElementById("map");
-      const centre = cartePrincipale.getCenter();
-      const zoom = cartePrincipale.getZoom();
-
-      if (deg === 0) {
-        mapEl.style.width = "";
-        mapEl.style.height = "";
-        mapEl.style.marginLeft = "";
-        mapEl.style.marginTop = "";
-        mapEl.style.transform = "";
-        mapEl.style.setProperty("--contre-rotation", "0deg");
-        // La rose reste affichée si le décor l'a demandée dans l'application.
-        rose.hidden = !(style.decor && style.decor.rose);
-        rose.style.transform = "";
-      } else {
-        // Pour tourner sans coins vides : la carte devient un carré plus
-        // grand que la page (sa diagonale), centré puis tourné — la page
-        // (overflow hidden) n'en montre que la découpe.
-        const diagMm = Math.ceil(Math.hypot(largeurUtileMm, hauteurPageMm));
-        mapEl.style.width = diagMm + "mm";
-        mapEl.style.height = diagMm + "mm";
-        mapEl.style.marginLeft = ((largeurUtileMm - diagMm) / 2) + "mm";
-        mapEl.style.marginTop = ((hauteurPageMm - diagMm) / 2) + "mm";
-        mapEl.style.transform = "rotate(" + deg + "deg)";
-        // Les épingles restent droites (contre-rotation autour de leur pointe).
-        mapEl.style.setProperty("--contre-rotation", (-deg) + "deg");
-        // La rose des vents tourne avec la carte : elle pointe le nord réel.
-        rose.hidden = false;
-        rose.style.transform = "rotate(" + deg + "deg)";
-      }
-      cartePrincipale.invalidateSize({ animate: false });
-      cartePrincipale.setView(centre, zoom, { animate: false });
-    }
-    champRotation.addEventListener("change", appliquerRotation);
-
-    const btn = document.getElementById("btn-imprimer");
-    btn.hidden = false;
-    btn.addEventListener("click", () => {
-      if (cartePrincipale) cartePrincipale.invalidateSize();
-      setTimeout(() => window.print(), 250);
-    });
-    window.addEventListener("beforeprint", () => {
-      if (cartePrincipale) cartePrincipale.invalidateSize();
-    });
-
-    // --- Enregistrer la page carte en image PNG (au lieu d'un PDF) ---
-    // On utilise dom-to-image-more (fidèle avec Leaflet/MapLibre), et le
-    // canvas WebGL du fond vectoriel est d'abord figé en image.
-    const btnImage = document.getElementById("btn-image");
-    btnImage.hidden = false;
-    btnImage.addEventListener("click", async () => {
-      btnImage.disabled = true;
-      btnImage.textContent = "⏳ Capture…";
-      const zone = document.getElementById("zone-carte");
-      let liberer = () => {};
-      try {
-        if (!window.domtoimage) {
-          await new Promise((resolve, reject) => {
-            const s = document.createElement("script");
-            s.src = "https://unpkg.com/dom-to-image-more@3.5.0/dist/dom-to-image-more.min.js";
-            s.onload = resolve;
-            s.onerror = () => reject(new Error("bibliothèque indisponible"));
-            document.head.appendChild(s);
-          });
-        }
-        // La composition couche par couche vit dans l'application principale
-        // (fond, trace, épingles, décor) : on la réutilise sur NOTRE page.
-        const canvas = await parent.composerImageCarte(zone, 2, window.domtoimage);
-        const dataUrl = canvas.toDataURL("image/png");
-        liberer();
-        const lien = document.createElement("a");
-        let nomCarnet = "carte";
+    const pts = [];
+    const tr = (typeof etat !== "undefined") ? etat.trace : null;
+    if (tr && Array.isArray(tr.segments)) {
+      const ts = st.trace || { couleur: "#c8893d", epaisseur: 4, type: "plein" };
+      tr.segments.forEach((seg) => {
+        if (!seg || !seg.length) return;
         try {
-          const c = (etatParent.carnets || []).find((x) => x.id === etatParent.carnetActifId);
-          nomCarnet = (c && c.nom) || (trace && trace.name) || "carte";
+          L.polyline(seg, { color: ts.couleur || "#c8893d", weight: ts.epaisseur || 4, opacity: 0.95, dashArray: TYPES_LIGNE[ts.type] || null }).addTo(carte);
         } catch (e) {}
-        lien.download = "affiche-" + nomCarnet.replace(/[^\w\-]+/g, "_") + ".png";
-        lien.href = dataUrl;
-        lien.click();
-        btnImage.textContent = "✓ Image enregistrée";
-        setTimeout(() => { btnImage.textContent = "🖼️ Image PNG"; btnImage.disabled = false; }, 2500);
-      } catch (e) {
-        liberer();
-        btnImage.textContent = "🖼️ Image PNG";
-        btnImage.disabled = false;
-        alert("Capture impossible ici. Utilise plutôt 🖨️ Imprimer (choisis « Enregistrer en PDF »).");
-      }
+        seg.forEach((p) => pts.push(p));
+      });
+    }
+    const ep = st.epingles || { couleur: "#d35438", numero: true };
+    souvenirs().forEach((s, i) => {
+      const ll = souvenirLatLng(s);
+      if (!ll) return;
+      pts.push(ll);
+      try {
+        const ic = L.divIcon({
+          className: "impr2-pin",
+          html: '<span class="impr2-pin-b" style="background:' + (ep.couleur || "#d35438") + '">' + (ep.numero === false ? "" : (i + 1)) + "</span>",
+          iconSize: [26, 26], iconAnchor: [13, 26],
+        });
+        L.marker(ll, { icon: ic, interactive: false }).addTo(carte);
+      } catch (e) {}
+    });
+
+    if (pts.length) { try { carte.fitBounds(L.latLngBounds(pts).pad(0.15), { animate: false }); } catch (e) { carte.setView([46.6, 2.5], 5); } }
+    else carte.setView([46.6, 2.5], 5);
+    setTimeout(() => { if (carte) carte.invalidateSize(); }, 60);
+  }
+  function souvenirLatLng(s) {
+    try {
+      if (s && s.marker && s.marker.getLatLng) { const l = s.marker.getLatLng(); return [l.lat, l.lng]; }
+      if (s && typeof s.lat === "number" && typeof s.lng === "number") return [s.lat, s.lng];
+    } catch (e) {}
+    return null;
+  }
+
+  /* ============================================================
+     Sélection + barre d'outils flottante (façon Canva)
+     ============================================================ */
+
+  function blocSel() { return blocs.find((b) => b.id === selId) || null; }
+
+  function select(id) {
+    selId = id;
+    page().querySelectorAll(".impr2-bloc").forEach((el) =>
+      el.classList.toggle("selected", Number(el.dataset.id) === id));
+    majSelection();
+    rendreBarre();
+  }
+
+  /* --- Calque de sélection : cadre + poignées + poignée de rotation
+         (dans #impr2-page mais NON rogné par le bloc, façon Canva) --- */
+  const ICONE_ROTOR = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12a7.5 7.5 0 1 1 2.2 5.3"/><polyline points="3 18 4.7 17.3 5.4 19"/></svg>';
+
+  function construireSelection() {
+    const ov = document.createElement("div");
+    ov.className = "impr2-selection"; ov.id = "impr2-selection"; ov.hidden = true;
+    ["nw", "ne", "sw", "se", "n", "e", "s", "w"].forEach((coin) => {
+      const p = document.createElement("span");
+      p.className = "impr2-poignee " + (coin.length === 2 ? "coin " : "arete ") + coin;
+      p.dataset.coin = coin;
+      p.addEventListener("pointerdown", (e) => { const b = blocSel(); if (b) commencerResize(e, b, coin); });
+      ov.appendChild(p);
+    });
+    const rot = document.createElement("span");
+    rot.className = "impr2-rotor";
+    rot.title = "Faire pivoter (maintiens Maj pour aller par pas de 15°)";
+    rot.innerHTML = ICONE_ROTOR;
+    rot.addEventListener("pointerdown", (e) => { const b = blocSel(); if (b) commencerRotation(e, b); });
+    ov.appendChild(rot);
+    return ov;
+  }
+
+  function majSelection() {
+    const ov = $("impr2-selection");
+    if (!ov) return;
+    const b = blocSel();
+    if (!b) { ov.hidden = true; return; }
+    ov.hidden = false;
+    ov.style.left = b.x + "%"; ov.style.top = b.y + "%";
+    ov.style.width = b.w + "%"; ov.style.height = b.h + "%";
+    ov.style.transform = b.rot ? ("rotate(" + b.rot + "deg)") : "";
+  }
+
+  function commencerRotation(e, bloc) {
+    e.preventDefault(); e.stopPropagation();
+    select(bloc.id);
+    const el = page().querySelector('.impr2-bloc[data-id="' + bloc.id + '"]');
+    const ov = $("impr2-selection");
+    const r = (el || ov).getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const ang0 = Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI;
+    const rot0 = bloc.rot || 0;
+    const bar = $("impr2-barre"); if (bar) bar.hidden = true;
+    function move(ev) {
+      const a = Math.atan2(ev.clientY - cy, ev.clientX - cx) * 180 / Math.PI;
+      let rot = rot0 + (a - ang0);
+      if (ev.shiftKey) rot = Math.round(rot / 15) * 15;
+      rot = ((Math.round(rot) + 180) % 360 + 360) % 360 - 180;
+      bloc.rot = rot;
+      if (el) el.style.transform = "rotate(" + rot + "deg)";
+      if (ov) ov.style.transform = "rotate(" + rot + "deg)";
+    }
+    function up() {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      pushHisto(); sauverLayout();
+      rendreBarre();
+    }
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+  }
+
+  /* --- Petits contrôles compacts pour la barre flottante --- */
+  function barSep() { const s = document.createElement("span"); s.className = "impr2-bar-sep"; return s; }
+  function barBtn(html, title, fn, actif) {
+    const b = document.createElement("button");
+    b.className = "impr2-bar-btn" + (actif ? " actif" : "");
+    b.innerHTML = html; if (title) b.title = title;
+    b.addEventListener("click", (e) => { e.stopPropagation(); fn(e, b); });
+    return b;
+  }
+  function barCouleur(val, title, onInput) {
+    const i = document.createElement("input");
+    i.type = "color"; i.className = "impr2-bar-couleur"; i.value = val || "#000000";
+    if (title) i.title = title;
+    i.addEventListener("click", (e) => e.stopPropagation());
+    i.addEventListener("input", () => onInput(i.value));
+    return i;
+  }
+  function barSelect(options, cur, title, onChange) {
+    const s = document.createElement("select"); s.className = "impr2-bar-select"; if (title) s.title = title;
+    options.forEach((o) => { const op = document.createElement("option"); op.value = o.v; op.textContent = o.t; if (o.v === cur) op.selected = true; s.appendChild(op); });
+    s.addEventListener("click", (e) => e.stopPropagation());
+    s.addEventListener("change", () => onChange(s.value));
+    return s;
+  }
+  function barStepper(val, min, max, step, title, onSet) {
+    const w = document.createElement("div"); w.className = "impr2-bar-step"; if (title) w.title = title;
+    const moins = document.createElement("button"); moins.className = "impr2-bar-step-b"; moins.textContent = "−";
+    const inp = document.createElement("input"); inp.type = "number"; inp.className = "impr2-bar-step-n"; inp.value = val;
+    const plus = document.createElement("button"); plus.className = "impr2-bar-step-b"; plus.textContent = "+";
+    const applique = (v, commit) => { v = clamp(v, min, max); inp.value = Math.round(v * 100) / 100; onSet(v, commit); };
+    moins.addEventListener("click", (e) => { e.stopPropagation(); applique((parseFloat(inp.value) || 0) - step, true); });
+    plus.addEventListener("click", (e) => { e.stopPropagation(); applique((parseFloat(inp.value) || 0) + step, true); });
+    inp.addEventListener("click", (e) => e.stopPropagation());
+    inp.addEventListener("input", () => { const v = parseFloat(inp.value); if (!isNaN(v)) onSet(clamp(v, min, max), false); });
+    inp.addEventListener("change", () => applique(parseFloat(inp.value) || min, true));
+    w.appendChild(moins); w.appendChild(inp); w.appendChild(plus);
+    return w;
+  }
+  function barRange(min, max, step, val, title, onInput) {
+    const i = document.createElement("input"); i.type = "range"; i.min = min; i.max = max; i.step = step; i.value = val;
+    i.className = "impr2-bar-range"; if (title) i.title = title;
+    i.addEventListener("pointerdown", (e) => e.stopPropagation());
+    i.addEventListener("input", () => onInput(parseFloat(i.value)));
+    return i;
+  }
+  function barGroupe(ico, titre, ctrl) {
+    const w = document.createElement("div"); w.className = "impr2-bar-groupe";
+    const s = document.createElement("span"); s.className = "impr2-bar-ico"; s.textContent = ico; if (titre) s.title = titre;
+    w.appendChild(s); w.appendChild(ctrl);
+    return w;
+  }
+
+  /* Construit et affiche la barre flottante pour l'élément sélectionné. */
+  function rendreBarre() {
+    const bar = $("impr2-barre");
+    if (!bar) return;
+    const b = blocSel();
+    if (!b) { bar.hidden = true; bar.innerHTML = ""; return; }
+    bar.innerHTML = "";
+    if (b.type === "texte") barreTexte(bar, b);
+    else if (b.type === "forme") barreForme(bar, b);
+    else if (b.type === "image") barreImage(bar, b);
+    barreCommun(bar, b);
+    bar.hidden = false;
+    positionnerBarre();
+  }
+
+  function barreTexte(bar, b) {
+    bar.appendChild(barSelect(Object.keys(POLICES).map((k) => ({ v: k, t: POLICES[k].label })), b.police || "titre", "Police",
+      (v) => { b.police = v; rafraichirBloc(b); pushHisto(); }));
+    bar.appendChild(barStepper(b.taille || 40, 8, 240, 1, "Taille du texte",
+      (v, commit) => { b.taille = v; rafraichirBloc(b); if (commit) pushHisto(); else positionnerBarre(); }));
+    bar.appendChild(barCouleur(b.couleur, "Couleur du texte", (v) => { b.couleur = v; rafraichirBloc(b); pushHisto(); }));
+    bar.appendChild(barSep());
+    bar.appendChild(barBtn("<b>G</b>", "Gras", () => { b.gras = !b.gras; rafraichirBloc(b); pushHisto(); rendreBarre(); }, b.gras));
+    bar.appendChild(barBtn("<i>I</i>", "Italique", () => { b.italique = !b.italique; rafraichirBloc(b); pushHisto(); rendreBarre(); }, b.italique));
+    bar.appendChild(barBtn("<u>S</u>", "Souligné", () => { b.souligne = !b.souligne; rafraichirBloc(b); pushHisto(); rendreBarre(); }, b.souligne));
+    bar.appendChild(barSep());
+    const aligns = [["left", "⯇"], ["center", "≡"], ["right", "⯈"]];
+    const idx = Math.max(0, aligns.findIndex((a) => a[0] === (b.align || "left")));
+    bar.appendChild(barBtn(aligns[idx][1], "Alignement", () => {
+      const n = (aligns.findIndex((a) => a[0] === (b.align || "left")) + 1) % aligns.length;
+      b.align = aligns[n][0]; rafraichirBloc(b); pushHisto(); rendreBarre();
+    }));
+    bar.appendChild(barSep());
+    bar.appendChild(barCouleur((b.fond && b.fond !== "none") ? b.fond : "#f1f6f4", "Fond du texte",
+      (v) => { b.fond = v; rafraichirBloc(b); pushHisto(); }));
+    bar.appendChild(barBtn("⌀", "Retirer le fond", () => { b.fond = "none"; rafraichirBloc(b); pushHisto(); }, b.fond === "none" || !b.fond));
+  }
+
+  function barreForme(bar, b) {
+    if (b.forme !== "ligne") {
+      bar.appendChild(barCouleur(b.remplissage, "Remplissage", (v) => { b.remplissage = v; rafraichirBloc(b); pushHisto(); }));
+      bar.appendChild(barCouleur(b.bordureCouleur, "Couleur de bordure", (v) => { b.bordureCouleur = v; rafraichirBloc(b); pushHisto(); }));
+      bar.appendChild(barGroupe("▢", "Épaisseur de bordure", barStepper(b.bordure || 0, 0, 30, 1, "Épaisseur de bordure",
+        (v, commit) => { b.bordure = v; rafraichirBloc(b); if (commit) pushHisto(); })));
+    } else {
+      bar.appendChild(barCouleur(b.remplissage, "Couleur", (v) => { b.remplissage = v; rafraichirBloc(b); pushHisto(); }));
+      bar.appendChild(barGroupe("▬", "Épaisseur", barStepper(b.bordure || 3, 1, 30, 1, "Épaisseur",
+        (v, commit) => { b.bordure = v; rafraichirBloc(b); if (commit) pushHisto(); })));
+    }
+    bar.appendChild(barSep());
+    bar.appendChild(barGroupe("◑", "Transparence", barRange(0.1, 1, 0.05, (typeof b.opacite === "number") ? b.opacite : 1, "Transparence",
+      (v) => { b.opacite = v; rafraichirBloc(b); })));
+  }
+
+  function barreImage(bar, b) {
+    bar.appendChild(barSelect(Object.keys(FILTRES).map((k) => ({ v: k, t: FILTRES[k].label })), b.filtre || "aucun", "Filtre",
+      (v) => { b.filtre = v; rafraichirBloc(b); pushHisto(); }));
+    bar.appendChild(barSep());
+    bar.appendChild(barGroupe("◑", "Transparence", barRange(0.1, 1, 0.05, (typeof b.opacite === "number") ? b.opacite : 1, "Transparence",
+      (v) => { b.opacite = v; rafraichirBloc(b); })));
+  }
+
+  function barreCommun(bar, b) {
+    bar.appendChild(barSep());
+    bar.appendChild(barBtn("⤒", "Mettre devant", () => ordonner(true)));
+    bar.appendChild(barBtn("⤓", "Mettre derrière", () => ordonner(false)));
+    if (b.type !== "carte") bar.appendChild(barBtn("⧉", "Dupliquer (Ctrl+D)", () => dupliquerBloc()));
+    bar.appendChild(barBtn("🗑", "Supprimer (Suppr)", () => retirerSel()));
+  }
+
+  /* Positionne la barre juste au-dessus (ou en dessous) de l'élément sélectionné. */
+  function positionnerBarre() {
+    const bar = $("impr2-barre");
+    const b = blocSel();
+    if (!bar || !b) { if (bar) bar.hidden = true; return; }
+    const el = page().querySelector('.impr2-bloc[data-id="' + b.id + '"]');
+    const scene = document.querySelector(".impr2-scene");
+    if (!el || !scene) { bar.hidden = true; return; }
+    const er = el.getBoundingClientRect();
+    const sr = scene.getBoundingClientRect();
+    const bw = bar.offsetWidth, bh = bar.offsetHeight;
+    const cx = er.left - sr.left + scene.scrollLeft + er.width / 2;
+    let left = cx - bw / 2;
+    let top = er.top - sr.top + scene.scrollTop - bh - 12;
+    if (top < scene.scrollTop + 2) top = er.bottom - sr.top + scene.scrollTop + 12; // bascule en dessous si pas de place
+    const maxLeft = scene.scrollLeft + scene.clientWidth - bw - 6;
+    left = Math.max(scene.scrollLeft + 6, Math.min(left, Math.max(scene.scrollLeft + 6, maxLeft)));
+    bar.style.left = left + "px";
+    bar.style.top = top + "px";
+  }
+
+  /* ============================================================
+     Édition de texte (double-clic)
+     ============================================================ */
+
+  function editerTexte(bloc, el) {
+    const t = el.querySelector(".impr2-txt");
+    if (!t) return;
+    el.classList.add("edition-texte");
+    t.contentEditable = "true";
+    t.focus();
+    // Sélectionner tout le contenu.
+    try { const r = document.createRange(); r.selectNodeContents(t); const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r); } catch (e) {}
+    const fin = () => {
+      t.contentEditable = "false";
+      el.classList.remove("edition-texte");
+      bloc.contenu = t.textContent;
+      t.removeEventListener("blur", fin);
+      rendreBarre();
+      pushHisto();
+    };
+    t.addEventListener("blur", fin);
+  }
+
+  /* ============================================================
+     Ajout / retrait / ordre
+     ============================================================ */
+
+  function ajouter(bloc) {
+    blocs.push(bloc);
+    page().appendChild(construireBlocEl(bloc));
+    if (bloc.type === "carte") construireCarte(bloc);
+    select(bloc.id);
+    pushHisto(); sauverLayout();
+  }
+  function ajouterCarte() {
+    const ex = blocs.find((b) => b.type === "carte");
+    if (ex) { if (typeof toast === "function") toast("La carte est déjà sur la page."); select(ex.id); return; }
+    ajouter(nouveauBloc("carte", { x: 6, y: 6 }));
+  }
+  function ajouterTexte() { ajouter(nouveauBloc("texte")); }
+  function ajouterForme(forme) { ajouter(nouveauBloc(forme === "ligne" ? "ligne" : "forme", { forme: forme })); }
+  function ajouterSouvenir(sid) { ajouter(nouveauBloc("souvenir", { sid: sid })); }
+  function ajouterImage(src) { ajouter(nouveauBloc("image", { src: src })); }
+
+  function dupliquerBloc() {
+    const b = blocSel();
+    if (!b) return;
+    if (b.type === "carte") { if (typeof toast === "function") toast("La carte ne peut être présente qu'une fois par page."); return; }
+    const c = Object.assign({}, b);
+    c.id = seq++; c.z = ++zTop;
+    c.x = clamp(b.x + 3, 0, 100 - b.w);
+    c.y = clamp(b.y + 3, 0, 100 - b.h);
+    blocs.push(c);
+    page().appendChild(construireBlocEl(c));
+    select(c.id);
+    pushHisto(); sauverLayout();
+  }
+
+  function retirerSel() {
+    const b = blocSel(); if (!b) return;
+    if (b.type === "carte") detruireCarte();
+    blocs = blocs.filter((x) => x.id !== b.id);
+    const el = page().querySelector('.impr2-bloc[data-id="' + b.id + '"]');
+    if (el) el.remove();
+    select(null); pushHisto(); sauverLayout();
+  }
+  function ordonner(devant) {
+    const b = blocSel(); if (!b) return;
+    if (devant) b.z = ++zTop;
+    else { const mn = Math.min.apply(null, blocs.map((x) => x.z)); b.z = mn - 1; }
+    const el = page().querySelector('.impr2-bloc[data-id="' + b.id + '"]');
+    if (el) el.style.zIndex = b.z;
+    pushHisto(); sauverLayout();
+  }
+
+  /* ============================================================
+     Déplacement & redimensionnement
+     ============================================================ */
+
+  function commencerDrag(e, bloc, el) {
+    if (e.button != null && e.button !== 0) return;
+    e.preventDefault();
+    const rect = page().getBoundingClientRect();
+    const sx = e.clientX, sy = e.clientY, ox = bloc.x, oy = bloc.y;
+    const bar = $("impr2-barre");
+    let bouge = false;
+    function move(ev) {
+      const dx = (ev.clientX - sx) / rect.width * 100, dy = (ev.clientY - sy) / rect.height * 100;
+      bloc.x = clamp(ox + dx, 0, 100 - bloc.w);
+      bloc.y = clamp(oy + dy, 0, 100 - bloc.h);
+      el.style.left = bloc.x + "%"; el.style.top = bloc.y + "%";
+      if (!bouge && bar) bar.hidden = true;
+      bouge = true;
+      majSelection();
+    }
+    function up() {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      if (bouge) { pushHisto(); sauverLayout(); }
+      rendreBarre();
+    }
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+  }
+
+  function commencerResize(e, bloc, coin) {
+    e.preventDefault(); e.stopPropagation();
+    select(bloc.id);
+    const el = page().querySelector('.impr2-bloc[data-id="' + bloc.id + '"]');
+    const rect = page().getBoundingClientRect();
+    const sx = e.clientX, sy = e.clientY, o = { x: bloc.x, y: bloc.y, w: bloc.w, h: bloc.h };
+    const bar = $("impr2-barre");
+    if (bar) bar.hidden = true;
+    function move(ev) {
+      const dx = (ev.clientX - sx) / rect.width * 100, dy = (ev.clientY - sy) / rect.height * 100;
+      let x = o.x, y = o.y, w = o.w, h = o.h;
+      if (coin.indexOf("e") >= 0) w = o.w + dx;
+      if (coin.indexOf("s") >= 0) h = o.h + dy;
+      if (coin.indexOf("w") >= 0) { w = o.w - dx; x = o.x + dx; }
+      if (coin.indexOf("n") >= 0) { h = o.h - dy; y = o.y + dy; }
+      w = Math.max(5, w); h = Math.max(3, h);
+      if (x < 0) { w += x; x = 0; }
+      if (y < 0) { h += y; y = 0; }
+      if (x + w > 100) w = 100 - x;
+      if (y + h > 100) h = 100 - y;
+      bloc.x = x; bloc.y = y; bloc.w = w; bloc.h = h;
+      if (el) { el.style.left = x + "%"; el.style.top = y + "%"; el.style.width = w + "%"; el.style.height = h + "%"; }
+      if (bloc.type === "carte" && carte) carte.invalidateSize();
+      majSelection();
+    }
+    function up() {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      if (bloc.type === "carte" && carte) carte.invalidateSize();
+      pushHisto(); sauverLayout();
+      rendreBarre();
+    }
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+  }
+
+  /* ============================================================
+     Ratio / dimensionnement de la page
+     ============================================================ */
+
+  function construireBarreRatio() {
+    const cont = $("impr2-ratio");
+    if (!cont || cont.childElementCount) return;
+    RATIOS.forEach((x) => {
+      const b = document.createElement("button");
+      b.className = "segment-btn"; b.dataset.iratio = x.k; b.textContent = x.k;
+      b.addEventListener("click", () => setRatio(x.k));
+      cont.appendChild(b);
+    });
+  }
+  function majRatioUI() {
+    document.querySelectorAll("#impr2-ratio .segment-btn").forEach((b) =>
+      b.classList.toggle("actif", b.dataset.iratio === ratioKey));
+  }
+  function setRatio(k) {
+    ratioKey = k; majRatioUI(); ajusterPage(); rendreBarrePages(); pushHisto(); sauverLayout();
+    if (carte) setTimeout(() => carte.invalidateSize(), 50);
+  }
+
+  function ajusterPage() {
+    const scene = document.querySelector(".impr2-scene");
+    const pg = page();
+    if (!scene || !pg) return;
+    const r = ratioDe(ratioKey);
+    const dispoW = scene.clientWidth - 48, dispoH = scene.clientHeight - 48;
+    let h = dispoH, w = h * r;
+    if (w > dispoW) { w = dispoW; h = w / r; }
+    pg.style.width = Math.max(120, w) + "px";
+    pg.style.height = Math.max(120, h) + "px";
+    pg.style.setProperty("--ech", (pg.clientHeight / 1000).toFixed(4));
+    if (carte) carte.invalidateSize();
+    if (selId != null) positionnerBarre();
+  }
+
+  /* ============================================================
+     Souvenirs & pictos du thème (panneau gauche)
+     ============================================================ */
+
+  function rendreListeSouvenirs() {
+    const cont = $("impr2-souvenirs"), vide = $("impr2-souvenirs-vide");
+    if (!cont) return;
+    cont.innerHTML = "";
+    const liste = souvenirs();
+    if (vide) vide.hidden = liste.length > 0;
+    liste.forEach((s, i) => {
+      const b = document.createElement("button");
+      b.className = "impr2-souv-item";
+      const cover = coverSrc(s);
+      b.innerHTML = (cover ? '<span class="impr2-souv-vig" style="background-image:url(' + cover + ')"></span>'
+        : '<span class="impr2-souv-vig impr2-souv-vig-vide">📍</span>') +
+        '<span class="impr2-souv-nom">' + (i + 1) + ". " + echapper(s.nom || "Souvenir") + "</span>";
+      b.addEventListener("click", () => ajouterSouvenir(s.id));
+      cont.appendChild(b);
     });
   }
 
-  preparer().catch((e) => {
-    document.getElementById("barre-impression").hidden = true;
-    document.body.insertAdjacentHTML(
-      "beforeend",
-      '<p style="padding:20px;font-family:sans-serif;max-width:560px;background:#fbeeea;color:#b4452f;border-radius:10px;margin:20px;">' +
-      "Une erreur est survenue pendant la préparation de l'affiche : " +
-      echapperHtml((e && e.message) || String(e)) +
-      ". Tu peux fermer cette fenêtre et réessayer depuis l'application.</p>"
-    );
-  });
+  function rendreThemePictos() {
+    const bloc = $("impr2-theme-bloc"), cont = $("impr2-theme");
+    if (!bloc || !cont) return;
+    cont.innerHTML = "";
+    const theme = (typeof etat !== "undefined" && etat.style) ? etat.style.theme : null;
+    let cles = [];
+    try {
+      if (theme && typeof PICTO_THEMES !== "undefined" && PICTO_THEMES[theme]) cles = PICTO_THEMES[theme];
+    } catch (e) {}
+    if (!theme || !cles.length || typeof PICTO_THEME_SRC === "undefined") { bloc.hidden = true; return; }
+    bloc.hidden = false;
+    cles.forEach((cle) => {
+      const src = PICTO_THEME_SRC[cle];
+      if (!src) return;
+      const b = document.createElement("button");
+      b.className = "impr2-theme-btn";
+      b.innerHTML = '<img src="' + src + '" alt="">';
+      b.addEventListener("click", () => ajouter(nouveauBloc("image", { src: src, w: 12, h: 12 })));
+      cont.appendChild(b);
+    });
+  }
+
+  /* ============================================================
+     Illustrations (SVG originaux, décor coloré façon Canva)
+     Équivalent des pictos, mais illustrations plutôt qu'emojis.
+     ============================================================ */
+
+  const ILLUSTRATIONS = [
+    { cat: "Nature", nom: "Sapin", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect x="45" y="70" width="10" height="18" rx="2" fill="#7a4a24"/><polygon points="50,10 30,44 70,44" fill="#2e7d4f"/><polygon points="50,28 26,60 74,60" fill="#256b43"/><polygon points="50,46 22,78 78,78" fill="#1e5b3a"/></svg>' },
+    { cat: "Nature", nom: "Montagne", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="76" cy="26" r="9" fill="#f4c95d"/><polygon points="8,82 40,28 56,54 70,34 92,82" fill="#3d5a55"/><polygon points="33,42 40,28 48,42" fill="#f1f6f4"/><polygon points="63,47 70,34 78,47" fill="#f1f6f4"/></svg>' },
+    { cat: "Nature", nom: "Feuille", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M50 90 C48 52 58 22 84 14 C86 42 78 82 50 90 Z" fill="#2e7d4f"/><path d="M50 90 C51 60 56 34 80 18" stroke="#1e5b3a" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg>' },
+    { cat: "Nature", nom: "Fleur", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect x="47" y="50" width="6" height="40" fill="#2e7d4f"/><g fill="#ff6b35"><circle cx="50" cy="28" r="13"/><circle cx="28" cy="46" r="13"/><circle cx="72" cy="46" r="13"/><circle cx="37" cy="66" r="13"/><circle cx="63" cy="66" r="13"/></g><circle cx="50" cy="50" r="12" fill="#f4c95d"/></svg>' },
+    { cat: "Nature", nom: "Vague", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M2 60 Q18 44 34 60 T66 60 T98 60 V98 H2 Z" fill="#2c7da0"/><path d="M2 72 Q18 56 34 72 T66 72 T98 72 V98 H2 Z" fill="#8ecae6"/></svg>' },
+    { cat: "Nature", nom: "Cactus", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect x="30" y="78" width="40" height="12" rx="3" fill="#c98a4b"/><rect x="43" y="26" width="14" height="58" rx="7" fill="#2e7d4f"/><path d="M43 52 h-8 a7 7 0 0 0-7 7 v10" fill="none" stroke="#2e7d4f" stroke-width="9" stroke-linecap="round"/><path d="M57 44 h9 a7 7 0 0 1 7 7 v14" fill="none" stroke="#256b43" stroke-width="9" stroke-linecap="round"/></svg>' },
+    { cat: "Voyage", nom: "Boussole", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="#f1f6f4" stroke="#10302c" stroke-width="4"/><polygon points="50,18 58,50 50,44 42,50" fill="#ff6b35"/><polygon points="50,82 42,50 50,56 58,50" fill="#3d5a55"/><circle cx="50" cy="50" r="4" fill="#10302c"/></svg>' },
+    { cat: "Voyage", nom: "Tente", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><polygon points="50,18 92,84 8,84" fill="#256b43"/><polygon points="50,42 66,84 34,84" fill="#f4c95d"/><line x1="50" y1="18" x2="50" y2="84" stroke="#1e5b3a" stroke-width="2"/></svg>' },
+    { cat: "Voyage", nom: "Montgolfière", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M50 10 C30 10 20 28 20 44 C20 60 38 70 50 72 C62 70 80 60 80 44 C80 28 70 10 50 10 Z" fill="#ff6b35"/><path d="M50 10 C44 30 44 54 50 72" stroke="#f4c95d" stroke-width="5" fill="none"/><line x1="43" y1="70" x2="45" y2="80" stroke="#10302c" stroke-width="1.5"/><line x1="57" y1="70" x2="55" y2="80" stroke="#10302c" stroke-width="1.5"/><rect x="43" y="80" width="14" height="11" rx="2" fill="#7a4a24"/></svg>' },
+    { cat: "Voyage", nom: "Épingle", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M50 92 C50 92 24 58 24 40 A26 26 0 1 1 76 40 C76 58 50 92 50 92 Z" fill="#ff6b35"/><circle cx="50" cy="40" r="11" fill="#fff"/></svg>' },
+    { cat: "Voyage", nom: "Valise", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect x="40" y="22" width="20" height="14" rx="3" fill="none" stroke="#10302c" stroke-width="4"/><rect x="20" y="34" width="60" height="48" rx="7" fill="#2c7da0"/><rect x="45" y="34" width="10" height="48" fill="#8ecae6"/><line x1="20" y1="54" x2="80" y2="54" stroke="#1b5e78" stroke-width="3"/></svg>' },
+    { cat: "Ciel", nom: "Soleil", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><g stroke="#f4a63a" stroke-width="5" stroke-linecap="round"><line x1="50" y1="8" x2="50" y2="22"/><line x1="50" y1="78" x2="50" y2="92"/><line x1="8" y1="50" x2="22" y2="50"/><line x1="78" y1="50" x2="92" y2="50"/><line x1="21" y1="21" x2="31" y2="31"/><line x1="69" y1="69" x2="79" y2="79"/><line x1="79" y1="21" x2="69" y2="31"/><line x1="31" y1="69" x2="21" y2="79"/></g><circle cx="50" cy="50" r="20" fill="#f4c95d"/></svg>' },
+    { cat: "Ciel", nom: "Nuage", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><g fill="#cfe6f1"><circle cx="36" cy="56" r="18"/><circle cx="58" cy="48" r="22"/><circle cx="74" cy="60" r="14"/><rect x="34" y="60" width="42" height="16" rx="8"/></g></svg>' },
+    { cat: "Ciel", nom: "Lune", svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M64 20 A32 32 0 1 0 64 84 A26 26 0 1 1 64 20 Z" fill="#f4c95d"/><path d="M28 24 l2 5 5 2 -5 2 -2 5 -2 -5 -5 -2 5 -2 Z" fill="#f4c95d"/><path d="M22 52 l1.5 4 4 1.5 -4 1.5 -1.5 4 -1.5 -4 -4 -1.5 4 -1.5 Z" fill="#f4c95d"/></svg>' },
+  ];
+
+  function illusDataUri(svg) { return "data:image/svg+xml;utf8," + encodeURIComponent(svg); }
+
+  function rendreIllustrations() {
+    const cont = $("impr2-illus");
+    if (!cont) return;
+    cont.innerHTML = "";
+    let catCourante = null;
+    ILLUSTRATIONS.forEach((il) => {
+      if (il.cat !== catCourante) {
+        catCourante = il.cat;
+        const h = document.createElement("div");
+        h.className = "impr2-illus-cat";
+        h.textContent = il.cat;
+        cont.appendChild(h);
+      }
+      const b = document.createElement("button");
+      b.className = "impr2-theme-btn impr2-illus-btn";
+      b.title = il.nom;
+      b.innerHTML = '<img src="' + illusDataUri(il.svg) + '" alt="' + echapper(il.nom) + '">';
+      b.addEventListener("click", () => ajouterIllustration(il.svg));
+      cont.appendChild(b);
+    });
+  }
+
+  function ajouterIllustration(svg) {
+    const pg = page();
+    const rp = (pg && pg.clientHeight) ? (pg.clientWidth / pg.clientHeight) : 0.75;
+    const w = 24;
+    const h = clamp(w * rp, 6, 70); // boîte ~carrée en px → l'illustration garde ses proportions
+    ajouter(nouveauBloc("image", { src: illusDataUri(svg), w: w, h: h, illus: true }));
+  }
+
+  /* ============================================================
+     Impression (WYSIWYG, taille papier dérivée du ratio)
+     ============================================================ */
+
+  function dimsMm() {
+    const r = ratioDe(ratioKey);
+    const grand = 297; // plus grand côté ≈ A4
+    return r >= 1 ? [grand, grand / r] : [grand * r, grand];
+  }
+
+  function imprimer() {
+    select(null);
+    const [wmm, hmm] = dimsMm();
+    let st = $("impr2-print-style");
+    if (!st) { st = document.createElement("style"); st.id = "impr2-print-style"; document.head.appendChild(st); }
+    st.textContent = "@page { size: " + wmm.toFixed(1) + "mm " + hmm.toFixed(1) + "mm; margin: 0; }";
+
+    const pg = page();
+    const wAvant = pg.style.width, hAvant = pg.style.height;
+    pg.style.width = wmm + "mm"; pg.style.height = hmm + "mm";
+    pg.style.setProperty("--ech", (pg.clientHeight / 1000).toFixed(4));
+    document.body.classList.add("impr2-printing");
+    if (carte) carte.invalidateSize();
+
+    const restaurer = () => {
+      document.body.classList.remove("impr2-printing");
+      pg.style.width = wAvant; pg.style.height = hAvant;
+      ajusterPage();
+      if (carte) carte.invalidateSize();
+      window.removeEventListener("afterprint", restaurer);
+    };
+    window.addEventListener("afterprint", restaurer);
+    setTimeout(() => { window.print(); setTimeout(restaurer, 900); }, 400);
+  }
+
+  /* ============================================================
+     Branchements
+     ============================================================ */
+
+  function brancher() {
+    const on = (id, ev, fn) => { const e = $(id); if (e) e.addEventListener(ev, fn); };
+    on("impr2-retour", "click", fermer);
+    on("impr2-imprimer", "click", imprimer);
+    on("impr2-undo", "click", annuler);
+    on("impr2-redo", "click", retablir);
+    on("impr2-add-carte", "click", ajouterCarte);
+    on("impr2-add-texte", "click", ajouterTexte);
+    on("impr2-add-rect", "click", () => ajouterForme("rect"));
+    on("impr2-add-ellipse", "click", () => ajouterForme("ellipse"));
+    on("impr2-add-ligne", "click", () => ajouterForme("ligne"));
+    on("impr2-img-input", "change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (!file) return;
+      const fr = new FileReader();
+      fr.onload = () => ajouterImage(fr.result);
+      fr.readAsDataURL(file);
+    });
+    on("impr2-bg", "input", (e) => { pageBg = e.target.value; page().style.background = pageBg; sauverLayout(); });
+    on("impr2-bg", "change", pushHisto);
+    on("impr2-bg-blanc", "click", () => { pageBg = "#ffffff"; $("impr2-bg").value = "#ffffff"; page().style.background = pageBg; pushHisto(); sauverLayout(); });
+
+    const pg = page();
+    if (pg) pg.addEventListener("pointerdown", (e) => { if (e.target === pg) select(null); });
+
+    const scene = document.querySelector(".impr2-scene");
+    if (scene) scene.addEventListener("scroll", () => { if (selId != null) positionnerBarre(); });
+
+    window.addEventListener("resize", () => { if (!$("impression-ecran").hidden) ajusterPage(); });
+
+    document.addEventListener("keydown", (e) => {
+      if ($("impression-ecran").hidden) return;
+      const ed = document.querySelector(".edition-texte");
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); annuler(); }
+      else if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); retablir(); }
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d" && selId != null && !ed) { e.preventDefault(); dupliquerBloc(); }
+      else if ((e.key === "Delete" || e.key === "Backspace") && selId != null && !ed) { e.preventDefault(); retirerSel(); }
+    });
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", brancher);
+  else brancher();
+
+  return { ouvrir: ouvrir, fermer: fermer };
 })();

@@ -57,6 +57,8 @@ const STYLE_DEFAUT = {
   trace: { couleur: "#c8893d", epaisseur: 4, type: "plein" },
   fond: "topo",
   ambiance: "naturel",
+  // Thème du carnet (null | "viking"…) : pilote les pictogrammes proposés.
+  theme: null,
   // Fond personnalisé : adresse de tuiles fournie par l'utilisateur.
   fondPerso: { url: "", maxZoom: 19, attribution: "", subdomains: "abc" },
   // Affichage des noms des souvenirs sur la carte.
@@ -313,7 +315,6 @@ let ciblePolicePicker = null;
 function cleActuellePolice(cible) {
   if (cible === "labels") return etat.style.labels.police;
   if (cible === "titre") return etat.style.titrePolice || "titre";
-  if (cible === "affiche") return reglagesAffiche.police;
   if (cible === "annot" && etat.annotationActive) return etat.annotationActive.police;
   return "systeme";
 }
@@ -384,8 +385,6 @@ function choisirPolice(cle) {
     etat.style.titrePolice = cle;
     appliquerTitre();
     planifierSauvegarde();
-  } else if (ciblePolicePicker === "affiche") {
-    reglagesAffiche.police = cle;
   } else if (ciblePolicePicker === "annot") {
     majAnnotationActive({ police: cle });
   }
@@ -506,6 +505,50 @@ const PICTOS = [
 ];
 const PICTO_GLYPH = Object.fromEntries(PICTOS.map((p) => [p.cle, p.glyph]));
 
+/* ---------- Pictogrammes de THÈME (SVG originaux, encre sombre) ----------
+   Dessins originaux (symboles nordiques historiques, libres de droits),
+   proposés dans le sélecteur quand le carnet porte le thème correspondant.
+   Rendus comme des images (data-URI) via obtenirPictoPerso, donc partout :
+   annotations, souvenirs, filtres et export. */
+const ENCRE_VK = "#2a241c";
+const _svg = (inner, opts) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" ${opts || ""}>${inner}</svg>`;
+// Helm of Awe (Ægishjálmr) : 8 bras identiques rayonnants.
+const _helmArm = "M32 32V11 M32 11l-4 5 M32 11l4 5 M28 21h8";
+let _helmInner = "";
+for (let a = 0; a < 360; a += 45) _helmInner += `<g transform="rotate(${a} 32 32)"><path d="${_helmArm}"/></g>`;
+
+const VIKING_PICTOS = [
+  { cle: "vk:valknut", label: "Valknut",
+    svg: _svg('<path d="M32 6 20 30h24z"/><path d="M22 22 10 46h24z"/><path d="M42 22 30 46h24z"/>',
+      `fill="none" stroke="${ENCRE_VK}" stroke-width="3.2" stroke-linejoin="round"`) },
+  { cle: "vk:helm", label: "Casque d'effroi",
+    svg: _svg(_helmInner, `fill="none" stroke="${ENCRE_VK}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"`) },
+  { cle: "vk:mjolnir", label: "Marteau de Thor",
+    svg: _svg('<path d="M18 12h28a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-6v4a10 10 0 0 1-20 0v-4h-6a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2z"/><path d="M27 30h10l-1 18 4 6H24l4-6z"/>',
+      `fill="${ENCRE_VK}"`) },
+  { cle: "vk:rune", label: "Pierre runique",
+    svg: _svg('<path d="M18 56V26q0-14 14-14t14 14v30z" fill="none" stroke="' + ENCRE_VK + '" stroke-width="3" stroke-linejoin="round"/><path d="M32 24v24 M32 33l-8-8 M32 33l8-8" fill="none" stroke="' + ENCRE_VK + '" stroke-width="3" stroke-linecap="round"/>', "") },
+  { cle: "vk:bouclier", label: "Bouclier",
+    svg: _svg('<circle cx="32" cy="32" r="22" fill="none" stroke="' + ENCRE_VK + '" stroke-width="3"/><circle cx="32" cy="32" r="5" fill="' + ENCRE_VK + '"/><path d="M32 12v10 M32 42v10 M12 32h10 M42 32h10 M18 18l7 7 M39 39l7 7 M46 18l-7 7 M25 39l-7 7" fill="none" stroke="' + ENCRE_VK + '" stroke-width="2.2"/>', "") },
+  { cle: "vk:hache", label: "Hache",
+    svg: _svg('<path d="M28 55 31 15l3 .2-2 40z"/><path d="M33 15c14 0 22 8 20 22-1 8-9 12-20 10 6-12 6-24 0-32z"/>', `fill="${ENCRE_VK}"`) },
+  { cle: "vk:drakkar", label: "Drakkar",
+    svg: _svg('<path d="M6 38c16 10 36 10 52 0l-6 10c-14 6-26 6-40 0z"/><path d="M50 38c8-4 9-12 8-18-3 3-5 2-6 0 1 5-1 9-6 10z"/><rect x="30.5" y="14" width="3" height="24"/><path d="M20 18h18v12H20z" fill="none" stroke="' + ENCRE_VK + '" stroke-width="2"/>', `fill="${ENCRE_VK}"`) },
+  { cle: "vk:corne", label: "Corne à boire",
+    svg: _svg('<path d="M8 22c22-9 42-4 48 6-3 3-8 2-11 0-11-4-23-2-31 7-6 6-7 11-7 15 0-12 0-24 1-35z"/><path d="M50 26c3 1 5 3 5 6l-7 1c0-3 1-5 2-7z"/>', `fill="${ENCRE_VK}"`) },
+  { cle: "vk:corbeau", label: "Corbeau",
+    svg: _svg('<path d="M10 33c9-8 21-8 29-4 3-6 10-8 17-6-3 2-4 4-4 7 4 1 7 4 7 8-6-2-11-1-14 1-3 7-10 9-16 9 2-6 0-11-4-13-9 2-17-3-15-9z"/>', `fill="${ENCRE_VK}"`) },
+];
+
+const PICTO_THEMES = { viking: VIKING_PICTOS };
+const PICTO_THEME_SRC = {};
+Object.values(PICTO_THEMES).forEach((liste) => liste.forEach((p) => {
+  PICTO_THEME_SRC[p.cle] = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(p.svg);
+}));
+// La fenêtre d'impression (impression.js) lit cette table via window.opener.
+if (typeof window !== "undefined") window.PICTO_THEME_SRC = PICTO_THEME_SRC;
+
 /**
  * Renvoie le symbole à afficher pour une clé de pictogramme :
  * - "emoji:🦄" → l'émoji librement choisi par l'utilisateur ;
@@ -573,7 +616,10 @@ const ANNOT_TAILLES = {
  * ou null si la clé désigne un pictogramme prédéfini (ou n'existe plus).
  */
 function obtenirPictoPerso(cle) {
-  if (!cle || !cle.startsWith("perso:")) return null;
+  if (!cle) return null;
+  // Pictogramme de THÈME (SVG intégré) : ex. "vk:drakkar". Rendu comme une image.
+  if (PICTO_THEME_SRC[cle]) return { id: cle, nom: cle, src: PICTO_THEME_SRC[cle] };
+  if (!cle.startsWith("perso:")) return null;
   const id = Number(cle.slice("perso:".length));
   return etat.pictosPerso.find((p) => p.id === id) || null;
 }
@@ -744,7 +790,7 @@ function afficherTrace(trace) {
   document.getElementById("btn-style").hidden = false;
   document.getElementById("btn-fond").hidden = false;
   document.getElementById("btn-exporter").hidden = false;
-  document.getElementById("btn-export-affiche").hidden = false;
+  document.getElementById("btn-impression").hidden = false;
   document.getElementById("btn-export-png").hidden = false;
   document.getElementById("btn-reinitialiser").hidden = false;
   document.getElementById("fab-ajout").hidden = false;
@@ -1331,6 +1377,27 @@ function construirePictos(cible) {
     b.textContent = "①";
     b.addEventListener("click", () => choisirPictogramme("souvenir"));
     c.appendChild(b);
+  }
+
+  // Groupe du THÈME du carnet (ex. pictos vikings), proposé en premier.
+  const theme = etat.style && etat.style.theme;
+  if (theme && PICTO_THEMES[theme]) {
+    const titre = document.createElement("div");
+    titre.className = "picto-groupe-titre";
+    titre.textContent = "Thème : " + theme.charAt(0).toUpperCase() + theme.slice(1);
+    c.appendChild(titre);
+    const grille = document.createElement("div");
+    grille.className = "picto-grille-groupe";
+    PICTO_THEMES[theme].forEach((p) => {
+      const b = document.createElement("button");
+      b.className = "picto-btn picto-btn-theme";
+      b.dataset.picto = p.cle;
+      b.title = p.label;
+      b.innerHTML = `<img src="${PICTO_THEME_SRC[p.cle]}" alt="">`;
+      b.addEventListener("click", () => choisirPictogramme(p.cle));
+      grille.appendChild(b);
+    });
+    c.appendChild(grille);
   }
 
   // Le grand catalogue, classé par thème.
@@ -3301,6 +3368,8 @@ function fusionnerStyle(s) {
       rose: lireCleDecor(s.decor && s.decor.rose, "classique"),
       bordure: lireCleDecor(s.decor && s.decor.bordure, "double"),
     },
+    // Thème du carnet : pilote les pictogrammes proposés (et posé par un modèle).
+    theme: PICTO_THEMES[s.theme] ? s.theme : (base.theme || null),
   };
 }
 
@@ -4018,6 +4087,11 @@ async function sauverIndexCarnets() {
       du: c.du || "",
       au: c.au || "",
       modifieLe: c.modifieLe || "",
+      // Date de la dernière synchronisation CONFIRMÉE de ce carnet (propre à
+      // cet appareil, jamais envoyée en ligne). Sert à deux choses : savoir
+      // s'il reste des modifications non envoyées (badge « non synchronisé »)
+      // et repérer les vrais conflits (modifié ici ET ailleurs).
+      syncLe: c.syncLe || "",
       // Point de situation (carnet créé sans GPX, placé d'un point sur la carte).
       point: (c.point && typeof c.point.lat === "number") ? { lat: c.point.lat, lng: c.point.lng } : null,
       // Zone d'affichage du carnet (rectangle englobant, modifiable).
@@ -4079,6 +4153,7 @@ async function demarrerCarnets() {
       du: typeof c.du === "string" ? c.du : "",
       au: typeof c.au === "string" ? c.au : "",
       modifieLe: typeof c.modifieLe === "string" ? c.modifieLe : "",
+      syncLe: typeof c.syncLe === "string" ? c.syncLe : "",
       point: (c.point && typeof c.point.lat === "number" && typeof c.point.lng === "number")
         ? { lat: c.point.lat, lng: c.point.lng } : null,
       zone: normaliserZone(c.zone),
@@ -4096,7 +4171,9 @@ async function demarrerCarnets() {
       const vide = c.nom === "Mon carnet" && !c.logo && !c.categorie && !c.description;
       if (vide) {
         const donnees = await dbChargerCle("carnet-" + c.id).catch(() => null);
-        if (!donnees || !donnees.trace) {
+        // On ne jette que s'il n'y a VRAIMENT rien dedans : un carnet sans GPX
+        // peut très bien contenir des souvenirs (à ne pas perdre au démarrage).
+        if (!carnetADuContenu(donnees)) {
           try { await dbEffacerCle("carnet-" + c.id); } catch (e) {}
           continue;
         }
@@ -4154,7 +4231,7 @@ function viderCarnetCourant() {
 
   // On masque les boutons liés à une trace et on réaffiche l'accueil.
   ["btn-mode", "btn-ajout-souvenir", "btn-reserve", "btn-trier-dates", "btn-filtrer",
-   "btn-style", "btn-fond", "btn-exporter", "btn-export-affiche", "btn-export-png",
+   "btn-style", "btn-fond", "btn-exporter", "btn-impression", "btn-export-png",
    "btn-reinitialiser", "fab-ajout", "fab-recentrer"]
     .forEach((id) => { document.getElementById(id).hidden = true; });
   document.getElementById("trace-info").hidden = true;
@@ -4311,79 +4388,16 @@ function fermerPanneauCarnets() {
   document.getElementById("panneau-carnets").hidden = true;
 }
 
-/** (Re)construit la liste des carnets (actifs) + les Archives dans l'onglet Carnet. */
+/**
+ * Rafraîchit tout ce qui affiche des carnets. La gestion (liste, archives) vit
+ * désormais sur la CARTE GÉNÉRALE (accueil) : cette fonction met à jour
+ * l'accueil et la fiche d'identité du carnet ouvert.
+ */
 function renderCarnets() {
-  const liste = document.getElementById("carnets-liste");
-  liste.innerHTML = "";
-
-  const actifs = etat.carnets.filter((c) => (c.statut || "actif") === "actif");
-  actifs.forEach((c) => {
-    const actif = c.id === etat.carnetActifId;
-    const ligne = document.createElement("div");
-    ligne.className = "carnet-ligne" + (actif ? " carnet-ligne-actif" : "");
-
-    const nom = document.createElement("span");
-    nom.className = "carnet-nom";
-    nom.textContent = (c.logo ? c.logo + " " : "") + c.nom + (actif ? " — ouvert" : "");
-    ligne.appendChild(nom);
-
-    const actions = document.createElement("span");
-    actions.className = "carnet-actions";
-    if (!actif) {
-      const ouvrir = document.createElement("button");
-      ouvrir.className = "btn btn-ghost btn-petit";
-      ouvrir.textContent = "Ouvrir";
-      ouvrir.addEventListener("click", () => ouvrirCarnet(c.id));
-      actions.appendChild(ouvrir);
-    }
-    const arch = document.createElement("button");
-    arch.className = "icone-btn";
-    arch.title = "Archiver ce carnet";
-    arch.textContent = "📥";
-    arch.addEventListener("click", () => archiverCarnet(c));
-    actions.appendChild(arch);
-
-    ligne.appendChild(actions);
-    liste.appendChild(ligne);
-  });
-
-  // ---- Archives : restaurer ou supprimer définitivement ----
-  const arch = document.getElementById("carnets-archives-liste");
-  if (arch) {
-    arch.innerHTML = "";
-    const archives = etat.carnets.filter((c) => c.statut === "archive");
-    const vide = document.getElementById("archives-vide");
-    if (vide) vide.hidden = archives.length > 0;
-    archives.forEach((c) => {
-      const ligne = document.createElement("div");
-      ligne.className = "carnet-ligne";
-      const nom = document.createElement("span");
-      nom.className = "carnet-nom";
-      nom.textContent = (c.logo ? c.logo + " " : "") + c.nom;
-      ligne.appendChild(nom);
-
-      const actions = document.createElement("span");
-      actions.className = "carnet-actions";
-      const restaurer = document.createElement("button");
-      restaurer.className = "btn btn-ghost btn-petit";
-      restaurer.textContent = "Restaurer";
-      restaurer.addEventListener("click", () => restaurerCarnetArchive(c));
-      actions.appendChild(restaurer);
-      const suppr = document.createElement("button");
-      suppr.className = "icone-btn";
-      suppr.title = "Supprimer définitivement";
-      suppr.textContent = "🗑";
-      suppr.addEventListener("click", () => supprimerCarnet(c));
-      actions.appendChild(suppr);
-
-      ligne.appendChild(actions);
-      arch.appendChild(ligne);
-    });
-  }
-
-  // La nouvelle interface (accueil, fiche d'identité, barre du haut) se met
-  // à jour en même temps.
+  if (typeof renderAccueilListe === "function") renderAccueilListe();
+  if (typeof renderAccueilArchives === "function") renderAccueilArchives();
   if (typeof majInterfaceCarnets === "function") majInterfaceCarnets();
+  if (typeof majEtatSyncUI === "function") majEtatSyncUI();
 }
 
 /* ---------- Carnets affichés en plus (mode visualisation) ---------- */
@@ -4874,8 +4888,11 @@ async function sauvegarderMaintenant() {
     }
     // On horodate la modification : c'est ce qui permet à la sauvegarde en
     // ligne de savoir quelle version (appareil ou nuage) est la plus récente.
+    // (Avant : seuls les carnets avec une trace GPX étaient horodatés — un
+    // carnet situé par zone/point pouvait accumuler des souvenirs sans que
+    // la synchro s'en aperçoive jamais.)
     const actif = carnetActif();
-    if (actif && etat.trace) actif.modifieLe = new Date().toISOString();
+    if (actif) actif.modifieLe = new Date().toISOString();
     await dbSauverCle(cle, serialiserCarnet());
     await sauverIndexCarnets();
     indiquerEnregistre();
@@ -4894,6 +4911,23 @@ function indiquerEnregistre() {
   requestAnimationFrame(() => el.classList.add("visible"));
   clearTimeout(timerStatut);
   timerStatut = setTimeout(() => el.classList.remove("visible"), 1600);
+}
+
+/**
+ * Un objet de carnet sérialisé (venant de serialiserCarnet() ou téléchargé du
+ * nuage) a-t-il un contenu à sauvegarder/restaurer ? Comme carnetExportable()
+ * ci-dessous, mais utilisable hors contexte (nuage.js, sans carnet ouvert) :
+ * un carnet situé par zone/point sans GPX peut quand même avoir des
+ * souvenirs, des GPX secondaires ou des éléments posés à ne pas perdre.
+ */
+function carnetADuContenu(donnees) {
+  return !!(donnees && (
+    donnees.trace ||
+    (donnees.gpx && donnees.gpx.length) ||
+    (donnees.souvenirs && donnees.souvenirs.length) ||
+    (donnees.annotations && donnees.annotations.length) ||
+    (donnees.stock && donnees.stock.length)
+  ));
 }
 
 /* ---------- Export / Import en fichier .json ---------- */
@@ -5137,92 +5171,8 @@ async function exporterImagePng() {
     lien.click();
     toast("Image PNG exportée");
   } catch (e) {
-    toast("Export en image impossible ici. Essaie plutôt « Affiche PDF ».", true);
+    toast("Export en image impossible ici. Essaie plutôt la mise en page (🖨️).", true);
   }
-}
-
-/* ---------- Export "affiche" (PDF, via une fenêtre d'impression à part) ---------- */
-
-// Réglages courants de l'affiche (mémorisés le temps de la session).
-// La disposition est toujours en mosaïque : le nombre d'unités de la grille
-// est calculé automatiquement selon le format de papier (voir impression.js).
-const reglagesAffiche = {
-  format: "A4",
-  orientation: "portrait",
-  police: "systeme",
-  couleur: "#2f3b34",
-  zone: null,       // {sud,ouest,nord,est} : cadrage export calé sur la zone du carnet
-  zoneRatio: null,  // proportion largeur/hauteur (px) de la zone
-};
-// Comme pour etat ci-dessus : la fenêtre d'impression lit ces réglages via
-// window.opener.reglagesAffiche, ce qui exige une vraie propriété de window.
-window.reglagesAffiche = reglagesAffiche;
-
-/** Ouvre la fenêtre de réglages de l'affiche PDF. */
-function ouvrirModalAffiche() {
-  if (!carnetExportable()) {
-    toast("Ce carnet est vide : ajoute une trace, une zone ou des souvenirs.", true);
-    return;
-  }
-  // Cadrage de l'export calé sur la ZONE de cadrage du carnet, si elle existe :
-  // la carte imprimée reprend exactement la zone (et son format/orientation).
-  const c = carnetActif();
-  const z = c && typeof normaliserZone === "function" ? normaliserZone(c.zone) : null;
-  if (z) {
-    reglagesAffiche.zone = { sud: z.sud, ouest: z.ouest, nord: z.nord, est: z.est };
-    // Proportion (px) de la zone : stockée, ou recalculée par projection.
-    let ratio = z.ratio;
-    if (!(ratio > 0) && etat.carte) {
-      const p1 = etat.carte.latLngToContainerPoint([z.nord, z.ouest]);
-      const p2 = etat.carte.latLngToContainerPoint([z.sud, z.est]);
-      const w = Math.abs(p2.x - p1.x), h = Math.abs(p2.y - p1.y);
-      if (w > 0 && h > 0) ratio = w / h;
-    }
-    reglagesAffiche.zoneRatio = ratio || null;
-    if (z.format && /^A[0-5]$/.test(z.format)) {
-      // Format papier (A5→A2…) : on reprend format ET orientation.
-      reglagesAffiche.format = z.format;
-      if (z.orientation === "portrait" || z.orientation === "paysage") reglagesAffiche.orientation = z.orientation;
-    } else if (ratio > 0) {
-      // Format non-A (carré/photo/pano) ou zone auto : on aligne l'orientation.
-      reglagesAffiche.orientation = ratio >= 1 ? "paysage" : "portrait";
-    }
-  } else {
-    reglagesAffiche.zone = null;
-    reglagesAffiche.zoneRatio = null;
-  }
-  majSegment("affiche-format", "format", reglagesAffiche.format);
-  majSegment("affiche-orientation", "orientation", reglagesAffiche.orientation);
-  majBoutonPolice("affiche");
-  document.getElementById("affiche-couleur").value = reglagesAffiche.couleur;
-  // La disposition (souvenirs inclus + ordre des pages) se règle ici aussi.
-  if (typeof majDispositionAffiche === "function") majDispositionAffiche();
-  document.getElementById("modal-affiche").hidden = false;
-}
-
-/** Ferme la fenêtre de réglages de l'affiche PDF. */
-function fermerModalAffiche() {
-  document.getElementById("modal-affiche").hidden = true;
-}
-
-/**
- * Ouvre l'affiche dans une fenêtre à part (impression.html), qui construit
- * elle-même sa propre carte et ses propres cartes de souvenirs à partir des
- * données du carnet (lues via window.opener). Cette fenêtre est entièrement
- * indépendante : quoi qu'il s'y passe (y compris une impression annulée),
- * l'application principale n'est jamais modifiée et reste utilisable.
- */
-function exporterAffiche(reglages) {
-  if (!carnetExportable()) {
-    toast("Ce carnet est vide : ajoute une trace, une zone ou des souvenirs.", true);
-    return;
-  }
-  const fenetre = window.open("impression.html", "_blank", "width=900,height=1000");
-  if (!fenetre) {
-    toast("La fenêtre d'impression a été bloquée par le navigateur : autorise les fenêtres pop-up pour ce site.", true);
-    return;
-  }
-  toast("Fenêtre d'impression ouverte");
 }
 
 /**
@@ -5359,6 +5309,9 @@ function definirMode(mode) {
 
   // Si on passe en visualisation avec une fiche ouverte, on rafraîchit la mini-carte.
   if (vue && etat.souvenirActif) majMiniCarte(etat.souvenirActif);
+
+  // Le rail apparaît/disparaît selon le mode : la carte doit remesurer sa place.
+  if (etat.carte) setTimeout(() => etat.carte.invalidateSize(), 70);
 
   // On mémorise le choix pour le prochain démarrage.
   try { localStorage.setItem("carnet-mode", etat.mode); } catch (e) {}
@@ -5975,8 +5928,6 @@ function init() {
     .addEventListener("click", () => ouvrirPolicePicker("titre"));
   document.getElementById("police-btn-annot")
     .addEventListener("click", () => ouvrirPolicePicker("annot"));
-  document.getElementById("police-btn-affiche")
-    .addEventListener("click", () => ouvrirPolicePicker("affiche"));
   document.getElementById("fermer-police")
     .addEventListener("click", fermerPolicePicker);
   document.getElementById("police-import")
@@ -6041,8 +5992,6 @@ function init() {
     .addEventListener("click", ouvrirPanneauCarnets);
   document.getElementById("fermer-carnets")
     .addEventListener("click", fermerPanneauCarnets);
-  document.getElementById("carnet-nouveau")
-    .addEventListener("click", nouveauCarnet);
 
   // --- Réserve de souvenirs ---
   document.getElementById("btn-reserve")
@@ -6214,32 +6163,13 @@ function init() {
   // --- Export / Import du carnet ---
   document.getElementById("btn-exporter")
     .addEventListener("click", exporterCarnet);
-  document.getElementById("btn-export-affiche")
-    .addEventListener("click", ouvrirModalAffiche);
+  document.getElementById("btn-impression")
+    .addEventListener("click", () => { if (typeof Impression !== "undefined") Impression.ouvrir(); });
   document.getElementById("btn-export-png")
     .addEventListener("click", exporterImagePng);
   document.getElementById("btn-reinitialiser")
     .addEventListener("click", reinitialiserCarnet);
 
-
-  // --- Réglages de l'affiche PDF (format, orientation, police, couleur) ---
-  document.getElementById("affiche-annuler")
-    .addEventListener("click", fermerModalAffiche);
-  document.getElementById("affiche-generer")
-    .addEventListener("click", () => {
-      fermerModalAffiche();
-      exporterAffiche(reglagesAffiche);
-    });
-  brancherSegment("affiche-format", "format", (v) => {
-    reglagesAffiche.format = v;
-    majSegment("affiche-format", "format", v);
-  });
-  brancherSegment("affiche-orientation", "orientation", (v) => {
-    reglagesAffiche.orientation = v;
-    majSegment("affiche-orientation", "orientation", v);
-  });
-  document.getElementById("affiche-couleur")
-    .addEventListener("input", (e) => { reglagesAffiche.couleur = e.target.value; });
   document.getElementById("btn-mode")
     .addEventListener("click", basculerMode);
 
@@ -6247,7 +6177,8 @@ function init() {
   let modeSauve = "edition";
   try { modeSauve = localStorage.getItem("carnet-mode") || "edition"; } catch (e) {}
   definirMode(modeSauve);
-  document.getElementById("import-input")
+  // Import d'un carnet (.json) : désormais depuis la carte générale (accueil).
+  document.getElementById("accueil-import-input")
     .addEventListener("change", (e) => {
       importerCarnetFichier(e.target.files[0]);
       e.target.value = ""; // permet de réimporter le même fichier
@@ -6324,7 +6255,6 @@ function init() {
       else if (!document.getElementById("modal-police").hidden) fermerPolicePicker();
       else if (!document.getElementById("modal-decor").hidden) fermerDecorPicker();
       else if (!document.getElementById("modal-generer").hidden) fermerGenerer();
-      else if (!document.getElementById("modal-affiche").hidden) fermerModalAffiche();
       else if (!document.getElementById("modal-picto").hidden) fermerPictoPicker();
       else if (!document.getElementById("modal-nom").hidden) fermerModalNom();
       else if (etat.modeAnnotation) desarmerAjoutAnnotation();

@@ -50,18 +50,34 @@
         <span id="editeur-logo">📖</span>
         <span id="editeur-nom">Carnet</span>
       </button>
+      <!-- En consultation (Vizu) : menu ouvrable des souvenirs du carnet -->
+      <button id="btn-vizu-souvenirs" class="btn-retour editeur-seule visu-seule" title="Voir les souvenirs de ce carnet">
+        📍 Souvenirs
+      </button>
     </div>
 
     <div class="topbar-right">
       <!-- Indicateurs discrets : sauvegarde locale + envoi en ligne -->
       <span id="statut-sauvegarde" class="statut-sauvegarde" hidden>✓ Enregistré</span>
       <span id="statut-nuage" class="statut-sauvegarde" hidden>☁️ En ligne</span>
+      <!-- Modifications pas encore envoyées en ligne (reste affiché jusqu'à l'envoi) -->
+      <span id="statut-attente" class="statut-attente" hidden>● Non synchronisé</span>
+      <!-- Carnet ouvert en ÉDITION : bascule vers la consultation (Vizu) -->
+      <button id="btn-vizu" class="btn-retour editeur-seule edition-seule"
+              title="Voir le carnet comme tes invités (consultation)">👁 Aperçu</button>
+      <!-- Carnet ouvert en CONSULTATION : bascule vers l'édition -->
+      <button id="btn-editer" class="btn-retour editeur-seule visu-seule"
+              title="Modifier ce carnet">✏️ Éditer</button>
+      <!-- Partager le carnet / voir qui y a accès (dans les deux modes) -->
+      <button id="btn-partager-carnet" class="btn-retour editeur-seule"
+              title="Partager ce carnet et voir qui y a accès">🔗 Partager</button>
+      <!-- Mise en page / impression du carnet (4e écran : Édition d'impression) -->
+      <button id="carnet-imprimer" class="btn-retour editeur-seule"
+              title="Mettre en page et imprimer ce carnet">🖨️ Imprimer</button>
       <!-- Style de la carte globale (fond, ambiance — indépendant des carnets) -->
       <button id="accueil-style-btn" class="btn-retour accueil-seule" title="Style de la carte globale">🎨</button>
       <!-- Compte en ligne (connexion, synchronisation) -->
       <button id="compte-btn" class="btn-retour compte-btn">☁️ Compte</button>
-      <!-- Impression d'un carnet en livre photo (depuis l'accueil) -->
-      <button id="accueil-imprimer" class="btn btn-primary btn-topbar accueil-seule">🖨️ Imprimer</button>
     </div>
   </header>
 
@@ -144,26 +160,10 @@
           </section>
 
           <section class="style-section">
-            <h3>Tous mes carnets</h3>
-            <button id="carnet-nouveau" class="btn btn-accent btn-petit edition-seule" style="width:100%">
-              + Nouveau carnet
-            </button>
-            <label id="label-importer" class="btn btn-ghost btn-petit edition-seule" style="width:100%">
-              📥 Importer un carnet (.json)
-              <input id="import-input" type="file" accept=".json,application/json" hidden />
-            </label>
-            <button id="carnet-dupliquer" class="btn btn-ghost btn-petit" style="width:100%">
-              📑 Dupliquer ce carnet
-            </button>
-            <div id="carnets-liste" class="carnets-liste"></div>
-          </section>
-
-          <section class="style-section">
-            <h3>Archives</h3>
-            <p class="style-aide">Les carnets archivés sont masqués de la carte et des listes.
-               Restaure-les, ou supprime-les définitivement (l'unique façon de supprimer un carnet).</p>
-            <div id="carnets-archives-liste" class="carnets-liste"></div>
-            <p id="archives-vide" class="galerie-vide">Aucun carnet archivé.</p>
+            <h3>Mes carnets</h3>
+            <p class="style-aide">La gestion de tes carnets (créer, importer, dupliquer, archiver,
+               supprimer) se fait depuis la <strong>carte générale</strong> : reviens-y avec le
+               bouton <strong>← Carte globale</strong> en haut à gauche.</p>
           </section>
 
           <section class="style-section">
@@ -182,7 +182,7 @@
           <button id="fermer-reserve" class="icone-btn" title="Fermer">✕</button>
         </header>
         <div class="panneau-corps">
-          <div class="boutons-espaces">
+          <div class="boutons-espaces edition-seule">
             <button id="souvenir-nouveau" class="btn btn-accent btn-petit" style="width:100%">
               + Créer un souvenir
             </button>
@@ -568,10 +568,11 @@
         </header>
         <div class="panneau-corps">
           <section class="style-section">
-            <h3>PDF (livre / affiche)</h3>
-            <button id="btn-export-affiche" class="btn btn-accent btn-petit" style="width:100%" hidden>🖨️ Affiche PDF</button>
-            <p class="style-aide">Une page pleine pour la carte, puis tes souvenirs en mosaïque.
-               Tu choisis le format, l'ordre et les souvenirs à inclure avant d'imprimer.</p>
+            <h3>Mise en page &amp; impression</h3>
+            <button id="btn-impression" class="btn btn-accent btn-petit" style="width:100%" hidden>🖨️ Mettre en page &amp; imprimer</button>
+            <p class="style-aide">Ouvre l'écran de mise en page : tu poses et redimensionnes
+               librement la carte et tes souvenirs sur une page, puis tu imprimes (ou tu
+               enregistres en PDF depuis la fenêtre d'impression du navigateur).</p>
           </section>
           <section class="style-section">
             <h3>Image</h3>
@@ -612,11 +613,22 @@
           <label class="accueil-date-label">Au <input id="accueil-au" class="style-input" type="date" /></label>
         </div>
       </div>
+      <!-- Rappel global : combien de carnets attendent d'être envoyés en ligne -->
+      <button id="accueil-attente" class="accueil-attente" hidden
+              title="Synchroniser maintenant"></button>
       <div id="accueil-liste" class="accueil-liste"></div>
+      <button id="accueil-archives-toggle" class="btn btn-ghost btn-petit" style="width:100%" hidden>
+        🗄️ Archives (<span id="accueil-archives-nb">0</span>)
+      </button>
+      <div id="accueil-archives" class="accueil-archives" hidden></div>
       <div class="accueil-pied">
         <button id="accueil-nouveau" class="btn btn-accent btn-petit" style="flex:1">
           + Nouveau carnet
         </button>
+        <label id="accueil-importer" class="btn btn-ghost btn-petit" title="Importer un carnet (.json)">
+          📥 Importer
+          <input id="accueil-import-input" type="file" accept=".json,application/json" hidden />
+        </label>
       </div>
     </aside>
 
@@ -910,18 +922,6 @@
     </div>
   </div>
 
-  <!-- Fenêtre : choisir le carnet à imprimer (depuis l'accueil) -->
-  <div id="modal-impression" class="modal-overlay" hidden>
-    <div class="modal-card">
-      <h2>🖨️ Imprimer un carnet</h2>
-      <p class="modal-sous-titre">Choisis le carnet à mettre en page en livre photo.</p>
-      <div id="impr-liste" class="impr-liste"></div>
-      <div class="modal-actions">
-        <button class="btn btn-ghost" id="impr-annuler">Annuler</button>
-      </div>
-    </div>
-  </div>
-
   <!-- Fenêtre : générer des souvenirs depuis un texte / des photos (IA) -->
   <div id="modal-generer" class="modal-overlay" hidden>
     <div class="modal-card modal-large">
@@ -952,50 +952,6 @@
       <div class="modal-actions">
         <button class="btn btn-ghost" id="gen-annuler">Fermer</button>
         <button class="btn btn-accent" id="gen-lancer">Générer</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Fenêtre : réglages de l'affiche PDF (format, orientation, disposition) -->
-  <div id="modal-affiche" class="modal-overlay" hidden>
-    <div class="modal-card modal-large">
-      <h2>🖨️ Livre photo / Affiche PDF</h2>
-      <p class="modal-sous-titre">Une page pleine pour la carte, puis les souvenirs sur les pages suivantes.</p>
-
-      <label class="style-label">Format de papier</label>
-      <div id="affiche-format" class="segment segment-grille" role="group">
-        <button class="segment-btn" data-format="A5">A5</button>
-        <button class="segment-btn" data-format="A4">A4</button>
-        <button class="segment-btn" data-format="A3">A3</button>
-        <button class="segment-btn" data-format="A2">A2</button>
-        <button class="segment-btn" data-format="A1">A1</button>
-        <button class="segment-btn" data-format="A0">A0</button>
-      </div>
-
-      <label class="style-label">Orientation</label>
-      <div id="affiche-orientation" class="segment" role="group">
-        <button class="segment-btn" data-orientation="portrait">Portrait</button>
-        <button class="segment-btn" data-orientation="paysage">Paysage</button>
-      </div>
-
-      <label class="style-label">Police du texte</label>
-      <button id="police-btn-affiche" class="btn btn-ghost police-btn" type="button">Système</button>
-
-      <label class="style-label-couleur">
-        Couleur du texte
-        <input id="affiche-couleur" type="color" value="#2f3b34" />
-      </label>
-
-      <!-- Disposition : choisir et ordonner les souvenirs imprimés -->
-      <label class="style-label">Disposition : souvenirs à imprimer (dans l'ordre)</label>
-      <div id="affiche-souvenirs-liste" class="affiche-souvenirs-liste"></div>
-      <p class="style-aide">Décoche un souvenir pour ne pas l'imprimer ; les flèches changent l'ordre des
-         pages. Les souvenirs sont ensuite disposés en mosaïque : les plus riches (photo + long récit)
-         occupent un grand rectangle, les petits s'imbriquent autour.</p>
-
-      <div class="modal-actions">
-        <button class="btn btn-ghost" id="affiche-annuler">Annuler</button>
-        <button class="btn btn-accent" id="affiche-generer">Mettre en page</button>
       </div>
     </div>
   </div>
@@ -1140,6 +1096,44 @@
     </div>
   </div>
 
+  <!-- Fenêtre de conflit : le même carnet a été modifié ici ET en ligne.
+       Rien n'est écrasé tant que le choix n'est pas fait. -->
+  <div id="modal-conflit" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <h2>⚠️ Deux versions différentes</h2>
+      <p class="modal-sous-titre">
+        Le carnet <strong id="conflit-nom">—</strong> a été modifié
+        <strong>sur cet appareil</strong> et <strong>en ligne</strong> depuis la
+        dernière synchronisation. Que veux-tu garder ?
+      </p>
+
+      <div class="conflit-versions">
+        <div class="conflit-version">
+          <div class="conflit-version-titre">📱 Sur cet appareil</div>
+          <div id="conflit-ici-resume" class="conflit-version-resume">—</div>
+          <div id="conflit-ici-date" class="conflit-version-date">—</div>
+        </div>
+        <div class="conflit-version">
+          <div class="conflit-version-titre">☁️ En ligne</div>
+          <div id="conflit-ligne-resume" class="conflit-version-resume">—</div>
+          <div id="conflit-ligne-date" class="conflit-version-date">—</div>
+        </div>
+      </div>
+
+      <div class="boutons-espaces">
+        <button id="conflit-garder-deux" class="btn btn-accent" style="width:100%">
+          🔀 Garder les deux <span class="conflit-aide">(recommandé — rien n'est perdu)</span>
+        </button>
+        <button id="conflit-garder-ici" class="btn btn-ghost" style="width:100%">
+          📱 Garder seulement la version de cet appareil
+        </button>
+        <button id="conflit-garder-ligne" class="btn btn-ghost" style="width:100%">
+          ☁️ Garder seulement la version en ligne
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Fenêtre de bienvenue : aucun carnet et pas de compte connecté -->
   <div id="modal-bienvenue" class="modal-overlay" hidden>
     <div class="modal-card">
@@ -1169,21 +1163,23 @@
       <input id="nouveau-carnet-nom" type="text" maxlength="60"
              placeholder="Ex : Tour du Queyras 2026" />
 
-      <label class="style-label">Format d'impression de la zone</label>
+      <label class="style-label">Proportion (ratio) de la zone</label>
       <div id="nouveau-carnet-format" class="segment segment-grille" role="group">
-        <button class="segment-btn" data-nformat="A5">A5</button>
-        <button class="segment-btn" data-nformat="A4">A4</button>
-        <button class="segment-btn" data-nformat="A3">A3</button>
-        <button class="segment-btn" data-nformat="A2">A2</button>
-        <button class="segment-btn" data-nformat="carre">Carré</button>
-        <button class="segment-btn" data-nformat="photo">Photo 3:2</button>
-        <button class="segment-btn" data-nformat="pano">Pano 16:9</button>
+        <button class="segment-btn" data-nformat="r1_1">1:1</button>
+        <button class="segment-btn" data-nformat="r3_4">3:4</button>
+        <button class="segment-btn" data-nformat="r4_3">4:3</button>
+        <button class="segment-btn" data-nformat="r2_3">2:3</button>
+        <button class="segment-btn" data-nformat="r3_2">3:2</button>
+        <button class="segment-btn" data-nformat="r9_16">9:16</button>
+        <button class="segment-btn" data-nformat="r16_9">16:9</button>
       </div>
-      <div id="nouveau-carnet-orientation" class="segment" role="group">
+      <!-- Orientation devenue inutile (le ratio la contient) : masquée mais
+           conservée pour le code qui la référence encore. -->
+      <div id="nouveau-carnet-orientation" class="segment" role="group" hidden>
         <button class="segment-btn" data-norientation="portrait">Portrait</button>
         <button class="segment-btn" data-norientation="paysage">Paysage</button>
       </div>
-      <p class="style-aide">Ce format cadre la zone et l'export PDF/image. Tu pourras le changer ensuite.</p>
+      <p class="style-aide">Ce ratio cadre la zone et l'export/impression. Tu pourras le changer ensuite.</p>
 
       <div class="nouveau-carnet-choix">
         <label class="btn btn-accent" for="nouveau-carnet-gpx-input" style="width:100%">
@@ -1236,6 +1232,78 @@
         <button id="carte-globale-fermer" class="btn btn-accent">Fermer</button>
       </div>
     </div>
+  </div>
+
+  <!-- ============================================================
+       Écran « Mise en page & impression » (4e écran du schéma).
+       Rempli et piloté par le module Impression (impression.js) :
+       l'utilisateur agence et dimensionne librement la carte et ses
+       souvenirs sur une page, puis imprime (ou enregistre en PDF).
+       ============================================================ -->
+  <div id="impression-ecran" class="impression-ecran" hidden>
+    <header class="impr2-topbar">
+      <div class="impr2-gauche">
+        <button id="impr2-retour" class="btn-retour" title="Revenir au carnet">← Retour au carnet</button>
+        <span class="impr2-titre">
+          <span class="brand-mark">▲</span> Mise en page — <span id="impr2-nom">Carnet</span>
+        </span>
+      </div>
+      <div class="impr2-droite">
+        <label class="impr2-ratio-label">Ratio
+          <div id="impr2-ratio" class="segment" role="group" title="Proportion de la page"></div>
+        </label>
+        <button id="impr2-undo" class="btn-retour impr2-ico-btn" title="Annuler (Ctrl+Z)">↶</button>
+        <button id="impr2-redo" class="btn-retour impr2-ico-btn" title="Rétablir (Ctrl+Maj+Z)">↷</button>
+        <button id="impr2-imprimer" class="btn btn-primary btn-petit">🖨️ Imprimer / PDF</button>
+      </div>
+    </header>
+    <div class="impr2-corps">
+      <!-- Panneau « Ajouter » (gauche) -->
+      <aside class="impr2-outils">
+        <h3>Ajouter un élément</h3>
+        <div class="impr2-add-grille">
+          <button id="impr2-add-carte" class="impr2-add-btn" title="La carte du carnet">🗺️<span>Carte</span></button>
+          <button id="impr2-add-texte" class="impr2-add-btn" title="Un bloc de texte">🔤<span>Texte</span></button>
+          <button id="impr2-add-rect" class="impr2-add-btn" title="Un rectangle">▭<span>Rectangle</span></button>
+          <button id="impr2-add-ellipse" class="impr2-add-btn" title="Un cercle / une ellipse">⬭<span>Cercle</span></button>
+          <button id="impr2-add-ligne" class="impr2-add-btn" title="Une ligne">╱<span>Ligne</span></button>
+          <label class="impr2-add-btn" for="impr2-img-input" title="Une image de ton ordinateur">🖼️<span>Image</span>
+            <input id="impr2-img-input" type="file" accept="image/*" hidden />
+          </label>
+        </div>
+
+        <div class="impr2-outils-titre">Souvenirs à poser</div>
+        <div id="impr2-souvenirs" class="impr2-souvenirs"></div>
+        <p id="impr2-souvenirs-vide" class="style-aide" hidden>Ce carnet n'a pas encore de souvenir.</p>
+
+        <div id="impr2-theme-bloc" hidden>
+          <div class="impr2-outils-titre">Éléments du thème</div>
+          <div id="impr2-theme" class="impr2-theme-grille"></div>
+        </div>
+
+        <div class="impr2-outils-titre">Illustrations</div>
+        <div id="impr2-illus" class="impr2-illus-grille"></div>
+
+        <div class="impr2-outils-titre">Fond de la page</div>
+        <div class="impr2-bg-ligne">
+          <label class="style-label-couleur">Couleur <input id="impr2-bg" type="color" value="#ffffff" /></label>
+          <button id="impr2-bg-blanc" class="btn btn-ghost btn-petit">Blanc</button>
+        </div>
+
+        <p class="style-aide">Sur la page : <strong>glisse</strong> un élément pour le déplacer,
+           <strong>tire un coin</strong> pour le redimensionner. Double-clique un texte pour l'écrire.</p>
+      </aside>
+
+      <!-- Scène : la page que l'on met en page -->
+      <div class="impr2-scene">
+        <div id="impr2-page" class="impr2-page"></div>
+        <!-- Barre d'outils flottante de l'élément sélectionné (façon Canva) -->
+        <div id="impr2-barre" class="impr2-barre" hidden></div>
+      </div>
+    </div>
+
+    <!-- Barre des pages du livre (miniatures) -->
+    <div id="impr2-pages" class="impr2-pages"></div>
   </div>
 
   <!-- Petit message temporaire (succès / erreur) -->
@@ -1298,5 +1366,7 @@
   <!-- Compte et sauvegarde en ligne -->
   <script src="config.js"></script>
   <script src="nuage.js"></script>
+  <!-- Écran de mise en page & impression (in-app) -->
+  <script src="impression.js"></script>
 </body>
 </html>

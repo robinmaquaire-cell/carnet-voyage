@@ -66,11 +66,13 @@ async function basculerVersAccueil(premierChargement) {
 
 /** Ouvre un carnet dans l'éditeur (celui demandé, ou le carnet actif). */
 async function basculerVersEditeur(id) {
+  // Ouvrir un carnet EXISTANT depuis l'accueil → mode Vizu (consultation) par
+  // défaut, comme sur le schéma. Créer un carnet (sans id) → édition directe.
+  const ouvrirPourConsulter = !!id;
   if (id && id !== etat.carnetActifId) {
     await ouvrirCarnet(id);         // sauvegarde l'ancien, charge le nouveau
-  } else {
-    definirMode("edition");
   }
+  definirMode(ouvrirPourConsulter ? "visualisation" : "edition");
 
   etat.vue = "editeur";
   document.body.classList.add("vue-editeur");
@@ -288,6 +290,17 @@ function majRailActif() {
   });
 }
 
+/** Bouton « Partager » : ouvre l'onglet Carnet centré sur la section Partage
+ *  (qui liste aussi les contacts ayant accès au carnet). */
+function ouvrirPartageCarnet() {
+  if (etat.vue !== "editeur") return;
+  ouvrirOnglet("carnets");
+  const sec = document.getElementById("partage-connecte");
+  if (sec) setTimeout(() => sec.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+  const champ = document.getElementById("partage-email");
+  if (champ && !champ.closest("[hidden]")) setTimeout(() => champ.focus(), 120);
+}
+
 /* La sélection d'un élément n'ouvre plus de panneau : la barre flottante
    apparaît au-dessus de l'élément (voir selection.js), et l'onglet en cours
    du tiroir — Outils par exemple — reste ouvert. */
@@ -386,6 +399,15 @@ function renderAccueilListe() {
     }
     tete.appendChild(logo);
     tete.appendChild(titres);
+    // Pastille « pas encore en ligne » : mise à jour sans reconstruire la carte
+    // (voir rafraichirBadgesSyncAccueil).
+    const attente = document.createElement("span");
+    attente.className = "carnet-carte-attente";
+    attente.dataset.attenteCarnet = c.id;
+    attente.textContent = "● non synchronisé";
+    attente.title = "Des modifications de ce carnet ne sont pas encore enregistrées en ligne.";
+    attente.hidden = typeof carnetEnAttenteNuage !== "function" || !carnetEnAttenteNuage(c);
+    tete.appendChild(attente);
     if (c.partage) {
       const badge = document.createElement("span");
       badge.className = "carnet-carte-categorie";
@@ -417,19 +439,77 @@ function renderAccueilListe() {
       basculerVersEditeur(c.id);
     });
     actions.appendChild(editer);
-    const imprimer = document.createElement("button");
-    imprimer.className = "btn btn-ghost btn-petit";
-    imprimer.textContent = "🖨️ Imprimer";
-    imprimer.addEventListener("click", (e) => {
-      e.stopPropagation();
-      imprimerCarnet(c.id);
-    });
-    actions.appendChild(imprimer);
+    // Gestion du carnet, directement depuis la carte générale.
+    const dupl = document.createElement("button");
+    dupl.className = "icone-btn";
+    dupl.title = "Dupliquer ce carnet";
+    dupl.textContent = "📑";
+    dupl.addEventListener("click", (e) => { e.stopPropagation(); dupliquerCarnet(c.id); });
+    actions.appendChild(dupl);
+    const arch = document.createElement("button");
+    arch.className = "icone-btn";
+    arch.title = "Archiver ce carnet";
+    arch.textContent = "🗄️";
+    arch.addEventListener("click", (e) => { e.stopPropagation(); archiverCarnet(c); });
+    actions.appendChild(arch);
     carte.appendChild(actions);
 
     // Clic sur la carte (hors boutons) : zoom sur ce carnet sur la carte.
     carte.addEventListener("click", () => zoomerSurCarnet(c.id));
     liste.appendChild(carte);
+  });
+
+  renderAccueilArchives();
+}
+
+/**
+ * Rafraîchit uniquement les pastilles « non synchronisé » des cartes déjà
+ * affichées (sans reconstruire la liste, qui perdrait le défilement).
+ */
+function rafraichirBadgesSyncAccueil() {
+  if (typeof carnetEnAttenteNuage !== "function") return;
+  document.querySelectorAll("[data-attente-carnet]").forEach((el) => {
+    const c = etat.carnets.find((x) => String(x.id) === el.dataset.attenteCarnet);
+    el.hidden = !c || !carnetEnAttenteNuage(c);
+  });
+}
+
+/** Liste des carnets ARCHIVÉS sur la carte générale (restaurer / supprimer). */
+function renderAccueilArchives() {
+  const cont = document.getElementById("accueil-archives");
+  const toggle = document.getElementById("accueil-archives-toggle");
+  if (!cont || !toggle) return;
+  const archives = etat.carnets.filter((c) => c.statut === "archive");
+  const nb = document.getElementById("accueil-archives-nb");
+  if (nb) nb.textContent = archives.length;
+  toggle.hidden = archives.length === 0;
+  if (archives.length === 0) { cont.hidden = true; cont.innerHTML = ""; return; }
+
+  cont.innerHTML = "";
+  archives.forEach((c) => {
+    const ligne = document.createElement("div");
+    ligne.className = "carnet-ligne";
+    const nom = document.createElement("span");
+    nom.className = "carnet-nom";
+    nom.textContent = (c.logo ? c.logo + " " : "") + c.nom;
+    ligne.appendChild(nom);
+
+    const actions = document.createElement("span");
+    actions.className = "carnet-actions";
+    const restaurer = document.createElement("button");
+    restaurer.className = "btn btn-ghost btn-petit";
+    restaurer.textContent = "Restaurer";
+    restaurer.addEventListener("click", () => restaurerCarnetArchive(c));
+    actions.appendChild(restaurer);
+    const suppr = document.createElement("button");
+    suppr.className = "icone-btn";
+    suppr.title = "Supprimer définitivement";
+    suppr.textContent = "🗑";
+    suppr.addEventListener("click", () => supprimerCarnet(c));
+    actions.appendChild(suppr);
+
+    ligne.appendChild(actions);
+    cont.appendChild(ligne);
   });
 }
 
@@ -549,7 +629,7 @@ async function dupliquerCarnet(idSource) {
   }
 
   const id = Math.max(0, ...etat.carnets.map((c) => c.id)) + 1;
-  etat.carnets.push({
+  const copie = {
     id,
     uuid: genUuid(), // la copie a sa propre vie (y compris en ligne)
     nom: source.nom + " (copie)",
@@ -560,13 +640,35 @@ async function dupliquerCarnet(idSource) {
     du: source.du || "",
     au: source.au || "",
     modifieLe: new Date().toISOString(),
-  });
-  if (donnees && donnees.trace) {
+    syncLe: "", // jamais envoyée en ligne pour l'instant
+    // La copie garde aussi le cadrage et le format d'impression de l'original.
+    zone: source.zone || null,
+    formatZone: source.formatZone || "",
+    orientationZone: source.orientationZone === "paysage" ? "paysage" : "portrait",
+    statut: "actif",
+    partage: null, // une copie m'appartient, même si l'original était partagé
+  };
+  etat.carnets.push(copie);
+  // Une copie sans GPX peut très bien avoir des souvenirs : on la sauvegarde
+  // dès qu'elle a un contenu quelconque.
+  if (carnetADuContenu(donnees)) {
     try { await dbSauverCle("carnet-" + id, donnees); } catch (e) {}
   }
   await sauverIndexCarnets();
   renderCarnets();
   toast(`Carnet « ${source.nom} » dupliqué`);
+
+  // On l'envoie en ligne TOUT DE SUITE : sans ça, la copie n'existait que sur
+  // cet appareil jusqu'à la prochaine synchronisation complète.
+  if (typeof pousserCarnet === "function" && typeof nuageConnecte === "function" && nuageConnecte()) {
+    try {
+      await pousserCarnet(copie);
+      await sauverIndexCarnets();
+      renderCarnets();
+    } catch (e) {
+      toast("La copie est bien créée ici ; elle partira en ligne à la prochaine synchronisation.");
+    }
+  }
 }
 
 /* =========================================================
@@ -634,6 +736,18 @@ const MODELES = [
     },
   },
   {
+    cle: "viking", nom: "Viking", emoji: "⚔️", fond: "#e6dcc0",
+    desc: "Parchemin nordique : encre sombre, chemins pointillés, pictos runiques.",
+    preset: "ancienne",
+    theme: "viking",
+    appliquer() {
+      Object.assign(etat.style, { titreFond: "parchemin", titrePolice: "medievale", ambiance: "ancien" });
+      etat.style.trace = { couleur: "#3a2f22", epaisseur: 4, type: "pointilles" };
+      etat.style.labels = { ...etat.style.labels, police: "medievale", couleur: "#3a2f22" };
+      etat.style.decor = { rose: "classique", bordure: "double" };
+    },
+  },
+  {
     cle: "epure", nom: "Épuré", emoji: "✨", fond: "#f6f6f4",
     desc: "Minimaliste : la trace et tes souvenirs, rien d'autre.",
     appliquer() {
@@ -655,10 +769,10 @@ function renderModeles() {
   MODELES.forEach((m) => {
     const carte = document.createElement("button");
     carte.className = "modele-carte" + (modeleActif === m.cle ? " actif" : "");
+    carte.title = m.nom + " — " + m.desc;
     carte.innerHTML =
-      `<div class="modele-apercu" style="background:${m.fond}">${m.emoji}</div>` +
-      `<div class="modele-infos"><div class="modele-nom">${m.nom}</div>` +
-      `<div class="modele-desc">${m.desc}</div></div>`;
+      `<span class="modele-apercu" style="background:${m.fond}">${m.emoji}</span>` +
+      `<span class="modele-nom">${m.nom}</span>`;
     carte.addEventListener("click", () => choisirModele(m.cle));
     liste.appendChild(carte);
   });
@@ -677,8 +791,11 @@ async function choisirModele(cle) {
   if (!ok) return;
 
   m.appliquer();
+  // Le thème du carnet (pictos proposés) suit le modèle : 'viking' ou aucun.
+  etat.style.theme = m.theme || null;
   appliquerStyleComplet();
   if (m.preset) appliquerPresetFond(m.preset);
+  if (typeof construirePictos === "function") construirePictos();
   modeleActif = cle;
   renderModeles();
   planifierSauvegarde();
@@ -1322,131 +1439,12 @@ function majStyleAnnotationVecteur(a) {
 }
 
 /* =========================================================
-   10. Impression depuis l'accueil + disposition de l'affiche
+   10. Impression du carnet
+   ---------------------------------------------------------
+   La mise en page & l'impression sont un écran à part entière,
+   géré par le module « Impression » (impression.js). On y entre
+   depuis le carnet (bouton 🖨️ de la barre du haut ou onglet Export).
    ========================================================= */
-
-/** Ouvre la fenêtre « quel carnet imprimer ? ». */
-function ouvrirModalImpression() {
-  const liste = document.getElementById("impr-liste");
-  liste.innerHTML = "";
-  if (etat.carnets.length === 0) {
-    const p = document.createElement("p");
-    p.className = "galerie-vide";
-    p.textContent = "Aucun carnet à imprimer pour l'instant.";
-    liste.appendChild(p);
-  }
-  etat.carnets.forEach((c) => {
-    const item = document.createElement("button");
-    item.className = "impr-item";
-    const dates = libellePlageDates(c);
-    item.innerHTML =
-      `<span class="impr-logo">${echapperHtml(c.logo || "📖")}</span>` +
-      `<span>${echapperHtml(c.nom)}` +
-      (dates ? `<div class="impr-detail">📅 ${echapperHtml(dates)}</div>` : "") +
-      `</span>`;
-    item.addEventListener("click", () => imprimerCarnet(c.id));
-    liste.appendChild(item);
-  });
-  document.getElementById("modal-impression").hidden = false;
-}
-
-function fermerModalImpression() {
-  document.getElementById("modal-impression").hidden = true;
-}
-
-/** Ouvre le carnet demandé dans l'éditeur puis la mise en page d'impression. */
-async function imprimerCarnet(id) {
-  fermerModalImpression();
-  await basculerVersEditeur(id);
-  if (typeof carnetExportable === "function" && !carnetExportable()) {
-    toast("Ce carnet est vide : ajoute une trace, une zone ou des souvenirs.", true);
-    return;
-  }
-  ouvrirModalAffiche();
-}
-
-/**
- * Construit la liste « disposition » de la fenêtre d'impression :
- * cocher/décocher les souvenirs et changer leur ordre d'impression.
- */
-function majDispositionAffiche() {
-  // L'ordre proposé suit l'ordre du carnet ; les réglages sont remis à zéro
-  // à chaque ouverture (on imprime ce qu'on voit).
-  reglagesAffiche.ordre = etat.souvenirs.map((s) => s.id);
-  reglagesAffiche.exclusions = [];
-
-  const liste = document.getElementById("affiche-souvenirs-liste");
-  liste.innerHTML = "";
-  if (etat.souvenirs.length === 0) {
-    const p = document.createElement("p");
-    p.className = "galerie-vide";
-    p.textContent = "Aucun souvenir : seule la carte sera imprimée.";
-    liste.appendChild(p);
-    return;
-  }
-
-  const redessiner = () => {
-    liste.querySelectorAll(".affiche-souvenir-ligne").forEach((ligne, i) => {
-      const id = reglagesAffiche.ordre[i];
-      const s = etat.souvenirs.find((x) => x.id === id);
-      ligne.querySelector(".affiche-souvenir-nom").textContent =
-        `${i + 1}. ${s ? (s.nom || "Sans nom") : "?"}`;
-      ligne.querySelector("input").checked = !reglagesAffiche.exclusions.includes(id);
-      ligne.dataset.id = id;
-    });
-  };
-
-  reglagesAffiche.ordre.forEach((id, i) => {
-    const ligne = document.createElement("div");
-    ligne.className = "affiche-souvenir-ligne";
-    ligne.dataset.id = id;
-
-    const coche = document.createElement("input");
-    coche.type = "checkbox";
-    coche.checked = true;
-    coche.addEventListener("change", () => {
-      const sid = Number(ligne.dataset.id);
-      reglagesAffiche.exclusions = coche.checked
-        ? reglagesAffiche.exclusions.filter((x) => x !== sid)
-        : [...reglagesAffiche.exclusions, sid];
-    });
-
-    const nom = document.createElement("span");
-    nom.className = "affiche-souvenir-nom";
-
-    const monter = document.createElement("button");
-    monter.className = "ordre-btn";
-    monter.textContent = "↑";
-    monter.title = "Imprimer plus tôt";
-    monter.addEventListener("click", () => {
-      const idx = reglagesAffiche.ordre.indexOf(Number(ligne.dataset.id));
-      if (idx > 0) {
-        [reglagesAffiche.ordre[idx - 1], reglagesAffiche.ordre[idx]] =
-          [reglagesAffiche.ordre[idx], reglagesAffiche.ordre[idx - 1]];
-        redessiner();
-      }
-    });
-    const descendre = document.createElement("button");
-    descendre.className = "ordre-btn";
-    descendre.textContent = "↓";
-    descendre.title = "Imprimer plus tard";
-    descendre.addEventListener("click", () => {
-      const idx = reglagesAffiche.ordre.indexOf(Number(ligne.dataset.id));
-      if (idx >= 0 && idx < reglagesAffiche.ordre.length - 1) {
-        [reglagesAffiche.ordre[idx + 1], reglagesAffiche.ordre[idx]] =
-          [reglagesAffiche.ordre[idx], reglagesAffiche.ordre[idx + 1]];
-        redessiner();
-      }
-    });
-
-    ligne.appendChild(coche);
-    ligne.appendChild(nom);
-    ligne.appendChild(monter);
-    ligne.appendChild(descendre);
-    liste.appendChild(ligne);
-  });
-  redessiner();
-}
 
 /* =========================================================
    10 bis. Nouveau carnet (nom d'abord, GPX ensuite)
@@ -1454,12 +1452,12 @@ function majDispositionAffiche() {
 
 // Format d'impression choisi à la création (sert de défaut à la zone, à
 // l'auto-zone d'un GPX et à l'export). Modifiable ensuite dans l'éditeur.
-const nouveauCarnetFormat = { format: "A4", orientation: "portrait" };
+const nouveauCarnetFormat = { format: "r3_4", orientation: "portrait" };
 
 function ouvrirModalNouveauCarnet() {
   document.getElementById("modal-bienvenue").hidden = true;
   document.getElementById("nouveau-carnet-nom").value = "";
-  nouveauCarnetFormat.format = "A4";
+  nouveauCarnetFormat.format = "r3_4";
   nouveauCarnetFormat.orientation = "portrait";
   majSegment("nouveau-carnet-format", "nformat", nouveauCarnetFormat.format);
   majSegment("nouveau-carnet-orientation", "norientation", nouveauCarnetFormat.orientation);
@@ -1590,15 +1588,29 @@ function poserPointCarnet(latlng) {
 
 // Chaque format donne une PROPORTION largeur/hauteur en portrait (`base`).
 // Les formats A partagent la proportion √2 (1/√2 ≈ 0,707 en portrait).
+// On raisonne désormais en RATIOS (proportion largeur/hauteur), plus en formats
+// papier. `base` = largeur/hauteur ; `ratio:true` = proposé dans l'interface ;
+// `fixe:true` = la proportion est figée (l'orientation ne la retourne pas).
 const FORMATS_ZONE = {
+  // Ratios proposés dans toute l'application.
+  r1_1:  { base: 1,      fixe: true, ratio: true, label: "1:1" },
+  r3_4:  { base: 3 / 4,  fixe: true, ratio: true, label: "3:4" },
+  r4_3:  { base: 4 / 3,  fixe: true, ratio: true, label: "4:3" },
+  r2_3:  { base: 2 / 3,  fixe: true, ratio: true, label: "2:3" },
+  r3_2:  { base: 3 / 2,  fixe: true, ratio: true, label: "3:2" },
+  r9_16: { base: 9 / 16, fixe: true, ratio: true, label: "9:16" },
+  r16_9: { base: 16 / 9, fixe: true, ratio: true, label: "16:9" },
+  // Anciennes clés conservées pour la rétrocompat des carnets déjà créés.
   A5:    { base: Math.SQRT1_2, papier: "A5", label: "A5" },
   A4:    { base: Math.SQRT1_2, papier: "A4", label: "A4" },
   A3:    { base: Math.SQRT1_2, papier: "A3", label: "A3" },
   A2:    { base: Math.SQRT1_2, papier: "A2", label: "A2" },
-  carre: { base: 1,           papier: null, label: "Carré", fixe: true },
-  photo: { base: 2 / 3,       papier: null, label: "Photo 3:2" },
-  pano:  { base: 9 / 16,      papier: null, label: "Pano 16:9" },
+  carre: { base: 1,      fixe: true, label: "1:1" },
+  photo: { base: 2 / 3,  fixe: true, label: "2:3" },
+  pano:  { base: 9 / 16, fixe: true, label: "9:16" },
 };
+// Ordre d'affichage des ratios dans les sélecteurs.
+const RATIOS_UI = ["r1_1", "r3_4", "r4_3", "r2_3", "r3_2", "r9_16", "r16_9"];
 
 /** Proportion largeur/hauteur (en pixels) d'un format selon l'orientation. */
 function ratioZone(format, orientation) {
@@ -1706,7 +1718,7 @@ function construireEditeurZone() {
   barre.className = "zone-editeur-barre";
   const gFmt = document.createElement("div");
   gFmt.className = "zeb-groupe";
-  Object.keys(FORMATS_ZONE).forEach((f) => {
+  RATIOS_UI.forEach((f) => {
     const b = document.createElement("button");
     b.className = "zone-fmt-btn"; b.dataset.fmt = f; b.textContent = FORMATS_ZONE[f].label;
     b.addEventListener("click", () => { z.format = f; reformerBoxEditeur(); });
@@ -2241,11 +2253,27 @@ function brancherUI() {
   document.getElementById("btn-retour-accueil")
     .addEventListener("click", () => basculerVersAccueil());
   document.getElementById("editeur-identite")
-    .addEventListener("click", () => ouvrirOnglet("carnets"));
-  document.getElementById("accueil-imprimer")
-    .addEventListener("click", ouvrirModalImpression);
-  document.getElementById("impr-annuler")
-    .addEventListener("click", fermerModalImpression);
+    .addEventListener("click", () => { definirMode("edition"); ouvrirOnglet("carnets"); });
+  // Bascule Vizu (consultation) ⇄ Édition depuis la barre du haut.
+  document.getElementById("btn-editer")
+    .addEventListener("click", () => definirMode("edition"));
+  document.getElementById("btn-vizu")
+    .addEventListener("click", () => { fermerTiroir(); definirMode("visualisation"); });
+  // Partager le carnet (ouvre la section « Partage » qui liste aussi les accès).
+  document.getElementById("btn-partager-carnet")
+    .addEventListener("click", ouvrirPartageCarnet);
+  // Impression : ouvre l'écran de mise en page (module Impression).
+  document.getElementById("carnet-imprimer")
+    .addEventListener("click", () => {
+      if (typeof Impression !== "undefined") Impression.ouvrir();
+    });
+  // En Vizu : ouvre la liste des souvenirs (avec filtres).
+  document.getElementById("btn-vizu-souvenirs")
+    .addEventListener("click", () => {
+      const sec = document.getElementById("panneau-reserve");
+      if (ongletOuvert === "souvenirs" && sec && !sec.hidden) fermerTiroir();
+      else ouvrirOnglet("souvenirs");
+    });
 
   /* --- Rail d'onglets --- */
   document.querySelectorAll("#rail .rail-btn").forEach((b) => {
@@ -2268,6 +2296,13 @@ function brancherUI() {
       majRailActif();
     });
   });
+
+  /* --- Accueil : bascule d'affichage des archives --- */
+  document.getElementById("accueil-archives-toggle")
+    .addEventListener("click", () => {
+      const cont = document.getElementById("accueil-archives");
+      cont.hidden = !cont.hidden;
+    });
 
   /* --- Accueil : filtres --- */
   document.getElementById("accueil-recherche")
@@ -2405,8 +2440,6 @@ function brancherUI() {
     .addEventListener("input", (e) => saisirMeta("categorie", e.target.value.trim()));
   document.getElementById("meta-description")
     .addEventListener("input", (e) => saisirMeta("description", e.target.value));
-  document.getElementById("carnet-dupliquer")
-    .addEventListener("click", () => dupliquerCarnet());
 
   /* --- Onglet Outils : poser un souvenir (même mode que le bouton flottant) --- */
   document.getElementById("outil-souvenir")
@@ -2621,9 +2654,14 @@ function brancherUI() {
   /* --- Échap : d'abord les fenêtres et l'outil en cours --- */
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    // L'écran de mise en page prime sur le reste : Échap le referme.
+    if (!document.getElementById("impression-ecran").hidden) {
+      if (typeof Impression !== "undefined") Impression.fermer();
+      e.stopPropagation();
+      return;
+    }
     const fermetures = [
       ["modal-souvenir", fermerModalSouvenir],
-      ["modal-impression", fermerModalImpression],
       ["modal-nouveau-carnet", fermerModalNouveauCarnet],
       ["modal-carte-globale", () => { document.getElementById("modal-carte-globale").hidden = true; }],
     ];
@@ -2656,10 +2694,6 @@ function brancherUI() {
 
   /* --- Sélection façon Miro : cadre, poignées, clavier (selection.js) --- */
   if (typeof brancherSelectionUI === "function") brancherSelectionUI();
-
-  // Les réglages d'impression par défaut : tout imprimer, dans l'ordre.
-  reglagesAffiche.ordre = null;
-  reglagesAffiche.exclusions = [];
 }
 
 /** Affiche/masque les contrôles liés à l'image d'épingle personnalisée. */
