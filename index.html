@@ -161,9 +161,19 @@
 
           <section class="style-section">
             <h3>Mes carnets</h3>
-            <p class="style-aide">La gestion de tes carnets (créer, importer, dupliquer, archiver,
-               supprimer) se fait depuis la <strong>carte générale</strong> : reviens-y avec le
+            <p class="style-aide">La gestion de tes carnets (créer, importer, dupliquer)
+               se fait depuis la <strong>carte générale</strong> : reviens-y avec le
                bouton <strong>← Carte globale</strong> en haut à gauche.</p>
+          </section>
+
+          <section class="style-section">
+            <h3>Ranger ce carnet</h3>
+            <button id="carnet-archiver" class="btn btn-ghost btn-petit" style="width:100%">
+              🗄️ Archiver ce carnet
+            </button>
+            <p class="style-aide">Il disparaîtra de la carte générale et des listes, sans rien
+               perdre. Tu le retrouveras dans <strong>☁️ Compte → Carnets archivés</strong>,
+               pour le restaurer ou le supprimer définitivement.</p>
           </section>
 
           <section class="style-section">
@@ -617,10 +627,6 @@
       <button id="accueil-attente" class="accueil-attente" hidden
               title="Synchroniser maintenant"></button>
       <div id="accueil-liste" class="accueil-liste"></div>
-      <button id="accueil-archives-toggle" class="btn btn-ghost btn-petit" style="width:100%" hidden>
-        🗄️ Archives (<span id="accueil-archives-nb">0</span>)
-      </button>
-      <div id="accueil-archives" class="accueil-archives" hidden></div>
       <div class="accueil-pied">
         <button id="accueil-nouveau" class="btn btn-accent btn-petit" style="flex:1">
           + Nouveau carnet
@@ -1086,6 +1092,15 @@
         <button id="compte-deconnecter" class="btn btn-ghost btn-petit" style="width:100%">
           Se déconnecter de cet appareil
         </button>
+      </div>
+
+      <!-- Carnets archivés : rangés ici, hors de la vue courante. Ils restent
+           accessibles même sans compte (ils vivent sur l'appareil). -->
+      <div class="compte-archives-bloc">
+        <button id="compte-archives-toggle" class="btn btn-ghost btn-petit" hidden>
+          🗄️ Carnets archivés (<span id="compte-archives-nb">0</span>)
+        </button>
+        <div id="compte-archives" class="compte-archives" hidden></div>
       </div>
 
       <p id="compte-statut" class="gen-statut" hidden></p>

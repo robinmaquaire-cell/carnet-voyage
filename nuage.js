@@ -707,6 +707,8 @@ function statutCompte(message, erreur) {
 /** Ouvre la fenêtre Compte. */
 function ouvrirModalCompte() {
   statutCompte("");
+  // Les carnets archivés se consultent d'ici : on rafraîchit la liste.
+  if (typeof renderAccueilArchives === "function") renderAccueilArchives();
   document.getElementById("compte-bloc-connexion").hidden = nuageConnecte();
   document.getElementById("compte-bloc-connecte").hidden = !nuageConnecte();
   document.getElementById("compte-non-configure").hidden = nuageConfigure();

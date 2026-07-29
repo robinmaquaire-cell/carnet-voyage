@@ -4313,8 +4313,8 @@ async function archiverCarnet(carnet) {
   const ok = await demanderConfirmation(
     `Archiver « ${carnet.nom} » ?`,
     "Il sera masqué de la carte et des listes, mais rien n'est perdu. Tu " +
-    "pourras le restaurer — ou le supprimer définitivement — depuis les Archives " +
-    "(onglet Carnet).",
+    "pourras le restaurer — ou le supprimer définitivement — depuis " +
+    "« ☁️ Compte → Carnets archivés ».",
     { okLibelle: "Archiver" }
   );
   if (!ok) return;

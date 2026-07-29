@@ -446,12 +446,7 @@ function renderAccueilListe() {
     dupl.textContent = "📑";
     dupl.addEventListener("click", (e) => { e.stopPropagation(); dupliquerCarnet(c.id); });
     actions.appendChild(dupl);
-    const arch = document.createElement("button");
-    arch.className = "icone-btn";
-    arch.title = "Archiver ce carnet";
-    arch.textContent = "🗄️";
-    arch.addEventListener("click", (e) => { e.stopPropagation(); archiverCarnet(c); });
-    actions.appendChild(arch);
+    // (L'archivage se fait depuis l'onglet « Carnet » du carnet ouvert.)
     carte.appendChild(actions);
 
     // Clic sur la carte (hors boutons) : zoom sur ce carnet sur la carte.
@@ -474,13 +469,17 @@ function rafraichirBadgesSyncAccueil() {
   });
 }
 
-/** Liste des carnets ARCHIVÉS sur la carte générale (restaurer / supprimer). */
+/**
+ * Liste des carnets ARCHIVÉS, rangée dans la fenêtre Compte (restaurer /
+ * supprimer). Ils n'apparaissent nulle part ailleurs : ni sur la carte
+ * générale, ni dans la liste des carnets.
+ */
 function renderAccueilArchives() {
-  const cont = document.getElementById("accueil-archives");
-  const toggle = document.getElementById("accueil-archives-toggle");
+  const cont = document.getElementById("compte-archives");
+  const toggle = document.getElementById("compte-archives-toggle");
   if (!cont || !toggle) return;
   const archives = etat.carnets.filter((c) => c.statut === "archive");
-  const nb = document.getElementById("accueil-archives-nb");
+  const nb = document.getElementById("compte-archives-nb");
   if (nb) nb.textContent = archives.length;
   toggle.hidden = archives.length === 0;
   if (archives.length === 0) { cont.hidden = true; cont.innerHTML = ""; return; }
@@ -2297,11 +2296,19 @@ function brancherUI() {
     });
   });
 
-  /* --- Accueil : bascule d'affichage des archives --- */
-  document.getElementById("accueil-archives-toggle")
+  /* --- Compte : bascule d'affichage des carnets archivés --- */
+  document.getElementById("compte-archives-toggle")
     .addEventListener("click", () => {
-      const cont = document.getElementById("accueil-archives");
+      const cont = document.getElementById("compte-archives");
       cont.hidden = !cont.hidden;
+    });
+
+  /* --- Onglet Carnet : archiver le carnet ouvert --- */
+  document.getElementById("carnet-archiver")
+    .addEventListener("click", () => {
+      const c = carnetActif();
+      if (!c) { toast("Ouvre d'abord un carnet.", true); return; }
+      archiverCarnet(c);
     });
 
   /* --- Accueil : filtres --- */
