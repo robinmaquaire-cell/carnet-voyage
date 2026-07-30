@@ -2898,6 +2898,25 @@ body.vue-editeur.mode-visualisation .rail { display: none !important; }
   overflow-y: auto;
 }
 
+/* Ligne « pseudo » de la fenêtre Compte : affichage + bouton Modifier */
+.compte-pseudo-ligne {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  border: 1.5px solid var(--ligne);
+  border-radius: 10px;
+  background: var(--carte-bg);
+}
+.compte-pseudo-affiche {
+  flex: 1; min-width: 0;
+  font-weight: 650;
+  color: var(--encre);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Aide sous le champ pseudo de la fenêtre Profil : vert si OK, orange sinon */
+.profil-aide-ok { color: var(--ok); }
+.profil-aide-non { color: var(--ocre); }
+
 /* Carte (vignette) d'un carnet sur l'accueil */
 .carnet-carte {
   border: 1.5px solid var(--ligne);

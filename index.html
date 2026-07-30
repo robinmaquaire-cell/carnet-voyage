@@ -1097,8 +1097,11 @@
         <p class="modal-sous-titre">Connecté en tant que
            <strong id="compte-email-affiche">—</strong>.
            Tes carnets sont sauvegardés en ligne automatiquement.</p>
-        <label class="style-label">Ton prénom ou pseudo <span class="style-unite">(affiché sur ta carte globale)</span></label>
-        <input id="compte-pseudo" type="text" maxlength="30" placeholder="Ex : Robin" />
+        <label class="style-label">Ton pseudo <span class="style-unite">(unique, sert à ce que tes amis te retrouvent)</span></label>
+        <div class="compte-pseudo-ligne">
+          <span id="compte-pseudo-affiche" class="compte-pseudo-affiche">—</span>
+          <button id="compte-pseudo-modifier" class="btn btn-ghost btn-petit" type="button">Modifier</button>
+        </div>
         <button id="compte-synchroniser" class="btn btn-accent btn-petit" style="width:100%">
           🔄 Synchroniser maintenant
         </button>
@@ -1120,6 +1123,28 @@
 
       <div class="modal-actions">
         <button id="compte-fermer" class="btn btn-ghost">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Choix du pseudo public — ouverte automatiquement à la connexion tant
+       qu'aucun profil n'est enregistré. Le pseudo est ce qui permet aux
+       autres utilisateurs de te retrouver ; il est unique dans toute l'app. -->
+  <div id="modal-profil" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <h2>👤 Choisis ton pseudo</h2>
+      <p class="modal-sous-titre">Ton pseudo servira à tes amis pour te
+         retrouver et te connecter à eux — un peu comme un @identifiant sur
+         les réseaux sociaux. Il est <strong>unique</strong> : personne d'autre
+         n'aura le même.</p>
+      <label class="style-label">Pseudo <span class="style-unite">(3 à 30 caractères : lettres, chiffres, tiret ou tiret-bas)</span></label>
+      <input id="profil-pseudo" type="text" maxlength="30" autocomplete="username"
+             placeholder="Ex : robin, marie-2026, jean_lyon" />
+      <p id="profil-aide" class="style-aide">—</p>
+      <p id="profil-statut" class="gen-statut" hidden></p>
+      <div class="modal-actions">
+        <button id="profil-plus-tard" class="btn btn-ghost">Plus tard</button>
+        <button id="profil-enregistrer" class="btn btn-accent">Enregistrer</button>
       </div>
     </div>
   </div>

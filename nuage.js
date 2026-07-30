@@ -18,10 +18,18 @@ let sbClient = null;        // le client Supabase (null si non configuré)
 let sessionNuage = null;    // la session de l'utilisateur connecté (ou null)
 let syncEnCours = false;
 let droitsPartages = new Map(); // carnet_uuid → "lecture" | "edition" (partagés avec moi)
+// Mon profil public (pseudo, photo, description, est_public) une fois chargé
+// depuis la table `profils`. Reste null tant que je ne suis pas connecté ou
+// que je n'ai pas encore choisi de pseudo.
+let monProfil = null;
 
 const CLE_EPHEMERE = "nuage-ephemere";      // "1" = ne pas rester connecté
 const CLE_SESSION_VUE = "nuage-session-vue"; // marqueur de session d'onglet
 const CLE_PSEUDO = "carnet-pseudo";
+
+// Format d'un pseudo valide (identique à la contrainte SQL) : 3-30 caractères
+// pris parmi lettres, chiffres, tiret et tiret-bas.
+const PSEUDO_MOTIF = /^[A-Za-z0-9_-]{3,30}$/;
 
 /** Le nuage est-il configuré (clés présentes) ? */
 function nuageConfigure() {
@@ -34,8 +42,14 @@ function nuageConnecte() {
   return !!(sbClient && sessionNuage && sessionNuage.user);
 }
 
-/** Pseudo de l'utilisateur (compte, sinon celui noté sur l'appareil). */
+/**
+ * Pseudo de l'utilisateur. Priorité :
+ *   1. le profil public (table `profils`) si connecté et déjà choisi ;
+ *   2. l'ancien pseudo enregistré dans `user_metadata` (rétrocompat) ;
+ *   3. celui noté sur l'appareil (hors ligne).
+ */
 function lirePseudo() {
+  if (monProfil && monProfil.pseudo) return monProfil.pseudo;
   if (nuageConnecte()) {
     const p = sessionNuage.user.user_metadata && sessionNuage.user.user_metadata.pseudo;
     if (p) return p;
@@ -43,14 +57,102 @@ function lirePseudo() {
   try { return localStorage.getItem(CLE_PSEUDO) || ""; } catch (e) { return ""; }
 }
 
-/** Enregistre le pseudo (sur l'appareil, et sur le compte si connecté). */
+/**
+ * Enregistre le pseudo local (utilisé hors ligne pour signer les cartes du
+ * monde). Le vrai pseudo public passe par enregistrerMonProfil().
+ */
 async function enregistrerPseudo(pseudo) {
   pseudo = (pseudo || "").trim().slice(0, 30);
   try { localStorage.setItem(CLE_PSEUDO, pseudo); } catch (e) {}
-  if (nuageConnecte()) {
-    try { await sbClient.auth.updateUser({ data: { pseudo } }); } catch (e) {}
-  }
   if (typeof majTitreCarteGlobale === "function") majTitreCarteGlobale();
+}
+
+/* =========================================================
+   Profil public (jalon A — table `profils`)
+   ========================================================= */
+
+/**
+ * Nettoie un pseudo pour tenter de le rendre valide sans intervention :
+ * enlève espaces et accents, garde uniquement [A-Za-z0-9_-], tronque à 30.
+ * Utile pour la MIGRATION du pseudo actuel de l'utilisateur (stocké dans
+ * user_metadata sans contrainte de format) vers le nouveau format public.
+ */
+function nettoyerPseudo(brut) {
+  if (typeof brut !== "string") return "";
+  const sansAccents = brut.normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const nettoye = sansAccents.replace(/[^A-Za-z0-9_-]/g, "");
+  return nettoye.slice(0, 30);
+}
+
+/** Charge mon profil depuis la table `profils` (ou null s'il n'existe pas). */
+async function chargerMonProfil() {
+  if (!nuageConnecte()) { monProfil = null; return null; }
+  try {
+    const { data, error } = await sbClient.from("profils")
+      .select("id, pseudo, photo, description, est_public")
+      .eq("id", sessionNuage.user.id)
+      .maybeSingle();
+    if (error && error.code !== "PGRST116") throw error;
+    monProfil = data || null;
+    return monProfil;
+  } catch (e) {
+    // Table absente (SQL pas encore joué) : on n'a pas de profil, on continue
+    // comme avant. La modal ne s'ouvrira pas.
+    monProfil = null;
+    return null;
+  }
+}
+
+/**
+ * Crée ou met à jour mon profil. Renvoie { ok:true, profil } ou
+ * { ok:false, raison } — la raison est un message français court prêt à
+ * afficher à l'utilisateur.
+ */
+async function enregistrerMonProfil(champs) {
+  if (!nuageConnecte()) return { ok: false, raison: "Connecte-toi d'abord." };
+  const pseudo = (champs.pseudo || "").trim();
+  if (!PSEUDO_MOTIF.test(pseudo)) {
+    return { ok: false, raison: "Ce pseudo n'a pas le bon format." };
+  }
+  const ligne = {
+    id: sessionNuage.user.id,
+    pseudo,
+    photo: champs.photo || (monProfil && monProfil.photo) || "",
+    description: champs.description || (monProfil && monProfil.description) || "",
+    est_public: !!champs.est_public,
+  };
+  const { data, error } = await sbClient.from("profils").upsert(ligne).select().maybeSingle();
+  if (error) {
+    // 23505 = violation d'unicité (pseudo déjà pris par quelqu'un d'autre).
+    if (error.code === "23505") {
+      return { ok: false, raison: `Le pseudo « ${pseudo} » est déjà pris — essaie une variante.` };
+    }
+    // Contrainte de format côté DB (défense en profondeur).
+    if (/pseudo_valide/.test(error.message || "")) {
+      return { ok: false, raison: "Ce pseudo n'a pas le bon format." };
+    }
+    return { ok: false, raison: (error.message || "Impossible d'enregistrer le profil.") };
+  }
+  monProfil = data;
+  // Garder le pseudo local à jour aussi (mode hors ligne).
+  try { localStorage.setItem(CLE_PSEUDO, pseudo); } catch (e) {}
+  if (typeof majTitreCarteGlobale === "function") majTitreCarteGlobale();
+  majCompteUI();
+  return { ok: true, profil: data };
+}
+
+/**
+ * Au retour du lien magique (et à la reprise d'une session existante), on
+ * charge le profil. S'il n'y en a pas encore, on invite l'utilisateur à en
+ * choisir un, en pré-remplissant avec son ancien pseudo user_metadata
+ * (nettoyé au format) pour que la migration soit un simple clic.
+ */
+async function assurerProfil() {
+  await chargerMonProfil();
+  if (monProfil) return;
+  const ancien = (sessionNuage.user.user_metadata && sessionNuage.user.user_metadata.pseudo) ||
+                 (function () { try { return localStorage.getItem(CLE_PSEUDO); } catch (e) { return ""; } })();
+  ouvrirModalProfil(nettoyerPseudo(ancien));
 }
 
 /** Point d'entrée : appelé par demarrerUI() une fois les carnets chargés. */
@@ -85,10 +187,13 @@ function demarrerNuage() {
       // Retour du lien magique : on ferme la fenêtre Compte et on synchronise.
       fermerModalCompte();
       toast("☁️ Connecté ! Synchronisation de tes carnets…");
+      assurerProfil();
       synchroniserNuage();
     } else if (evenement === "INITIAL_SESSION") {
-      if (session) synchroniserNuage();
+      if (session) { assurerProfil(); synchroniserNuage(); }
       else if (typeof majPopupsAccueil === "function") majPopupsAccueil();
+    } else if (evenement === "SIGNED_OUT") {
+      monProfil = null;
     }
   });
 }
@@ -878,7 +983,9 @@ function ouvrirModalCompte() {
   document.getElementById("compte-non-configure").hidden = nuageConfigure();
   if (nuageConnecte()) {
     document.getElementById("compte-email-affiche").textContent = sessionNuage.user.email;
-    document.getElementById("compte-pseudo").value = lirePseudo();
+    const p = monProfil && monProfil.pseudo;
+    document.getElementById("compte-pseudo-affiche").textContent = p ? "@" + p : "(pas encore choisi)";
+    document.getElementById("compte-pseudo-modifier").textContent = p ? "Modifier" : "Choisir";
   }
   try {
     document.getElementById("compte-rester").checked =
@@ -948,10 +1055,95 @@ function traduireErreurAuth(error) {
 }
 
 /* =========================================================
+   Fenêtre « Choisis ton pseudo » (jalon A)
+   ========================================================= */
+
+/** Message d'état dans la fenêtre Profil. */
+function statutProfil(message, erreur) {
+  const el = document.getElementById("profil-statut");
+  if (!el) return;
+  el.textContent = message || "";
+  el.hidden = !message;
+  el.className = "gen-statut " + (erreur ? "erreur" : "info");
+}
+
+/** Ouvre la fenêtre de choix du pseudo, pré-remplie avec `suggestion`. */
+function ouvrirModalProfil(suggestion) {
+  const modal = document.getElementById("modal-profil");
+  if (!modal) return;
+  const champ = document.getElementById("profil-pseudo");
+  champ.value = suggestion || "";
+  statutProfil("");
+  majAideProfil();
+  modal.hidden = false;
+  // Focus après affichage, pour que le clavier apparaisse sur mobile.
+  setTimeout(() => champ.focus(), 50);
+}
+
+function fermerModalProfil() {
+  const modal = document.getElementById("modal-profil");
+  if (modal) modal.hidden = true;
+}
+
+/**
+ * Aide sous le champ pseudo : vert si le format est bon, orange sinon.
+ * On ne teste PAS la disponibilité en direct (coûteux + reveal de comptes
+ * existants) : la collision se voit au moment d'enregistrer.
+ */
+function majAideProfil() {
+  const champ = document.getElementById("profil-pseudo");
+  const aide = document.getElementById("profil-aide");
+  if (!champ || !aide) return;
+  const v = champ.value.trim();
+  if (!v) {
+    aide.textContent = "Ton pseudo apparaîtra tel quel aux autres.";
+    aide.className = "style-aide";
+  } else if (PSEUDO_MOTIF.test(v)) {
+    aide.textContent = "✓ Format correct.";
+    aide.className = "style-aide profil-aide-ok";
+  } else if (v.length < 3) {
+    aide.textContent = "Il faut au moins 3 caractères.";
+    aide.className = "style-aide profil-aide-non";
+  } else {
+    aide.textContent = "Seuls lettres, chiffres, tiret et tiret-bas sont autorisés (pas d'espace ni d'accent).";
+    aide.className = "style-aide profil-aide-non";
+  }
+}
+
+/** Valide le champ et tente d'enregistrer le profil. */
+async function validerModalProfil() {
+  const champ = document.getElementById("profil-pseudo");
+  const pseudo = champ.value.trim();
+  if (!PSEUDO_MOTIF.test(pseudo)) {
+    statutProfil("Le pseudo doit faire 3 à 30 caractères (lettres, chiffres, - ou _).", true);
+    return;
+  }
+  const bouton = document.getElementById("profil-enregistrer");
+  bouton.disabled = true;
+  statutProfil("Enregistrement…");
+  const res = await enregistrerMonProfil({ pseudo });
+  bouton.disabled = false;
+  if (!res.ok) { statutProfil(res.raison, true); return; }
+  fermerModalProfil();
+  toast(`👤 Pseudo enregistré : @${pseudo}`);
+}
+
+/* =========================================================
    Branchements
    ========================================================= */
 
+function brancherProfilUI() {
+  const modal = document.getElementById("modal-profil");
+  if (!modal) return;
+  document.getElementById("profil-enregistrer").addEventListener("click", validerModalProfil);
+  document.getElementById("profil-plus-tard").addEventListener("click", fermerModalProfil);
+  const champ = document.getElementById("profil-pseudo");
+  champ.addEventListener("input", majAideProfil);
+  champ.addEventListener("keydown", (e) => { if (e.key === "Enter") validerModalProfil(); });
+}
+
 function brancherCompteUI() {
+  brancherProfilUI();
   document.getElementById("compte-btn")
     .addEventListener("click", () => ouvrirModalCompte());
   document.getElementById("compte-fermer")
@@ -973,12 +1165,18 @@ function brancherCompteUI() {
   // Le bandeau « N carnets ne sont pas encore en ligne » lance la synchro.
   const attente = document.getElementById("accueil-attente");
   if (attente) attente.addEventListener("click", () => synchroniserNuage());
-  document.getElementById("compte-pseudo")
-    .addEventListener("change", (e) => enregistrerPseudo(e.target.value));
+  // Le pseudo est modifié par la fenêtre dédiée (validation + unicité).
+  document.getElementById("compte-pseudo-modifier")
+    .addEventListener("click", () => {
+      fermerModalCompte();
+      ouvrirModalProfil((monProfil && monProfil.pseudo) || nettoyerPseudo(lirePseudo()));
+    });
 
-  // Échap ferme la fenêtre Compte (avant les autres raccourcis).
+  // Échap ferme la fenêtre Compte OU la fenêtre Profil (avant les autres raccourcis).
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    const profil = document.getElementById("modal-profil");
+    if (profil && !profil.hidden) { fermerModalProfil(); e.stopPropagation(); return; }
     if (!document.getElementById("modal-compte").hidden) {
       fermerModalCompte();
       e.stopPropagation();
