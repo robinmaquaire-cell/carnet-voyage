@@ -51,7 +51,7 @@
         <span id="editeur-nom">Carnet</span>
       </button>
       <!-- En consultation (Vizu) : menu ouvrable des souvenirs du carnet -->
-      <button id="btn-vizu-souvenirs" class="btn-retour editeur-seule visu-seule" title="Voir les souvenirs de ce carnet">
+      <button id="btn-vizu-souvenirs" class="btn-retour editeur-seule visu-seule focus-carnet-seule" title="Voir les souvenirs de ce carnet">
         📍 Souvenirs
       </button>
     </div>
@@ -66,18 +66,22 @@
       <button id="btn-vizu" class="btn-retour editeur-seule edition-seule"
               title="Voir le carnet comme tes invités (consultation)">👁 Aperçu</button>
       <!-- Carnet ouvert en CONSULTATION : bascule vers l'édition -->
-      <button id="btn-editer" class="btn-retour editeur-seule visu-seule"
+      <button id="btn-editer" class="btn-retour editeur-seule visu-seule focus-carnet-seule"
               title="Modifier ce carnet">✏️ Éditer</button>
       <!-- Partager le carnet / voir qui y a accès (dans les deux modes) -->
-      <button id="btn-partager-carnet" class="btn-retour editeur-seule"
+      <button id="btn-partager-carnet" class="btn-retour editeur-seule focus-carnet-seule"
               title="Partager ce carnet et voir qui y a accès">🔗 Partager</button>
       <!-- Mise en page / impression du carnet (4e écran : Édition d'impression) -->
-      <button id="carnet-imprimer" class="btn-retour editeur-seule"
+      <button id="carnet-imprimer" class="btn-retour editeur-seule focus-carnet-seule"
               title="Mettre en page et imprimer ce carnet">🖨️ Imprimer</button>
       <!-- Style de la carte globale (fond, ambiance — indépendant des carnets) -->
       <button id="accueil-style-btn" class="btn-retour accueil-seule" title="Style de la carte globale">🎨</button>
-      <!-- Compte en ligne (connexion, synchronisation) -->
-      <button id="compte-btn" class="btn-retour compte-btn">☁️ Compte</button>
+      <!-- Compte en ligne : avatar + pseudo (façon menu utilisateur). -->
+      <button id="compte-btn" class="compte-btn" type="button">
+        <span id="compte-btn-avatar" class="compte-avatar" aria-hidden="true">☁</span>
+        <span id="compte-btn-nom" class="compte-btn-nom">Compte</span>
+        <span class="compte-btn-fleche" aria-hidden="true">▾</span>
+      </button>
     </div>
   </header>
 
@@ -1064,66 +1068,143 @@
 
   <!-- Fenêtre : compte en ligne (lien magique par e-mail, synchronisation) -->
   <div id="modal-compte" class="modal-overlay" hidden>
-    <div class="modal-card">
-      <h2>☁️ Mon compte</h2>
+    <div class="modal-card modal-compte-card">
+
+      <header class="modal-compte-tete">
+        <h2>Paramètres</h2>
+        <button id="compte-fermer" class="modal-fermer" title="Fermer" aria-label="Fermer">✕</button>
+      </header>
 
       <!-- Message si les clés du service en ligne ne sont pas encore réglées -->
-      <p id="compte-non-configure" class="modal-sous-titre" hidden>
+      <p id="compte-non-configure" class="modal-sous-titre modal-compte-message" hidden>
         Le service en ligne n'est pas encore configuré sur cette version de
         l'application. En attendant, tes carnets restent enregistrés sur cet appareil.
       </p>
 
-      <!-- Pas connecté : recevoir un lien magique -->
-      <div id="compte-bloc-connexion">
+      <!-- Pas connecté : recevoir un lien magique (formulaire simple, sans onglets) -->
+      <div id="compte-bloc-connexion" class="modal-compte-simple">
         <p class="modal-sous-titre">Avec un compte, tes carnets sont sauvegardés en
-           ligne et se retrouvent sur tous tes appareils. Pas de mot de passe :
-           tu reçois un <strong>lien de connexion par e-mail</strong> (le compte se
-           crée tout seul à la première connexion).</p>
+           ligne et se retrouvent sur tous tes appareils. Tu peux te connecter
+           avec un <strong>lien envoyé par e-mail</strong> (le compte se crée
+           tout seul à la première connexion) ou avec un mot de passe si tu en
+           as défini un.</p>
         <label class="style-label">Adresse e-mail</label>
         <input id="compte-email" type="email" placeholder="toi@exemple.fr" autocomplete="email" />
+        <label class="style-label" for="compte-mdp-connexion">Mot de passe <span class="style-unite">(facultatif — laisse vide pour recevoir un lien)</span></label>
+        <input id="compte-mdp-connexion" type="password" autocomplete="current-password" placeholder="Optionnel" />
         <label class="style-switch">
           <input id="compte-rester" type="checkbox" checked />
           <span>Rester connecté sur cet appareil</span>
         </label>
-        <div class="modal-actions">
+        <div class="boutons-espaces">
           <button id="compte-lien" class="btn btn-accent" style="width:100%">
-            ✉️ Recevoir mon lien de connexion
+            ✉️ Recevoir un lien de connexion
+          </button>
+          <button id="compte-connexion-mdp" class="btn btn-ghost btn-petit" style="width:100%">
+            🔑 Me connecter avec mon mot de passe
           </button>
         </div>
       </div>
 
-      <!-- Connecté : pseudo, synchroniser, se déconnecter -->
-      <div id="compte-bloc-connecte" hidden>
-        <p class="modal-sous-titre">Connecté en tant que
-           <strong id="compte-email-affiche">—</strong>.
-           Tes carnets sont sauvegardés en ligne automatiquement.</p>
-        <label class="style-label">Ton pseudo <span class="style-unite">(unique, sert à ce que tes amis te retrouvent)</span></label>
-        <div class="compte-pseudo-ligne">
-          <span id="compte-pseudo-affiche" class="compte-pseudo-affiche">—</span>
-          <button id="compte-pseudo-modifier" class="btn btn-ghost btn-petit" type="button">Modifier</button>
-        </div>
-        <button id="compte-synchroniser" class="btn btn-accent btn-petit" style="width:100%">
-          🔄 Synchroniser maintenant
-        </button>
-        <button id="compte-deconnecter" class="btn btn-ghost btn-petit" style="width:100%">
-          Se déconnecter de cet appareil
-        </button>
-      </div>
+      <!-- Connecté : deux onglets (Profil / Compte) façon "Paramètres" -->
+      <div id="compte-bloc-connecte" class="modal-compte-panneaux" hidden>
 
-      <!-- Carnets archivés : rangés ici, hors de la vue courante. Ils restent
-           accessibles même sans compte (ils vivent sur l'appareil). -->
-      <div class="compte-archives-bloc">
-        <button id="compte-archives-toggle" class="btn btn-ghost btn-petit" hidden>
-          🗄️ Carnets archivés (<span id="compte-archives-nb">0</span>)
-        </button>
-        <div id="compte-archives" class="compte-archives" hidden></div>
+        <!-- Navigation à gauche -->
+        <nav class="modal-compte-onglets" role="tablist" aria-label="Sections des paramètres">
+          <button class="modal-compte-onglet actif" data-compte-onglet="profil" role="tab" aria-selected="true">
+            <span>Profil</span><span class="modal-compte-fleche">›</span>
+          </button>
+          <button class="modal-compte-onglet" data-compte-onglet="compte" role="tab" aria-selected="false">
+            <span>Compte</span><span class="modal-compte-fleche">›</span>
+          </button>
+        </nav>
+
+        <!-- Contenu à droite -->
+        <div class="modal-compte-contenu">
+
+          <!-- Onglet Profil -->
+          <section class="modal-compte-panneau" data-compte-panneau="profil">
+            <h3 class="modal-compte-titre">Profil</h3>
+
+            <div class="modal-compte-champ modal-compte-champ-photo">
+              <label class="modal-compte-label">Photo de profil</label>
+              <div class="modal-compte-controle">
+                <span id="compte-photo-apercu" class="compte-avatar compte-avatar-grand" aria-hidden="true">?</span>
+                <label for="compte-photo-input" class="btn btn-ghost btn-petit">Charger une photo</label>
+                <input id="compte-photo-input" type="file" accept="image/*" hidden />
+                <button id="compte-photo-retirer" class="btn btn-ghost btn-petit" type="button" hidden>Retirer</button>
+              </div>
+              <p class="style-aide">Redimensionnée à 256 px pour rester légère.</p>
+            </div>
+
+            <div class="modal-compte-champ">
+              <label class="modal-compte-label">Pseudo</label>
+              <div class="modal-compte-controle compte-pseudo-ligne">
+                <span id="compte-pseudo-affiche" class="compte-pseudo-affiche">—</span>
+                <button id="compte-pseudo-modifier" class="btn btn-ghost btn-petit" type="button">Modifier</button>
+              </div>
+              <p class="style-aide">Unique : sert à ce que tes amis te retrouvent (comme un @identifiant).</p>
+            </div>
+
+            <div class="modal-compte-champ">
+              <label class="modal-compte-label" for="compte-description">À propos</label>
+              <textarea id="compte-description" rows="3" maxlength="300" placeholder="Décris-toi en quelques mots"></textarea>
+            </div>
+
+            <div class="modal-compte-champ">
+              <label class="modal-compte-label" for="compte-ville">Ville</label>
+              <input id="compte-ville" type="text" maxlength="80" placeholder="Ex : Annecy, France" />
+            </div>
+
+            <div class="modal-compte-actions">
+              <button id="compte-profil-annuler" class="btn btn-ghost" type="button">Annuler</button>
+              <button id="compte-profil-enregistrer" class="btn btn-accent" type="button">Enregistrer les modifications</button>
+            </div>
+          </section>
+
+          <!-- Onglet Compte -->
+          <section class="modal-compte-panneau" data-compte-panneau="compte" hidden>
+            <h3 class="modal-compte-titre">Informations du compte</h3>
+            <div class="modal-compte-champ">
+              <label class="modal-compte-label">Adresse e-mail</label>
+              <div id="compte-email-affiche" class="modal-compte-lecture">—</div>
+            </div>
+
+            <h3 class="modal-compte-titre">Mot de passe</h3>
+            <p class="style-aide">Définis un mot de passe si tu veux pouvoir te connecter sans passer par le lien e-mail à chaque fois.</p>
+            <div class="modal-compte-champ">
+              <label class="modal-compte-label" for="compte-mdp">Nouveau mot de passe</label>
+              <input id="compte-mdp" type="password" autocomplete="new-password" placeholder="8 caractères minimum" />
+            </div>
+            <div class="modal-compte-champ">
+              <label class="modal-compte-label" for="compte-mdp-confirm">Confirmer</label>
+              <input id="compte-mdp-confirm" type="password" autocomplete="new-password" />
+            </div>
+            <button id="compte-mdp-enregistrer" class="btn btn-accent btn-petit">Enregistrer le mot de passe</button>
+
+            <h3 class="modal-compte-titre">Synchronisation</h3>
+            <button id="compte-synchroniser" class="btn btn-accent btn-petit" style="width:100%">
+              🔄 Synchroniser maintenant
+            </button>
+
+            <h3 class="modal-compte-titre">Session</h3>
+            <button id="compte-deconnecter" class="btn btn-ghost btn-petit" style="width:100%">
+              Se déconnecter de cet appareil
+            </button>
+
+            <!-- Carnets archivés : rangés ici, accessibles même sans compte -->
+            <div class="compte-archives-bloc">
+              <button id="compte-archives-toggle" class="btn btn-ghost btn-petit" hidden>
+                🗄️ Carnets archivés (<span id="compte-archives-nb">0</span>)
+              </button>
+              <div id="compte-archives" class="compte-archives" hidden></div>
+            </div>
+          </section>
+
+        </div>
       </div>
 
       <p id="compte-statut" class="gen-statut" hidden></p>
-
-      <div class="modal-actions">
-        <button id="compte-fermer" class="btn btn-ghost">Fermer</button>
-      </div>
     </div>
   </div>
 

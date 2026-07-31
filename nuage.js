@@ -87,13 +87,21 @@ function nettoyerPseudo(brut) {
 /** Charge mon profil depuis la table `profils` (ou null s'il n'existe pas). */
 async function chargerMonProfil() {
   if (!nuageConnecte()) { monProfil = null; return null; }
-  try {
-    const { data, error } = await sbClient.from("profils")
-      .select("id, pseudo, photo, description, est_public")
+  const essayer = async (colonnes) => {
+    return sbClient.from("profils")
+      .select(colonnes)
       .eq("id", sessionNuage.user.id)
       .maybeSingle();
-    if (error && error.code !== "PGRST116") throw error;
-    monProfil = data || null;
+  };
+  try {
+    // La colonne `ville` a été ajoutée après coup (voir supabase-setup-7-ville.sql).
+    // Si le SQL n'a pas encore été joué, on retente sans `ville` pour ne rien casser.
+    let res = await essayer("id, pseudo, photo, description, ville, est_public");
+    if (res.error && /column .*ville/i.test(res.error.message || "")) {
+      res = await essayer("id, pseudo, photo, description, est_public");
+    }
+    if (res.error && res.error.code !== "PGRST116") throw res.error;
+    monProfil = res.data || null;
     return monProfil;
   } catch (e) {
     // Table absente (SQL pas encore joué) : on n'a pas de profil, on continue
@@ -110,31 +118,42 @@ async function chargerMonProfil() {
  */
 async function enregistrerMonProfil(champs) {
   if (!nuageConnecte()) return { ok: false, raison: "Connecte-toi d'abord." };
-  const pseudo = (champs.pseudo || "").trim();
+  // Le pseudo peut être omis quand on met à jour photo / description / ville :
+  // on garde alors celui déjà enregistré.
+  const pseudo = (champs.pseudo != null ? champs.pseudo
+                  : (monProfil && monProfil.pseudo) || "").trim();
   if (!PSEUDO_MOTIF.test(pseudo)) {
-    return { ok: false, raison: "Ce pseudo n'a pas le bon format." };
+    return { ok: false, raison: "Il faut d'abord choisir un pseudo." };
   }
+  const val = (champ, defaut) => champs[champ] != null ? champs[champ]
+    : (monProfil && monProfil[champ]) || defaut;
   const ligne = {
     id: sessionNuage.user.id,
     pseudo,
-    photo: champs.photo || (monProfil && monProfil.photo) || "",
-    description: champs.description || (monProfil && monProfil.description) || "",
-    est_public: !!champs.est_public,
+    photo: val("photo", ""),
+    description: val("description", ""),
+    ville: val("ville", ""),
+    est_public: champs.est_public != null ? !!champs.est_public
+      : (monProfil ? !!monProfil.est_public : false),
   };
-  const { data, error } = await sbClient.from("profils").upsert(ligne).select().maybeSingle();
+  // Tente d'abord avec `ville` ; si la colonne n'existe pas encore (SQL 7 non
+  // joué), on retente sans, pour ne pas bloquer l'utilisateur.
+  let res = await sbClient.from("profils").upsert(ligne).select().maybeSingle();
+  if (res.error && /column .*ville/i.test(res.error.message || "")) {
+    const sansVille = { ...ligne }; delete sansVille.ville;
+    res = await sbClient.from("profils").upsert(sansVille).select().maybeSingle();
+  }
+  const { data, error } = res;
   if (error) {
-    // 23505 = violation d'unicité (pseudo déjà pris par quelqu'un d'autre).
     if (error.code === "23505") {
       return { ok: false, raison: `Le pseudo « ${pseudo} » est déjà pris — essaie une variante.` };
     }
-    // Contrainte de format côté DB (défense en profondeur).
     if (/pseudo_valide/.test(error.message || "")) {
       return { ok: false, raison: "Ce pseudo n'a pas le bon format." };
     }
     return { ok: false, raison: (error.message || "Impossible d'enregistrer le profil.") };
   }
   monProfil = data;
-  // Garder le pseudo local à jour aussi (mode hors ligne).
   try { localStorage.setItem(CLE_PSEUDO, pseudo); } catch (e) {}
   if (typeof majTitreCarteGlobale === "function") majTitreCarteGlobale();
   majCompteUI();
@@ -986,6 +1005,17 @@ function ouvrirModalCompte() {
     const p = monProfil && monProfil.pseudo;
     document.getElementById("compte-pseudo-affiche").textContent = p ? "@" + p : "(pas encore choisi)";
     document.getElementById("compte-pseudo-modifier").textContent = p ? "Modifier" : "Choisir";
+    // On revient toujours sur l'onglet Profil à l'ouverture, et on vide les
+    // champs mot de passe pour ne rien y laisser traîner.
+    activerOngletCompte("profil");
+    const mdp = document.getElementById("compte-mdp");
+    const mdpc = document.getElementById("compte-mdp-confirm");
+    if (mdp) mdp.value = "";
+    if (mdpc) mdpc.value = "";
+    remplirOngletProfil();
+  } else {
+    const mdpConn = document.getElementById("compte-mdp-connexion");
+    if (mdpConn) mdpConn.value = "";
   }
   try {
     document.getElementById("compte-rester").checked =
@@ -998,18 +1028,93 @@ function fermerModalCompte() {
   document.getElementById("modal-compte").hidden = true;
 }
 
+/** Nom affiché sur le bouton Compte (pseudo, sinon début d'e-mail). */
+function nomAfficheCompte() {
+  const p = lirePseudo();
+  if (p) return p;
+  if (nuageConnecte()) {
+    const mail = sessionNuage.user.email || "";
+    return mail.split("@")[0] || "Connecté";
+  }
+  return "Se connecter";
+}
+
+/** Dessine un avatar : photo si dispo, sinon la 1re lettre du nom. */
+function dessinerAvatar(el, source, nom) {
+  if (!el) return;
+  const photo = (source && source.photo) || (monProfil && monProfil.photo) || "";
+  if (photo) {
+    el.textContent = "";
+    el.style.backgroundImage = `url("${photo.replace(/"/g, '\\"')}")`;
+    el.style.background = `url("${photo.replace(/"/g, '\\"')}") center/cover no-repeat`;
+  } else {
+    el.style.backgroundImage = "";
+    el.style.background = "";
+    const lettre = (nom || "").trim().charAt(0).toUpperCase() || "?";
+    el.textContent = lettre;
+  }
+}
+
 /** Met à jour le bouton « Compte » de la barre du haut. */
 function majCompteUI() {
   const btn = document.getElementById("compte-btn");
   if (!btn) return;
+  const nomEl = document.getElementById("compte-btn-nom");
+  const avatarEl = document.getElementById("compte-btn-avatar");
   if (!nuageConfigure()) {
-    btn.textContent = "☁️ Compte";
+    if (nomEl) nomEl.textContent = "Compte";
+    if (avatarEl) { avatarEl.textContent = "☁"; avatarEl.style.background = ""; }
     return;
   }
-  btn.textContent = nuageConnecte()
-    ? "☁️ " + (lirePseudo() || sessionNuage.user.email || "Connecté")
-    : "☁️ Se connecter";
+  if (!nuageConnecte()) {
+    if (nomEl) nomEl.textContent = "Se connecter";
+    if (avatarEl) { avatarEl.textContent = "☁"; avatarEl.style.background = ""; }
+    return;
+  }
+  const nom = nomAfficheCompte();
+  if (nomEl) nomEl.textContent = nom;
+  dessinerAvatar(avatarEl, null, nom);
 }
+
+/* ---------- Indicateur « chargement en cours » sur un bouton ---------- */
+/**
+ * Passe un bouton en mode « chargement » : il devient inactif, montre un
+ * petit spinner et (facultatif) un libellé. Le bouton retrouve son état
+ * initial dès qu'on rappelle la fonction avec `actif = false`.
+ * Utiliser via `avecChargement(bouton, texte, promesse)` de préférence.
+ */
+function setBoutonChargement(bouton, actif, texte) {
+  if (!bouton) return;
+  if (actif) {
+    if (bouton.dataset.libelleOrigine == null) {
+      bouton.dataset.libelleOrigine = bouton.innerHTML;
+    }
+    bouton.disabled = true;
+    bouton.classList.add("btn-chargement");
+    bouton.setAttribute("aria-busy", "true");
+    const lib = texte || bouton.dataset.libelleChargement || "Chargement…";
+    bouton.innerHTML = `<span class="btn-spinner" aria-hidden="true"></span>${lib}`;
+  } else {
+    bouton.disabled = false;
+    bouton.classList.remove("btn-chargement");
+    bouton.removeAttribute("aria-busy");
+    if (bouton.dataset.libelleOrigine != null) {
+      bouton.innerHTML = bouton.dataset.libelleOrigine;
+      delete bouton.dataset.libelleOrigine;
+    }
+  }
+}
+
+/** Enrobe une promesse : montre l'état « chargement » sur le bouton pendant. */
+async function avecChargement(bouton, texte, promesse) {
+  setBoutonChargement(bouton, true, texte);
+  try { return await promesse; }
+  finally { setBoutonChargement(bouton, false); }
+}
+
+// Exposées pour ui.js et impression.js (autres boutons async).
+window.setBoutonChargement = setBoutonChargement;
+window.avecChargement = avecChargement;
 
 /** Envoie le lien magique de connexion. */
 async function envoyerLienMagique() {
@@ -1022,17 +1127,184 @@ async function envoyerLienMagique() {
   const rester = document.getElementById("compte-rester").checked;
   try { localStorage.setItem(CLE_EPHEMERE, rester ? "0" : "1"); } catch (e) {}
 
-  statutCompte("Envoi du lien de connexion…");
-  const { error } = await sbClient.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: window.location.origin + window.location.pathname },
-  });
-  if (error) {
-    statutCompte(traduireErreurAuth(error), true);
+  const bouton = document.getElementById("compte-lien");
+  await avecChargement(bouton, "Envoi du lien…", (async () => {
+    statutCompte("Envoi du lien de connexion…");
+    const { error } = await sbClient.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: window.location.origin + window.location.pathname },
+    });
+    if (error) { statutCompte(traduireErreurAuth(error), true); return; }
+    statutCompte("✓ C'est envoyé ! Ouvre ta boîte mail et clique sur le lien de " +
+      "connexion (regarde aussi les indésirables). Tu peux fermer cette fenêtre.");
+  })());
+}
+
+/** Connexion directe avec mot de passe (si l'utilisateur en a défini un). */
+async function connecterAvecMotDePasse() {
+  const email = document.getElementById("compte-email").value.trim();
+  const mdp = document.getElementById("compte-mdp-connexion").value;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    statutCompte("Écris une adresse e-mail valide.", true);
     return;
   }
-  statutCompte("✓ C'est envoyé ! Ouvre ta boîte mail et clique sur le lien de " +
-    "connexion (regarde aussi les indésirables). Tu peux fermer cette fenêtre.");
+  if (!mdp) {
+    statutCompte("Saisis ton mot de passe (ou utilise le bouton « Recevoir un lien »).", true);
+    return;
+  }
+  const rester = document.getElementById("compte-rester").checked;
+  try { localStorage.setItem(CLE_EPHEMERE, rester ? "0" : "1"); } catch (e) {}
+
+  const bouton = document.getElementById("compte-connexion-mdp");
+  await avecChargement(bouton, "Connexion…", (async () => {
+    statutCompte("Connexion…");
+    const { error } = await sbClient.auth.signInWithPassword({ email, password: mdp });
+    if (error) { statutCompte(traduireErreurAuth(error), true); return; }
+    // La session est captée par onAuthStateChange qui referme la fenêtre.
+    statutCompte("✓ Connecté.");
+  })());
+}
+
+/** Définit (ou change) le mot de passe du compte connecté. */
+async function enregistrerMotDePasse() {
+  if (!nuageConnecte()) {
+    statutCompte("Il faut être connecté pour définir un mot de passe.", true);
+    return;
+  }
+  const mdp = document.getElementById("compte-mdp").value;
+  const confirm = document.getElementById("compte-mdp-confirm").value;
+  if (mdp.length < 8) {
+    statutCompte("Le mot de passe doit faire au moins 8 caractères.", true);
+    return;
+  }
+  if (mdp !== confirm) {
+    statutCompte("Les deux mots de passe ne sont pas identiques.", true);
+    return;
+  }
+  const bouton = document.getElementById("compte-mdp-enregistrer");
+  await avecChargement(bouton, "Enregistrement…", (async () => {
+    statutCompte("Enregistrement du mot de passe…");
+    const { error } = await sbClient.auth.updateUser({ password: mdp });
+    if (error) { statutCompte(traduireErreurAuth(error), true); return; }
+    document.getElementById("compte-mdp").value = "";
+    document.getElementById("compte-mdp-confirm").value = "";
+    statutCompte("✓ Mot de passe enregistré. Tu peux maintenant l'utiliser pour te connecter.");
+  })());
+}
+
+/* ---------- Onglet Profil : photo / description / ville ---------- */
+
+// Photo choisie mais pas encore enregistrée (data:image/...).
+let photoProfilEnAttente = null;
+
+/** Redimensionne une image à 256 px max côté long et renvoie une data-URL JPEG. */
+function redimensionnerImage(fichier, cote = 256) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Lecture impossible"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Image invalide"));
+      img.onload = () => {
+        const ratio = Math.min(cote / img.width, cote / img.height, 1);
+        const w = Math.round(img.width * ratio);
+        const h = Math.round(img.height * ratio);
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", 0.85));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(fichier);
+  });
+}
+
+/** Pré-remplit l'onglet Profil avec les valeurs actuelles. */
+function remplirOngletProfil() {
+  photoProfilEnAttente = null;
+  const p = monProfil || {};
+  const desc = document.getElementById("compte-description");
+  const ville = document.getElementById("compte-ville");
+  if (desc) desc.value = p.description || "";
+  if (ville) ville.value = p.ville || "";
+  const apercu = document.getElementById("compte-photo-apercu");
+  dessinerAvatar(apercu, p, nomAfficheCompte());
+  const retirer = document.getElementById("compte-photo-retirer");
+  if (retirer) retirer.hidden = !p.photo;
+}
+
+/** L'utilisateur choisit une nouvelle photo. */
+async function choisirPhotoProfil(evt) {
+  const fichier = evt.target.files && evt.target.files[0];
+  evt.target.value = "";
+  if (!fichier) return;
+  if (!/^image\//.test(fichier.type)) {
+    statutCompte("Choisis un fichier image (jpg, png…).", true);
+    return;
+  }
+  try {
+    photoProfilEnAttente = await redimensionnerImage(fichier, 256);
+    const apercu = document.getElementById("compte-photo-apercu");
+    if (apercu) {
+      apercu.textContent = "";
+      apercu.style.background = `url("${photoProfilEnAttente}") center/cover no-repeat`;
+    }
+    const retirer = document.getElementById("compte-photo-retirer");
+    if (retirer) retirer.hidden = false;
+    statutCompte("Photo prête — clique sur « Enregistrer les modifications ».");
+  } catch (e) {
+    statutCompte("Impossible de lire cette image.", true);
+  }
+}
+
+/** Retire la photo actuelle (elle sera vidée à la sauvegarde). */
+function retirerPhotoProfil() {
+  photoProfilEnAttente = "";
+  const apercu = document.getElementById("compte-photo-apercu");
+  if (apercu) {
+    apercu.style.background = "";
+    apercu.textContent = (nomAfficheCompte() || "?").charAt(0).toUpperCase();
+  }
+  const retirer = document.getElementById("compte-photo-retirer");
+  if (retirer) retirer.hidden = true;
+  statutCompte("Photo retirée — clique sur « Enregistrer les modifications ».");
+}
+
+/** Enregistre description / ville / photo (le pseudo change dans sa propre fenêtre). */
+async function enregistrerProfilInfos() {
+  if (!nuageConnecte()) { statutCompte("Connecte-toi d'abord.", true); return; }
+  if (!(monProfil && monProfil.pseudo)) {
+    statutCompte("Choisis d'abord un pseudo (bouton « Modifier » à côté du pseudo).", true);
+    return;
+  }
+  const description = document.getElementById("compte-description").value.trim();
+  const ville = document.getElementById("compte-ville").value.trim();
+  const champs = { description, ville };
+  if (photoProfilEnAttente !== null) champs.photo = photoProfilEnAttente;
+
+  const bouton = document.getElementById("compte-profil-enregistrer");
+  await avecChargement(bouton, "Enregistrement…", (async () => {
+    const res = await enregistrerMonProfil(champs);
+    if (!res.ok) { statutCompte(res.raison, true); return; }
+    photoProfilEnAttente = null;
+    remplirOngletProfil();
+    statutCompte("✓ Profil enregistré.");
+  })());
+}
+
+/** Bascule l'onglet actif dans la fenêtre Compte (« Profil » / « Compte »). */
+function activerOngletCompte(nom) {
+  document.querySelectorAll(".modal-compte-onglet").forEach((b) => {
+    const actif = b.dataset.compteOnglet === nom;
+    b.classList.toggle("actif", actif);
+    b.setAttribute("aria-selected", actif ? "true" : "false");
+  });
+  document.querySelectorAll(".modal-compte-panneau").forEach((s) => {
+    s.hidden = s.dataset.comptePanneau !== nom;
+  });
+  const contenu = document.querySelector(".modal-compte-contenu");
+  if (contenu) contenu.scrollTop = 0;
 }
 
 /** Se déconnecte (les carnets restent sur l'appareil). */
@@ -1151,7 +1423,25 @@ function brancherCompteUI() {
   document.getElementById("compte-lien")
     .addEventListener("click", envoyerLienMagique);
   document.getElementById("compte-email")
-    .addEventListener("keydown", (e) => { if (e.key === "Enter") envoyerLienMagique(); });
+    .addEventListener("keydown", (e) => {
+      // Entrée envoie le lien si aucun mot de passe n'est saisi, sinon connecte.
+      if (e.key !== "Enter") return;
+      const champMdp = document.getElementById("compte-mdp-connexion");
+      if (champMdp && champMdp.value) connecterAvecMotDePasse();
+      else envoyerLienMagique();
+    });
+  document.getElementById("compte-mdp-connexion")
+    .addEventListener("keydown", (e) => { if (e.key === "Enter") connecterAvecMotDePasse(); });
+  document.getElementById("compte-connexion-mdp")
+    .addEventListener("click", connecterAvecMotDePasse);
+  document.getElementById("compte-mdp-enregistrer")
+    .addEventListener("click", enregistrerMotDePasse);
+  document.getElementById("compte-mdp-confirm")
+    .addEventListener("keydown", (e) => { if (e.key === "Enter") enregistrerMotDePasse(); });
+  // Bascule d'onglet Profil / Compte.
+  document.querySelectorAll(".modal-compte-onglet").forEach((b) => {
+    b.addEventListener("click", () => activerOngletCompte(b.dataset.compteOnglet));
+  });
   document.getElementById("compte-rester")
     .addEventListener("change", (e) => {
       try { localStorage.setItem(CLE_EPHEMERE, e.target.checked ? "0" : "1"); } catch (err) {}
@@ -1161,10 +1451,24 @@ function brancherCompteUI() {
   // Attention : surtout pas `addEventListener("click", synchroniserNuage)` —
   // l'événement serait passé comme carnet cible.
   document.getElementById("compte-synchroniser")
-    .addEventListener("click", () => synchroniserNuage());
+    .addEventListener("click", (e) => {
+      avecChargement(e.currentTarget, "Synchronisation…", synchroniserNuage());
+    });
   // Le bandeau « N carnets ne sont pas encore en ligne » lance la synchro.
   const attente = document.getElementById("accueil-attente");
-  if (attente) attente.addEventListener("click", () => synchroniserNuage());
+  if (attente) attente.addEventListener("click", (e) => {
+    avecChargement(e.currentTarget, "Synchronisation…", synchroniserNuage());
+  });
+
+  // Onglet Profil : photo / description / ville.
+  document.getElementById("compte-photo-input")
+    .addEventListener("change", choisirPhotoProfil);
+  document.getElementById("compte-photo-retirer")
+    .addEventListener("click", retirerPhotoProfil);
+  document.getElementById("compte-profil-enregistrer")
+    .addEventListener("click", enregistrerProfilInfos);
+  document.getElementById("compte-profil-annuler")
+    .addEventListener("click", () => { remplirOngletProfil(); statutCompte(""); });
   // Le pseudo est modifié par la fenêtre dédiée (validation + unicité).
   document.getElementById("compte-pseudo-modifier")
     .addEventListener("click", () => {

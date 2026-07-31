@@ -80,7 +80,11 @@ const Impression = (function () {
      ============================================================ */
 
   function ouvrir() {
-    if (typeof etat === "undefined" || etat.vue !== "editeur" || !etat.carnetActifId) {
+    // On accepte l'éditeur, mais aussi l'accueil quand un carnet est
+    // « focalisé » (le bouton Imprimer est alors visible dans la barre du haut).
+    const carnetOuvert = typeof etat !== "undefined" && !!etat.carnetActifId &&
+      (etat.vue === "editeur" || etat.carnetFocalise === etat.carnetActifId);
+    if (!carnetOuvert) {
       if (typeof toast === "function") toast("Ouvre d'abord un carnet.", true);
       return;
     }

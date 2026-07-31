@@ -15,6 +15,7 @@ const etat = {
   filtre: { du: "", au: "", pictos: null }, // filtre visualisation (pictos: null = tous)
   carnets: [],            // l'index de tous les carnets : [{id, nom, visible}]
   carnetActifId: 1,       // le carnet ouvert (le seul modifiable)
+  carnetFocalise: null,   // sur la carte globale : carnet mis en avant (souvenirs affichés, autres carnets masqués)
   fantomes: new Map(),    // carnets AFFICHÉS en plus en visualisation : id → {couche, souvenirs, trace, pictosPerso}
   coucheTrace: null,      // le groupe de calques qui contient la trace dessinée
   coucheZone: null,       // masque estompé autour de la zone du carnet (éditeur uniquement)
@@ -4458,7 +4459,7 @@ async function afficherFantome(id) {
       interactive: true,
     })
       .on("click", () => {
-        if (typeof zoomerSurCarnet === "function") zoomerSurCarnet(id);
+        if (typeof focaliserCarnet === "function") focaliserCarnet(id);
       })
       .addTo(couche);
   }

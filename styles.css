@@ -1456,6 +1456,229 @@ body:not(.mode-visualisation) .vecteur-interactif { touch-action: none; }
 }
 .modal-card input:focus { outline: none; border-color: var(--foret); }
 
+/* ---------- Bouton « Compte » de la barre du haut (avatar + nom) ---------- */
+.compte-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--ligne);
+  background: var(--carte-bg);
+  border-radius: 999px;
+  padding: 4px 12px 4px 4px;
+  font: inherit;
+  font-weight: 650;
+  color: var(--encre);
+  cursor: pointer;
+  line-height: 1;
+}
+.compte-btn:hover { background: rgba(47,59,52,0.05); }
+.compte-btn-nom {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compte-btn-fleche { color: var(--encre-douce); font-size: 12px; }
+
+/* Avatar circulaire (bouton du haut + fenêtre Paramètres) */
+.compte-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--foret, #2f6b52);
+  color: #fff;
+  font-weight: 800;
+  font-size: 13px;
+  text-transform: uppercase;
+  background-size: cover;
+  background-position: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.compte-avatar-grand { width: 64px; height: 64px; font-size: 26px; }
+
+/* ---------- Indicateur de chargement (spinner) sur un bouton ---------- */
+.btn-spinner {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: btn-spin 0.65s linear infinite;
+  vertical-align: -2px;
+  margin-right: 8px;
+}
+.btn-chargement { position: relative; cursor: progress !important; opacity: 0.85; }
+.btn-chargement[disabled] { cursor: progress !important; }
+@keyframes btn-spin { to { transform: rotate(360deg); } }
+
+/* ---------- Fenêtre « Paramètres » (Compte, façon deux panneaux) ---------- */
+.modal-compte-card {
+  max-width: 720px;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.modal-compte-tete {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--ligne);
+  background: var(--carte-bg);
+}
+.modal-compte-tete h2 { margin: 0; font-size: 20px; color: var(--foret-fonce); }
+.modal-fermer {
+  border: none;
+  background: rgba(47,59,52,0.08);
+  color: var(--foret-fonce);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  font-size: 15px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal-fermer:hover { background: rgba(47,59,52,0.16); }
+.modal-compte-message { padding: 14px 22px; margin: 0; }
+
+/* [hidden] doit toujours l'emporter sur les display: flex/block ci-dessous. */
+.modal-compte-simple[hidden],
+.modal-compte-panneaux[hidden],
+.modal-compte-panneau[hidden] { display: none !important; }
+
+/* Formulaire simple (pas connecté) */
+.modal-compte-simple { padding: 18px 22px 22px; }
+.modal-compte-simple .style-label { margin-top: 12px; }
+.modal-compte-simple .style-switch { margin-top: 10px; }
+.modal-compte-simple .boutons-espaces { margin-top: 14px; }
+
+/* Deux panneaux (connecté) */
+.modal-compte-panneaux {
+  display: flex;
+  min-height: 420px;
+  background: rgba(47,59,52,0.03);
+}
+.modal-compte-onglets {
+  width: 180px;
+  flex-shrink: 0;
+  padding: 18px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-right: 1px solid var(--ligne);
+}
+.modal-compte-onglet {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  font-weight: 650;
+  color: var(--encre);
+  cursor: pointer;
+  text-align: left;
+  border-left: 3px solid transparent;
+}
+.modal-compte-onglet:hover { background: rgba(47,59,52,0.06); }
+.modal-compte-onglet.actif {
+  background: var(--carte-bg);
+  color: var(--accent, var(--foret-fonce));
+  border-left-color: var(--accent, var(--foret-fonce));
+}
+.modal-compte-fleche { color: var(--encre-douce); font-size: 16px; }
+.modal-compte-onglet.actif .modal-compte-fleche { color: var(--accent, var(--foret-fonce)); }
+
+.modal-compte-contenu {
+  flex: 1;
+  min-width: 0;
+  padding: 20px 22px 22px;
+  overflow-y: auto;
+  background: var(--carte-bg);
+  max-height: 70vh;
+}
+.modal-compte-panneau[hidden] { display: none; }
+.modal-compte-titre {
+  margin: 0 0 4px;
+  font-size: 15px;
+  color: var(--foret-fonce);
+  border-bottom: 1px solid var(--ligne);
+  padding-bottom: 8px;
+}
+.modal-compte-titre + p,
+.modal-compte-titre + .modal-compte-champ { margin-top: 12px; }
+.modal-compte-panneau > * + .modal-compte-titre { margin-top: 22px; }
+
+.modal-compte-champ {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+}
+.modal-compte-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--encre);
+}
+.modal-compte-controle { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.modal-compte-lecture {
+  font-size: 14px;
+  color: var(--encre);
+  padding: 10px 12px;
+  background: rgba(47,59,52,0.04);
+  border: 1.5px solid var(--ligne);
+  border-radius: 10px;
+}
+.modal-compte-contenu input[type="password"],
+.modal-compte-contenu input[type="text"],
+.modal-compte-contenu input[type="email"],
+.modal-compte-contenu textarea {
+  width: 100%;
+  border: 1.5px solid var(--ligne);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 15px;
+  font-family: inherit;
+  resize: vertical;
+}
+.modal-compte-contenu input:focus,
+.modal-compte-contenu textarea:focus { outline: none; border-color: var(--foret); }
+.modal-compte-champ-photo .modal-compte-controle { gap: 14px; }
+.modal-compte-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--ligne);
+}
+
+@media (max-width: 640px) {
+  .modal-compte-card { max-width: 100%; }
+  .modal-compte-panneaux { flex-direction: column; min-height: 0; }
+  .modal-compte-onglets {
+    width: auto;
+    flex-direction: row;
+    border-right: none;
+    border-bottom: 1px solid var(--ligne);
+    padding: 10px;
+  }
+  .modal-compte-onglet { flex: 1; justify-content: center; }
+  .modal-compte-fleche { display: none; }
+  .modal-compte-contenu { max-height: 60vh; }
+}
+
 /* ---------- Fenêtre de conflit de synchronisation ---------- */
 .conflit-versions {
   display: flex;
@@ -2464,6 +2687,13 @@ body.page-impression .pin-wrap {
    disparaît quand on est dans l'autre. */
 body.vue-accueil .editeur-seule { display: none !important; }
 body.vue-editeur .accueil-seule { display: none !important; }
+
+/* Accueil « focalisé » sur un carnet : la barre du haut débloque les boutons
+   qui n'ont de sens que pour un carnet précis (Éditer, Partager, Imprimer,
+   Souvenirs). La sélectivité (3 classes) prime sur les règles de masquage
+   .editeur-seule et .visu-seule (2 classes). */
+body.vue-accueil.carnet-focalise .editeur-seule.focus-carnet-seule { display: inline-flex !important; }
+body.vue-accueil.carnet-focalise:not(.mode-visualisation) .visu-seule.focus-carnet-seule { display: inline-flex !important; }
 
 /* Carnet en CONSULTATION (Vizu) : on masque le rail d'édition pour laisser
    une carte plein cadre (schéma « Carte Vizu Carnet »). Les souvenirs et le

@@ -44,6 +44,10 @@ async function basculerVersAccueil(premierChargement) {
   fermerTiroir();
   fermerPanneau();
 
+  // Revenir à l'accueil = défocaliser (on repart sur la vue « tous les carnets »).
+  etat.carnetFocalise = null;
+  document.body.classList.remove("carnet-focalise");
+
   etat.vue = "accueil";
   document.body.classList.add("vue-accueil");
   document.body.classList.remove("vue-editeur");
@@ -73,6 +77,10 @@ async function basculerVersEditeur(id) {
     await ouvrirCarnet(id);         // sauvegarde l'ancien, charge le nouveau
   }
   definirMode(ouvrirPourConsulter ? "visualisation" : "edition");
+
+  // On quitte la carte globale : plus de « focus accueil ».
+  etat.carnetFocalise = null;
+  document.body.classList.remove("carnet-focalise");
 
   etat.vue = "editeur";
   document.body.classList.add("vue-editeur");
@@ -112,14 +120,20 @@ async function basculerVersEditeur(id) {
 
 /**
  * Montre ou cache les calques du carnet OUVERT. Sur la carte globale
- * (accueil), seul le tracé et le nom du carnet apparaissent — les épingles,
- * noms de souvenirs et décorations restent réservés à l'éditeur.
+ * (accueil), seul le tracé et le nom du carnet apparaissent — SAUF si ce
+ * carnet est « focalisé » depuis la liste : ses souvenirs et décorations
+ * apparaissent aussi.
  */
 let etiquetteCarnetActif = null;
 
 function definirVisibiliteCarnetActif(visible) {
   const carte = etat.carte;
   const accueil = etat.vue === "accueil";
+  const focalise = accueil && etat.carnetFocalise != null
+    && etat.carnetFocalise === etat.carnetActifId;
+  // Détails (épingles, étiquettes souvenirs, annotations) : dans l'éditeur,
+  // ou sur l'accueil quand ce carnet est focalisé.
+  const montrerDetails = visible && (!accueil || focalise);
 
   const basculer = (couche, montrer) => {
     if (!couche) return;
@@ -129,12 +143,12 @@ function definirVisibiliteCarnetActif(visible) {
 
   // Le tracé : visible partout (au style du carnet).
   basculer(etat.coucheTrace, visible);
-  // Les détails : seulement dans l'éditeur.
-  basculer(etat.grappe, visible && !accueil);
-  etat.souvenirs.forEach((s) => basculer(s.label, visible && !accueil));
-  etat.annotations.forEach((a) => basculer(a.marker, visible && !accueil));
+  basculer(etat.grappe, montrerDetails);
+  etat.souvenirs.forEach((s) => basculer(s.label, montrerDetails));
+  etat.annotations.forEach((a) => basculer(a.marker, montrerDetails));
 
   // Sur l'accueil : le nom du carnet ouvert, comme pour les autres carnets.
+  // (On garde l'étiquette même en focus, elle sert de repère sur la carte.)
   if (etiquetteCarnetActif) { etiquetteCarnetActif.remove(); etiquetteCarnetActif = null; }
   const fiche = carnetActif();
   if (visible && accueil && fiche) {
@@ -151,10 +165,63 @@ function definirVisibiliteCarnetActif(visible) {
       etiquetteCarnetActif = L.marker(centre, {
         icon: creerEtiquetteCarnet(fiche, etat.style),
       })
-        .on("click", () => zoomerSurCarnet(fiche.id))
+        .on("click", () => focaliserCarnet(fiche.id))
         .addTo(carte);
     }
   }
+}
+
+/**
+ * Sur la carte globale, met un carnet « en avant » : on zoome dessus, on
+ * masque les autres carnets, on affiche ses souvenirs et ses annotations,
+ * et la barre du haut débloque les boutons propres au carnet (Éditer,
+ * Partager, Imprimer, Souvenirs). Recliquer sur le même carnet le
+ * défocalise (retour à la carte globale complète).
+ */
+async function focaliserCarnet(id) {
+  if (etat.vue !== "accueil") return;
+  // Recliquer sur le carnet déjà focalisé : on défocalise.
+  if (etat.carnetFocalise === id) {
+    await defocaliserCarnet();
+    return;
+  }
+  // On charge le carnet demandé s'il n'est pas déjà l'actif (ouvrirCarnet
+  // sauvegarde l'ancien, vide les « fantômes » des autres carnets, puis
+  // charge le nouveau).
+  if (id !== etat.carnetActifId) {
+    await ouvrirCarnet(id);
+  } else {
+    // Même carnet déjà actif mais pas encore focalisé : on retire les
+    // autres carnets qui traînent sur la carte.
+    retirerTousFantomes();
+  }
+  // Mode consultation : les carnets partagés en lecture ne peuvent pas être
+  // édités (le bouton Éditer sera masqué par la CSS pour ceux-là plus tard,
+  // pour l'instant on se contente de rester en mode visualisation).
+  definirMode("visualisation");
+
+  etat.carnetFocalise = id;
+  document.body.classList.add("carnet-focalise");
+
+  // Affichage des détails du carnet focalisé + zoom sur son étendue.
+  definirVisibiliteCarnetActif(true);
+  renderAccueilListe();          // met à jour la carte « actif » dans la liste
+  zoomerSurCarnet(id);
+  setTimeout(() => etat.carte.invalidateSize(), 60);
+}
+
+/** Retour à la carte globale : tous les carnets réapparaissent. */
+async function defocaliserCarnet() {
+  if (etat.carnetFocalise == null) return;
+  etat.carnetFocalise = null;
+  document.body.classList.remove("carnet-focalise");
+  // On rebascule les détails du carnet actif en état « accueil » (masqués).
+  definirVisibiliteCarnetActif(true);
+  // On recharge les autres carnets qu'on avait mis de côté.
+  await afficherTousLesCarnets();
+  renderAccueilListe();
+  ajusterVueMonde();
+  setTimeout(() => etat.carte.invalidateSize(), 60);
 }
 
 /** À l'accueil : charge et affiche tous les autres carnets (lecture seule). */
@@ -332,11 +399,14 @@ function carnetVisibleAccueil(c) {
 /** Applique les filtres : à la liste ET aux carnets affichés sur la carte. */
 function appliquerFiltresAccueil() {
   if (etat.vue !== "accueil") return;
+  // En mode focalisé, on n'affiche que le carnet mis en avant : les autres
+  // restent masqués même s'ils passent les filtres.
+  const focalise = etat.carnetFocalise != null;
   etat.carnets.forEach((c) => {
     const visible = carnetVisibleAccueil(c);
     if (c.id === etat.carnetActifId) {
       definirVisibiliteCarnetActif(visible);
-    } else if (visible) {
+    } else if (visible && !focalise) {
       afficherFantome(c.id);
     } else {
       retirerFantome(c.id);
@@ -375,7 +445,7 @@ function renderAccueilListe() {
 
   visibles.forEach((c) => {
     const carte = document.createElement("div");
-    carte.className = "carnet-carte" + (c.id === etat.carnetActifId ? " actif" : "");
+    carte.className = "carnet-carte" + (c.id === etat.carnetFocalise ? " actif" : "");
     carte.setAttribute("role", "button");
     carte.tabIndex = 0;
 
@@ -434,21 +504,10 @@ function renderAccueilListe() {
       carte.appendChild(desc);
     }
 
-    const actions = document.createElement("div");
-    actions.className = "carnet-carte-actions";
-    const editer = document.createElement("button");
-    editer.className = "btn btn-accent btn-petit";
-    editer.textContent = (c.partage && c.partage.droit !== "edition") ? "👁 Ouvrir" : "✏️ Éditer";
-    editer.addEventListener("click", (e) => {
-      e.stopPropagation();
-      basculerVersEditeur(c.id);
-    });
-    actions.appendChild(editer);
-    // (Dupliquer et archiver se font depuis l'onglet « Carnet » du carnet ouvert.)
-    carte.appendChild(actions);
-
-    // Clic sur la carte (hors boutons) : zoom sur ce carnet sur la carte.
-    carte.addEventListener("click", () => zoomerSurCarnet(c.id));
+    // Clic sur la carte : focalise ce carnet sur la carte globale
+    // (zoom, masque les autres, affiche souvenirs + boutons Éditer/Partager…).
+    // Un second clic sur le même carnet revient à la carte globale complète.
+    carte.addEventListener("click", () => focaliserCarnet(c.id));
     liste.appendChild(carte);
   });
 
@@ -2251,9 +2310,13 @@ function brancherUI() {
     .addEventListener("click", () => basculerVersAccueil());
   document.getElementById("editeur-identite")
     .addEventListener("click", () => { definirMode("edition"); ouvrirOnglet("carnets"); });
-  // Bascule Vizu (consultation) ⇄ Édition depuis la barre du haut.
+  // « Éditer » : passe en mode édition. Depuis l'accueil focalisé, on quitte
+  // aussi la carte globale pour entrer dans l'éditeur (rail + tiroir).
   document.getElementById("btn-editer")
-    .addEventListener("click", () => definirMode("edition"));
+    .addEventListener("click", () => {
+      if (etat.vue === "accueil") basculerVersEditeur();
+      else definirMode("edition");
+    });
   document.getElementById("btn-vizu")
     .addEventListener("click", () => { fermerTiroir(); definirMode("visualisation"); });
   // Partager le carnet (ouvre la section « Partage » qui liste aussi les accès).
