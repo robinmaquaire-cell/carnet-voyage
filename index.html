@@ -654,7 +654,38 @@
            (la synchro se déclenche automatiquement — c'est une simple info). -->
       <div id="accueil-attente" class="accueil-attente" hidden
            title="La synchro se fait automatiquement en arrière-plan."></div>
-      <div id="accueil-liste" class="accueil-liste"></div>
+
+      <!-- Trois volets repliables (accordéon).
+           - « En ligne » : mes carnets en ligne (avec ou sans copie hors ligne).
+           - « Créés hors ligne » : carnets locaux jamais synchronisés.
+           - « Partagés avec moi » : filtrables par pseudo de l'auteur. -->
+      <div id="accueil-groupes" class="accueil-groupes">
+        <details id="accueil-groupe-en-ligne" class="accueil-groupe" open>
+          <summary>
+            <span class="accueil-groupe-titre">☁️ En ligne</span>
+            <span class="accueil-groupe-nb" data-groupe-nb="en-ligne">0</span>
+          </summary>
+          <div class="accueil-liste" data-groupe-liste="en-ligne"></div>
+        </details>
+
+        <details id="accueil-groupe-local" class="accueil-groupe">
+          <summary>
+            <span class="accueil-groupe-titre">📱 Créés hors ligne</span>
+            <span class="accueil-groupe-nb" data-groupe-nb="local">0</span>
+          </summary>
+          <div class="accueil-liste" data-groupe-liste="local"></div>
+        </details>
+
+        <details id="accueil-groupe-partages" class="accueil-groupe">
+          <summary>
+            <span class="accueil-groupe-titre">🤝 Partagés avec moi</span>
+            <span class="accueil-groupe-nb" data-groupe-nb="partages">0</span>
+          </summary>
+          <input id="accueil-partages-filtre" class="style-input accueil-partages-filtre"
+                 type="search" placeholder="🔎 Filtrer par pseudo de l'auteur…" />
+          <div class="accueil-liste" data-groupe-liste="partages"></div>
+        </details>
+      </div>
       <div class="accueil-pied">
         <button id="accueil-nouveau" class="btn btn-accent btn-petit" style="flex:1">
           + Nouveau carnet

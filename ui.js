@@ -422,28 +422,101 @@ function libellePlageDates(c) {
   return `${formaterDate(c.du)} → ${formaterDate(c.au)}`;
 }
 
+// Cache des profils des auteurs de carnets partagés avec moi
+// (user_id → { pseudo, photo, description, ville }). Rempli à la volée.
+const auteursPartagesCache = new Map();
+// Filtre "par pseudo de l'auteur" pour le volet Partagés avec moi.
+let filtrePartageAuteur = "";
+
+/** Charge (une fois) le profil des auteurs qui ont partagé un carnet avec moi. */
+async function chargerAuteursPartages() {
+  if (typeof sbClient === "undefined" || !sbClient) return;
+  const ids = [...new Set(etat.carnets
+    .filter((c) => c.partage && c.partage.proprietaire)
+    .map((c) => c.partage.proprietaire)
+    .filter((id) => !auteursPartagesCache.has(id)))];
+  if (ids.length === 0) return;
+  try {
+    const { data } = await sbClient.from("profils")
+      .select("id, pseudo, photo, description, ville")
+      .in("id", ids);
+    (data || []).forEach((p) => auteursPartagesCache.set(p.id, p));
+    if (data && data.length) renderAccueilListe();
+  } catch (e) { /* silencieux */ }
+}
+
+/** Range un carnet dans l'un des trois volets. */
+function groupeAccueilDuCarnet(c) {
+  if (c.partage) return "partages";
+  // "En ligne" = a deja ete synchronise au moins une fois (donc a une trace
+  // dans le nuage). "Local" = jamais monte en ligne (pas de syncLe).
+  if (c.syncLe) return "en-ligne";
+  return "local";
+}
+
+/** Un carnet partage passe-t-il le filtre "par pseudo de l'auteur" ? */
+function partageCorrespondFiltre(c) {
+  const q = (filtrePartageAuteur || "").trim().toLowerCase();
+  if (!q) return true;
+  const auteur = c.partage && auteursPartagesCache.get(c.partage.proprietaire);
+  const pseudo = (auteur && auteur.pseudo) || "";
+  return pseudo.toLowerCase().includes(q);
+}
+
 /** (Re)construit la liste des cartes de carnets sur l'accueil. */
 function renderAccueilListe() {
-  const liste = document.getElementById("accueil-liste");
-  liste.innerHTML = "";
+  const conteneurs = {
+    "en-ligne": document.querySelector('[data-groupe-liste="en-ligne"]'),
+    "local":    document.querySelector('[data-groupe-liste="local"]'),
+    "partages": document.querySelector('[data-groupe-liste="partages"]'),
+  };
+  Object.values(conteneurs).forEach((c) => { if (c) c.innerHTML = ""; });
   const visibles = etat.carnets.filter(carnetVisibleAccueil);
+  const partagesVisibles = visibles.filter((c) => c.partage && partageCorrespondFiltre(c));
+  const nonPartages = visibles.filter((c) => !c.partage);
+  const compteurs = { "en-ligne": 0, "local": 0, "partages": partagesVisibles.length };
+  nonPartages.forEach((c) => { compteurs[groupeAccueilDuCarnet(c)]++; });
+  // Badges de compte de chaque volet.
+  Object.entries(compteurs).forEach(([k, n]) => {
+    const b = document.querySelector(`[data-groupe-nb="${k}"]`);
+    if (b) b.textContent = n;
+  });
 
   document.getElementById("accueil-compte").textContent =
     visibles.length === etat.carnets.length
       ? `(${etat.carnets.length})`
       : `(${visibles.length} / ${etat.carnets.length})`;
 
+  const contenuPartages = partagesVisibles;
   if (visibles.length === 0) {
-    const p = document.createElement("p");
-    p.className = "galerie-vide";
-    p.textContent = etat.carnets.length === 0
-      ? "Aucun carnet pour l'instant : charge un GPX pour créer le premier !"
-      : "Aucun carnet ne correspond aux filtres.";
-    liste.appendChild(p);
+    // Un seul message discret dans le premier volet.
+    if (conteneurs["en-ligne"]) {
+      const p = document.createElement("p");
+      p.className = "galerie-vide";
+      p.textContent = etat.carnets.length === 0
+        ? "Aucun carnet pour l'instant : crée-en un ou connecte-toi pour retrouver les tiens."
+        : "Aucun carnet ne correspond aux filtres.";
+      conteneurs["en-ligne"].appendChild(p);
+    }
+    renderAccueilArchives();
     return;
   }
 
-  visibles.forEach((c) => {
+  // Placeholders "vide" par volet.
+  const messagesVides = {
+    "en-ligne": "Aucun carnet en ligne.",
+    "local":    "Aucun carnet créé hors ligne.",
+    "partages": filtrePartageAuteur
+      ? `Personne ne correspond à « ${filtrePartageAuteur} ».`
+      : "Aucun carnet partagé avec toi.",
+  };
+
+  const aRendre = [
+    ...nonPartages,
+    ...contenuPartages,
+  ];
+
+  aRendre.forEach((c) => {
     const carte = document.createElement("div");
     carte.className = "carnet-carte" + (c.id === etat.carnetFocalise ? " actif" : "");
     carte.setAttribute("role", "button");
@@ -524,12 +597,39 @@ function renderAccueilListe() {
       carte.appendChild(hors);
     }
 
+    // Pour les carnets partagés : afficher le pseudo de l'auteur si connu.
+    if (c.partage) {
+      const auteur = auteursPartagesCache.get(c.partage.proprietaire);
+      const par = document.createElement("div");
+      par.className = "carnet-carte-dates";
+      par.textContent = auteur && auteur.pseudo
+        ? `par @${auteur.pseudo}`
+        : "par un autre utilisateur";
+      titres.appendChild(par);
+    }
+
     // Clic sur la carte : focalise ce carnet sur la carte globale
     // (zoom, masque les autres, affiche souvenirs + boutons Éditer/Partager…).
     // Un second clic sur le même carnet revient à la carte globale complète.
     carte.addEventListener("click", () => focaliserCarnet(c.id));
-    liste.appendChild(carte);
+    const cible = conteneurs[groupeAccueilDuCarnet(c)];
+    if (cible) cible.appendChild(carte);
   });
+
+  // Placeholder « vide » dans chaque volet qui n'a rien recu.
+  Object.entries(conteneurs).forEach(([k, cont]) => {
+    if (!cont || cont.children.length > 0) return;
+    const p = document.createElement("p");
+    p.className = "galerie-vide";
+    p.textContent = messagesVides[k];
+    cont.appendChild(p);
+  });
+
+  // On peuple le cache des pseudos d'auteurs partages en tache de fond
+  // (rendra la liste avec les vrais pseudos au tour suivant).
+  if (etat.carnets.some((c) => c.partage && !auteursPartagesCache.has(c.partage.proprietaire))) {
+    chargerAuteursPartages();
+  }
 
   renderAccueilArchives();
 }
@@ -2431,6 +2531,17 @@ function brancherUI() {
       document.getElementById("accueil-au").value = "";
       appliquerFiltresAccueil();
     });
+  // Filtre du volet « Partagés avec moi » : par pseudo de l'auteur.
+  const filtrePartage = document.getElementById("accueil-partages-filtre");
+  if (filtrePartage) {
+    filtrePartage.addEventListener("input", (e) => {
+      filtrePartageAuteur = e.target.value || "";
+      renderAccueilListe();
+      // Ouvre automatiquement le volet quand on tape dedans.
+      const det = document.getElementById("accueil-groupe-partages");
+      if (det) det.open = true;
+    });
+  }
 
   /* --- Accueil : nouveau carnet, recherche repliée, style de la carte --- */
   document.getElementById("accueil-nouveau")

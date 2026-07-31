@@ -3329,6 +3329,63 @@ body.vue-editeur.mode-visualisation .rail { display: none !important; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* ---------- Trois volets (accordéon) sur la liste des carnets ---------- */
+.accueil-groupes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 6px;
+}
+.accueil-groupe { border-top: 1px solid var(--ligne); }
+.accueil-groupe:first-child { border-top: none; }
+.accueil-groupe > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 8px;
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--foret-fonce, #10302C);
+  list-style: none;
+  user-select: none;
+}
+.accueil-groupe > summary::-webkit-details-marker { display: none; }
+.accueil-groupe > summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 1em;
+  color: var(--encre-douce, #6a746e);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+.accueil-groupe[open] > summary::before { transform: rotate(90deg); }
+.accueil-groupe-titre { flex: 1; }
+.accueil-groupe-nb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  padding: 0 7px;
+  background: rgba(47,59,52,0.08);
+  color: var(--encre-douce, #6a746e);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+.accueil-partages-filtre {
+  margin: 0 8px 6px;
+  width: calc(100% - 16px);
+  font-size: 13px;
+}
+.accueil-groupe .accueil-liste { padding: 0 6px 6px; }
+.accueil-groupe .accueil-liste .galerie-vide {
+  padding: 8px 12px;
+  color: var(--encre-douce);
+  font-style: italic;
+  font-size: 13px;
+}
+
 /* Bouton « Sauvegarder hors ligne » / « Disponible hors ligne » sur chaque carte. */
 .carnet-carte-horsligne {
   display: inline-flex;
