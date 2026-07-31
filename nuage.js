@@ -600,6 +600,52 @@ async function descendreCarnetDepuisNuage(local, r, partage) {
   }
 }
 
+/**
+ * Bascule un carnet en "sauvegarde hors ligne" : télécharge son contenu et
+ * marque le flag horsLigne=true. Ou retire cette sauvegarde : efface le
+ * contenu local et remet horsLigne=false (le carnet reste visible : il vit
+ * en ligne, il faudra juste une connexion pour l'ouvrir à nouveau).
+ */
+async function basculerHorsLigne(c) {
+  if (!c) return;
+  if (!nuageConnecte()) {
+    toast("Connecte-toi pour changer la sauvegarde hors ligne.", true);
+    return;
+  }
+  if (c.horsLigne) {
+    // Retirer de l'appareil. On ne touche pas au carnet ouvert : sinon on
+    // perdrait la version en mémoire (potentiellement modifiée non poussée).
+    if (c.id === etat.carnetActifId) {
+      toast("Ferme d'abord ce carnet (retour à la carte globale) pour retirer sa sauvegarde hors ligne.", true);
+      return;
+    }
+    try { await dbEffacerCle("carnet-" + c.id); } catch (e) {}
+    c.horsLigne = false;
+    await sauverIndexCarnets();
+    if (typeof renderCarnets === "function") renderCarnets();
+    toast(`« ${c.nom} » : sauvegarde hors ligne retirée.`);
+    return;
+  }
+  // Ajouter : on télécharge maintenant.
+  toast(`Téléchargement de « ${c.nom} »…`);
+  try {
+    const donnees = await telechargerCarnetResolu(c);
+    if (!carnetADuContenu(donnees)) {
+      // Rien de significatif en ligne : on marque quand même hors ligne
+      // (l'utilisateur pourra le modifier hors connexion à son ouverture).
+    } else {
+      await dbSauverCle("carnet-" + c.id, donnees);
+    }
+    c.horsLigne = true;
+    marquerCarnetSynchronise(c);
+    await sauverIndexCarnets();
+    if (typeof renderCarnets === "function") renderCarnets();
+    toast(`✓ « ${c.nom} » est maintenant disponible hors ligne.`);
+  } catch (e) {
+    toast("Le téléchargement a échoué — réessaie plus tard.", true);
+  }
+}
+
 /** Synchronise UN seul carnet (bouton « Synchroniser ce carnet »). */
 async function synchroniserCarnet(c) {
   if (!c) return;
@@ -683,11 +729,13 @@ async function synchroniserNuage(cible) {
             formatZone: r.format_zone || "",
             orientationZone: r.orientation_zone === "paysage" ? "paysage" : "portrait",
             statut: r.statut === "archive" ? "archive" : "actif",
+            // Nouveau modele : les carnets cloud ne sont plus telecharges
+            // automatiquement. Ils apparaissent dans la liste, le contenu
+            // arrivera a l'ouverture (ou via « Sauvegarder hors ligne »).
+            horsLigne: false,
             partage,
           };
           etat.carnets.push(entree);
-          const donnees = await telechargerCarnetResolu(entree).catch(() => null);
-          if (carnetADuContenu(donnees)) await dbSauverCle("carnet-" + id, donnees);
           marquerCarnetSynchronise(entree);
           recus++;
           continue;
@@ -711,16 +759,24 @@ async function synchroniserNuage(cible) {
           // On ne touche à rien, l'utilisateur tranchera.
           conflits.push({ uuid: r.uuid, id: local.id, r, partage });
         } else if (dateDistante > dateLocale) {
-          // Le nuage est plus récent. Dernier garde-fou avant d'écraser : si la
-          // version locale contient PLUS de souvenirs, la date ment
-          // probablement (c'est le bug des souvenirs disparus) — on demande.
-          const avant = await lireContenuLocal(local.id);
-          const apres = await telechargerCarnetNuage(local).catch(() => null);
-          if (peutEcrireNuage(local) && risqueDePerte(avant, apres)) {
-            conflits.push({ uuid: r.uuid, id: local.id, r, partage });
+          // Le nuage est plus récent. Deux cas :
+          // - Carnet marqué « hors ligne » : on télécharge la nouvelle version
+          //   dans IndexedDB pour rester utilisable sans réseau, comme avant.
+          // - Sinon : on met juste les métadonnées à jour et on efface tout
+          //   contenu local qui traînerait (il sera retéléchargé à l'ouverture).
+          if (local.horsLigne || local.id === etat.carnetActifId) {
+            const avant = await lireContenuLocal(local.id);
+            const apres = await telechargerCarnetNuage(local).catch(() => null);
+            if (peutEcrireNuage(local) && risqueDePerte(avant, apres)) {
+              conflits.push({ uuid: r.uuid, id: local.id, r, partage });
+            } else {
+              await descendreCarnetDepuisNuage(local, r, partage);
+              recus++;
+            }
           } else {
-            await descendreCarnetDepuisNuage(local, r, partage);
-            recus++;
+            appliquerFicheDistante(local, r, partage);
+            try { await dbEffacerCle("carnet-" + local.id); } catch (e) {}
+            marquerCarnetSynchronise(local);
           }
         } else {
           // Plus récent ici : la phase 2 l'enverra.

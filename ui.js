@@ -504,6 +504,26 @@ function renderAccueilListe() {
       carte.appendChild(desc);
     }
 
+    // Bascule « Sauvegarder hors ligne » : télécharge le contenu du carnet
+    // en local (utile pour un voyage sans connexion), ou le retire.
+    if (typeof basculerHorsLigne === "function"
+        && typeof nuageConnecte === "function" && nuageConnecte()) {
+      const hors = document.createElement("button");
+      hors.className = "carnet-carte-horsligne" + (c.horsLigne ? " actif" : "");
+      hors.type = "button";
+      hors.textContent = c.horsLigne
+        ? "💾 Disponible hors ligne"
+        : "💾 Sauvegarder hors ligne";
+      hors.title = c.horsLigne
+        ? "Cliquer pour retirer la sauvegarde locale (le carnet reste en ligne)."
+        : "Télécharger ce carnet sur cet appareil pour pouvoir l'ouvrir sans connexion.";
+      hors.addEventListener("click", (e) => {
+        e.stopPropagation();
+        basculerHorsLigne(c);
+      });
+      carte.appendChild(hors);
+    }
+
     // Clic sur la carte : focalise ce carnet sur la carte globale
     // (zoom, masque les autres, affiche souvenirs + boutons Éditer/Partager…).
     // Un second clic sur le même carnet revient à la carte globale complète.

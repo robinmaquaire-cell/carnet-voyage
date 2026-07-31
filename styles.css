@@ -3268,6 +3268,30 @@ body.vue-editeur.mode-visualisation .rail { display: none !important; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Bouton « Sauvegarder hors ligne » / « Disponible hors ligne » sur chaque carte. */
+.carnet-carte-horsligne {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 5px 10px;
+  border: 1px dashed rgba(47,59,52,0.3);
+  border-radius: 999px;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--encre-douce, #6a746e);
+  cursor: pointer;
+}
+.carnet-carte-horsligne:hover { background: rgba(47,59,52,0.04); }
+.carnet-carte-horsligne.actif {
+  border-style: solid;
+  border-color: rgba(46, 158, 107, 0.5);
+  background: rgba(46, 158, 107, 0.1);
+  color: var(--ok, #2e9e6b);
+}
+
 .carnet-carte-desc {
   margin: 8px 0 0;
   font-size: 12.5px;

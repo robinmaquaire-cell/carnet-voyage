@@ -4106,6 +4106,9 @@ async function sauverIndexCarnets() {
       // Statut : 'actif' (par défaut) ou 'archive'. Un carnet supprimé n'est
       // plus dans la liste (le nuage en garde une trace 'supprime').
       statut: c.statut === "archive" ? "archive" : "actif",
+      // « Sauvegarde hors ligne » explicite : le contenu du carnet est
+      // conservé en local et reste modifiable sans connexion.
+      horsLigne: c.horsLigne === true,
       // Carnet partagé AVEC MOI : qui en est propriétaire, et mon droit.
       partage: c.partage ? { proprietaire: c.partage.proprietaire, droit: c.partage.droit } : null,
     })),
@@ -4164,6 +4167,10 @@ async function demarrerCarnets() {
       formatZone: typeof c.formatZone === "string" ? c.formatZone : "",
       orientationZone: c.orientationZone === "paysage" ? "paysage" : "portrait",
       statut: c.statut === "archive" ? "archive" : "actif",
+      // Ce carnet a-t-il ete explicitement "sauvegarde hors ligne" par
+      // l'utilisateur ? Si non, son contenu ne reste pas en local (on le
+      // retelecharge a la demande a chaque ouverture).
+      horsLigne: c.horsLigne === true,
       partage: (c.partage && typeof c.partage.proprietaire === "string")
         ? { proprietaire: c.partage.proprietaire, droit: c.partage.droit === "edition" ? "edition" : "lecture" }
         : null,
@@ -4249,13 +4256,31 @@ async function ouvrirCarnet(id) {
   retirerTousFantomes();
 
   etat.carnetActifId = id;
+  const fiche = etat.carnets.find((c) => c.id === id);
   let donnees = null;
   try { donnees = await dbChargerCle("carnet-" + id); } catch (e) {}
+
+  // Pas de contenu en local ? Si on est connecté, on télécharge depuis le
+  // nuage à la volée (nouveau modèle : les carnets ne sont plus tous
+  // pré-téléchargés — l'utilisateur doit explicitement les « sauvegarder
+  // hors ligne » pour qu'ils restent en local).
+  if (!donnees && fiche && fiche.uuid && typeof telechargerCarnetResolu === "function"
+      && typeof nuageConnecte === "function" && nuageConnecte()) {
+    try {
+      donnees = await telechargerCarnetResolu(fiche);
+      // Si le carnet n'est pas marqué « hors ligne », on ne l'écrit pas dans
+      // IndexedDB : il vit en mémoire seulement pendant qu'on l'édite.
+      // sauvegarderMaintenant() persistera les MODIFICATIONS (indispensable
+      // pour le pousser en ligne ensuite).
+    } catch (e) {
+      toast("Ce carnet n'a pas pu être téléchargé — vérifie la connexion.", true);
+    }
+  }
 
   if (donnees) {
     restaurerCarnet(donnees);
   } else {
-    viderCarnetCourant(); // carnet encore vide : écran d'accueil
+    viderCarnetCourant(); // carnet encore vide (ou téléchargement échoué)
   }
   definirMode("edition"); // on repasse en édition sur le carnet ouvert
   await sauverIndexCarnets();
