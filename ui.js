@@ -167,15 +167,14 @@ function definirVisibiliteCarnetActif(visible) {
       centre = [fiche.point.lat, fiche.point.lng];
     }
     if (centre) {
-      const idx = typeof reserverPositionEtiquette === "function"
-        ? reserverPositionEtiquette(centre) : 0;
       etiquetteCarnetActif = L.marker(centre, {
-        icon: creerEtiquetteCarnet(fiche, etat.style, idx),
+        icon: creerEtiquetteCarnet(fiche, etat.style),
       })
         .on("click", () => focaliserCarnet(fiche.id))
         .addTo(carte);
     }
   }
+  if (typeof arrangerEtiquettesCarnets === "function") arrangerEtiquettesCarnets();
 }
 
 /**
@@ -210,6 +209,12 @@ async function focaliserCarnet(id) {
   etat.carnetFocalise = id;
   document.body.classList.add("carnet-focalise");
 
+  // Filet de sécurité : quelqu'un a pu recréer des fantômes entre-temps
+  // (renderCarnets, sync entrante…). On les retire une bonne fois, puis la
+  // garde de afficherFantome (voir app.js) empêche toute réapparition tant
+  // que carnetFocalise est actif.
+  retirerTousFantomes();
+
   // Affichage des détails du carnet focalisé + zoom sur son étendue.
   definirVisibiliteCarnetActif(true);
   majClasseLectureSeule();
@@ -240,6 +245,7 @@ async function afficherTousLesCarnets() {
     if ((c.statut || "actif") !== "actif") continue; // les archivés ne s'affichent pas
     try { await afficherFantome(c.id); } catch (e) { /* carnet illisible */ }
   }
+  if (typeof arrangerEtiquettesCarnets === "function") arrangerEtiquettesCarnets();
 }
 
 /** Recadre la carte pour voir tous les carnets affichés. */

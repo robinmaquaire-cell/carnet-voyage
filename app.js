@@ -691,6 +691,9 @@ function initCarte() {
   } else {
     etat.grappe = L.layerGroup();
   }
+  // Les étiquettes de noms de carnets sur la carte globale peuvent se
+  // chevaucher quand on zoome/dézoome : on ré-arrange après chaque geste.
+  etat.carte.on("zoomend moveend", arrangerEtiquettesCarnets);
   etat.grappe.addTo(etat.carte);
 
   // Clic sur la carte : selon le mode en cours, on pose un élément de
@@ -4466,8 +4469,16 @@ async function basculerVisibiliteCarnet(carnet, visible) {
 /** Charge et affiche un carnet en plus sur la carte (lecture seule). */
 async function afficherFantome(id) {
   if (etat.fantomes.has(id) || id === etat.carnetActifId) return;
+  // Garde du mode focus : quand un carnet est mis en avant à l'accueil, aucun
+  // AUTRE carnet ne doit apparaître sur la carte, quel que soit le chemin qui
+  // essaie de le rajouter (init, sync entrante, renderCarnets…).
+  if (etat.carnetFocalise != null && etat.carnetFocalise !== id) return;
   let donnees = null;
   try { donnees = await dbChargerCle("carnet-" + id); } catch (e) {}
+  // Deuxième vérification après l'await : le focus a pu être activé pendant
+  // qu'on attendait dbChargerCle. Sans cette relecture, les fantômes lancés
+  // avant se glissent quand même sur la carte.
+  if (etat.carnetFocalise != null && etat.carnetFocalise !== id) return;
   const fiche = etat.carnets.find((c) => c.id === id);
   // Un carnet sans trace peut quand même être situé d'un point : on montre
   // alors son nom à cet endroit. Sans trace NI point, il n'y a rien à afficher.
@@ -4502,9 +4513,8 @@ async function afficherFantome(id) {
     : (zoneFiche ? bornesZone(zoneFiche).getCenter()
       : (fiche && fiche.point ? L.latLng(fiche.point.lat, fiche.point.lng) : null));
   if (fiche && centre) {
-    const idx = reserverPositionEtiquette(centre);
     L.marker(centre, {
-      icon: creerEtiquetteCarnet(fiche, style, idx),
+      icon: creerEtiquetteCarnet(fiche, style),
       interactive: true,
     })
       .on("click", () => {
@@ -4515,33 +4525,30 @@ async function afficherFantome(id) {
 
   const fantome = { couche, souvenirs: [], trace: aTrace ? donnees.trace : null, pictosPerso: [] };
   etat.fantomes.set(id, fantome);
+  // Re-arranger les étiquettes maintenant qu'une nouvelle est en jeu.
+  arrangerEtiquettesCarnets();
 }
 
-/* Pour éviter que les étiquettes de carnets situés au même endroit se
- * superposent, on compte combien d'étiquettes existent déjà à cette position
- * et on décale la nouvelle verticalement de N lignes. Le compteur se remet
- * à zéro à chaque grande re-composition de la carte (accueil, focus…). */
-const _positionsEtiquettes = new Map();
+/* Anti-superposition des étiquettes de carnets sur la carte globale.
+ * Ancienne approche (par coordonnées GPS arrondies à 3 décimales, ≈ 110 m)
+ * ne détectait le chevauchement que quand deux carnets partageaient presque
+ * le même centre exact — deux étiquettes à 1 km d'écart pouvaient encore se
+ * chevaucher visuellement à faible zoom. Nouvelle approche : après placement,
+ * on mesure les rectangles en PIXELS à l'écran et on empile verticalement
+ * celles qui se chevauchent vraiment, avec re-arrangement à chaque zoom/pan. */
 
-function reinitPositionsEtiquettes() { _positionsEtiquettes.clear(); }
-
-/** Renvoie combien d'étiquettes sont déjà à cette position (0 = première). */
-function reserverPositionEtiquette(latLng) {
-  if (!latLng) return 0;
-  const cle = latLng.lat.toFixed(3) + "_" + latLng.lng.toFixed(3);
-  const n = _positionsEtiquettes.get(cle) || 0;
-  _positionsEtiquettes.set(cle, n + 1);
-  return n;
-}
+// Compat : d'anciens sites d'appel utilisent encore ces noms. On les garde
+// inertes plutôt que de risquer un crash.
+function reinitPositionsEtiquettes() {}
+function reserverPositionEtiquette() { return 0; }
 
 /** L'étiquette « nom du carnet » affichée sur la carte globale.
- *  `indexEmpilement` décale l'étiquette verticalement quand plusieurs
- *  carnets se retrouvent au même endroit (évite la superposition illisible). */
-function creerEtiquetteCarnet(fiche, style, indexEmpilement) {
+ *  La classe `carnet-etiquette` sert à retrouver ces éléments pour
+ *  l'arrangement anti-collision (voir arrangerEtiquettesCarnets). */
+function creerEtiquetteCarnet(fiche, style) {
   const police = cssDePolice((style && style.titrePolice) || "titre");
   const couleur = (style && style.trace && style.trace.couleur) || "#2f3b34";
   const texte = `${fiche.logo ? echapperHtml(fiche.logo) + " " : ""}${echapperHtml(fiche.nom)}`;
-  const decalY = (indexEmpilement || 0) * 22; // px
   const css = [
     `font-family:${police.replace(/"/g, "&quot;")}`,
     "font-size:15px",
@@ -4549,14 +4556,81 @@ function creerEtiquetteCarnet(fiche, style, indexEmpilement) {
     `color:${couleur}`,
     "white-space:nowrap",
     "text-shadow:0 1px 3px rgba(255,255,255,0.95), 0 -1px 3px rgba(255,255,255,0.95), 1px 0 3px rgba(255,255,255,0.95), -1px 0 3px rgba(255,255,255,0.95)",
-    `transform:translate(-50%, calc(-50% + ${decalY}px))`,
+    "transform:translate(-50%, -50%)",
     "cursor:pointer",
   ].join(";");
   return L.divIcon({
-    className: "",
-    html: `<div style="${css}">${texte}</div>`,
+    className: "carnet-etiquette-marker",
+    html: `<div class="carnet-etiquette" style="${css}">${texte}</div>`,
     iconSize: [0, 0],
   });
+}
+
+/**
+ * Une fois toutes les étiquettes placées, on mesure leur rectangle réel à
+ * l'écran (en tenant compte de la largeur du texte, invisible pour
+ * getBoundingClientRect sur les containers à taille 0), on trie du haut vers
+ * le bas et on décale chaque étiquette de HAUTEUR pixels tant qu'elle
+ * chevauche une déjà placée. Re-déclenché à chaque zoom/pan (les positions
+ * pixel changent alors même que les positions GPS non).
+ */
+const HAUTEUR_ETIQUETTE = 22;
+let _timerArranger = null;
+function arrangerEtiquettesCarnets() {
+  clearTimeout(_timerArranger);
+  _timerArranger = setTimeout(_arrangerEtiquettesMaintenant, 30);
+}
+function _arrangerEtiquettesMaintenant() {
+  const els = [...document.querySelectorAll(".carnet-etiquette")];
+  if (els.length < 2) {
+    // Rien à arranger, mais on s'assure qu'aucun décalage périmé ne traîne.
+    els.forEach((el) => { el.style.transform = "translate(-50%, -50%)"; });
+    return;
+  }
+  // 1) Reset : on repart de la position centrale pour chacun.
+  els.forEach((el) => { el.style.transform = "translate(-50%, -50%)"; });
+  // 2) Mesurer largeur naturelle du texte (le container Leaflet est à 0).
+  const items = els.map((el) => {
+    const parent = el.parentElement; // .leaflet-marker-icon
+    const rParent = parent ? parent.getBoundingClientRect() : el.getBoundingClientRect();
+    // Largeur : rect propre du div (l'astuce inline-block-like fonctionne si
+    // white-space:nowrap est appliqué — c'est le cas ici via le style inline).
+    // Comme le container est à 0, on ruse en clonant hors-flux.
+    const mesure = document.createElement("span");
+    mesure.style.cssText = "visibility:hidden;position:absolute;left:-9999px;top:0;" +
+      "font:" + getComputedStyle(el).font + ";white-space:nowrap";
+    mesure.textContent = el.textContent;
+    document.body.appendChild(mesure);
+    const largeur = mesure.getBoundingClientRect().width;
+    mesure.remove();
+    return {
+      el,
+      cx: rParent.left, cy: rParent.top,
+      w: largeur, h: HAUTEUR_ETIQUETTE, decalY: 0,
+    };
+  });
+  // 3) Trier du haut vers le bas pour rendre le résultat déterministe.
+  items.sort((a, b) => a.cy - b.cy);
+  const chevauche = (a, b) => {
+    const aL = a.cx - a.w / 2, aR = a.cx + a.w / 2;
+    const bL = b.cx - b.w / 2, bR = b.cx + b.w / 2;
+    const aT = a.cy - a.h / 2 + a.decalY, aB = aT + a.h;
+    const bT = b.cy - b.h / 2 + b.decalY, bB = bT + b.h;
+    return !(aR < bL || bR < aL || aB < bT || bB < aT);
+  };
+  // 4) Empilement : pour chaque étiquette, on la descend tant qu'elle
+  //    chevauche une déjà placée.
+  for (let i = 1; i < items.length; i++) {
+    const b = items[i];
+    for (let n = 0; n < items.length; n++) {
+      const collision = items.slice(0, i).some((a) => chevauche(a, b));
+      if (!collision) break;
+      b.decalY += HAUTEUR_ETIQUETTE;
+    }
+    if (b.decalY) {
+      b.el.style.transform = `translate(-50%, calc(-50% + ${b.decalY}px))`;
+    }
+  }
 }
 
 /** Retire un carnet affiché en plus. */
@@ -6279,9 +6353,23 @@ function init() {
       rechargement = true;
       window.location.reload();
     });
-    navigator.serviceWorker.register("sw.js").catch(() => {
-      /* sans service worker, l'app fonctionne quand même (juste pas hors-ligne) */
-    });
+    navigator.serviceWorker.register("sw.js")
+      .then((reg) => {
+        if (!reg) return;
+        // Vérification immédiate au démarrage : si une nouvelle version du
+        // service worker est en ligne, on la télécharge tout de suite.
+        reg.update().catch(() => {});
+        // Nouvelle vérification quand la PWA revient au premier plan
+        // (l'utilisateur ouvre l'app après l'avoir laissée en arrière-plan).
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "visible") {
+            reg.update().catch(() => {});
+          }
+        });
+      })
+      .catch(() => {
+        /* sans service worker, l'app fonctionne quand même (juste pas hors-ligne) */
+      });
   } else if ("serviceWorker" in navigator && enLocal) {
     navigator.serviceWorker.getRegistrations()
       .then((rs) => rs.forEach((r) => r.unregister())).catch(() => {});
