@@ -1125,6 +1125,9 @@
           <button class="modal-compte-onglet actif" data-compte-onglet="profil" role="tab" aria-selected="true">
             <span>Profil</span><span class="modal-compte-fleche">›</span>
           </button>
+          <button class="modal-compte-onglet" data-compte-onglet="contacts" role="tab" aria-selected="false">
+            <span>Contacts</span><span class="modal-compte-fleche">›</span>
+          </button>
           <button class="modal-compte-onglet" data-compte-onglet="compte" role="tab" aria-selected="false">
             <span>Compte</span><span class="modal-compte-fleche">›</span>
           </button>
@@ -1170,6 +1173,35 @@
             <div class="modal-compte-actions">
               <button id="compte-profil-annuler" class="btn btn-ghost" type="button">Annuler</button>
               <button id="compte-profil-enregistrer" class="btn btn-accent" type="button">Enregistrer les modifications</button>
+            </div>
+          </section>
+
+          <!-- Onglet Contacts -->
+          <section class="modal-compte-panneau" data-compte-panneau="contacts" hidden>
+            <h3 class="modal-compte-titre">Trouver un contact</h3>
+            <p class="style-aide">Cherche quelqu'un par son pseudo (comme un @identifiant). Tu lui envoies une demande, il l'accepte, et vous devenez contacts.</p>
+            <div class="modal-compte-champ">
+              <label class="modal-compte-label" for="contacts-recherche">Pseudo</label>
+              <div class="contacts-recherche-ligne">
+                <input id="contacts-recherche" type="text" placeholder="Ex : robin" autocomplete="off" />
+                <button id="contacts-chercher" class="btn btn-accent btn-petit" type="button">Chercher</button>
+              </div>
+            </div>
+            <div id="contacts-resultats" class="contacts-resultats"></div>
+
+            <h3 class="modal-compte-titre">Demandes reçues <span id="contacts-recues-nb" class="contacts-badge" hidden>0</span></h3>
+            <div id="contacts-recues" class="contacts-liste">
+              <p class="style-aide contacts-vide">Aucune demande reçue.</p>
+            </div>
+
+            <h3 class="modal-compte-titre">Demandes envoyées</h3>
+            <div id="contacts-envoyees" class="contacts-liste">
+              <p class="style-aide contacts-vide">Aucune demande en attente.</p>
+            </div>
+
+            <h3 class="modal-compte-titre">Mes contacts <span id="contacts-nb" class="contacts-badge" hidden>0</span></h3>
+            <div id="contacts-liste" class="contacts-liste">
+              <p class="style-aide contacts-vide">Tu n'as pas encore de contacts.</p>
             </div>
           </section>
 

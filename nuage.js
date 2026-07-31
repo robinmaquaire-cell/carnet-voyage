@@ -1137,6 +1137,8 @@ function ouvrirModalCompte() {
     if (mdp) mdp.value = "";
     if (mdpc) mdpc.value = "";
     remplirOngletProfil();
+    // Charge la liste des contacts en arriere-plan pour l'onglet dedie.
+    chargerContacts().then(renderContacts).catch(() => {});
   } else {
     const mdpConn = document.getElementById("compte-mdp-connexion");
     if (mdpConn) mdpConn.value = "";
@@ -1417,6 +1419,252 @@ async function enregistrerProfilInfos() {
   })());
 }
 
+/* =========================================================
+   Onglet Contacts (jalon C)
+   ---------------------------------------------------------
+   Une demande = une ligne dans `public.contacts` (statut = 'en_attente').
+   Une amitié  = la même ligne, statut = 'accepte'.
+   Un refus / une annulation / un retrait = suppression de la ligne.
+   Les profils (photo, pseudo, ville) sont joints depuis `profils`.
+   ========================================================= */
+
+// Cache mémoire des relations et des profils joints (rechargé à l'ouverture).
+let contactsCache = { relations: [], profils: new Map() };
+
+/** Cherche des profils dont le pseudo commence par `q` (insensible à la casse). */
+async function chercherProfils(q) {
+  if (!nuageConnecte()) return [];
+  const requete = (q || "").trim().toLowerCase();
+  if (requete.length < 2) return [];
+  const { data, error } = await sbClient
+    .from("profils")
+    .select("id, pseudo, photo, description, ville")
+    .ilike("pseudo", requete + "%")
+    .neq("id", sessionNuage.user.id)  // pas moi-même
+    .limit(20);
+  if (error) return [];
+  return data || [];
+}
+
+/** Charge toutes mes relations (envoyées, reçues, acceptées) et les profils liés. */
+async function chargerContacts() {
+  if (!nuageConnecte()) {
+    contactsCache = { relations: [], profils: new Map() };
+    return contactsCache;
+  }
+  const monId = sessionNuage.user.id;
+  const { data: rels, error } = await sbClient
+    .from("contacts")
+    .select("id, expediteur, destinataire, statut, cree_le, modifie_le")
+    .or(`expediteur.eq.${monId},destinataire.eq.${monId}`);
+  if (error) {
+    contactsCache = { relations: [], profils: new Map() };
+    return contactsCache;
+  }
+  const relations = rels || [];
+  // Récupère les profils de tous les autres membres, en un seul appel.
+  const autresIds = [...new Set(relations.map((r) =>
+    r.expediteur === monId ? r.destinataire : r.expediteur))];
+  const profils = new Map();
+  if (autresIds.length) {
+    const { data: pdata } = await sbClient
+      .from("profils")
+      .select("id, pseudo, photo, description, ville")
+      .in("id", autresIds);
+    (pdata || []).forEach((p) => profils.set(p.id, p));
+  }
+  contactsCache = { relations, profils };
+  return contactsCache;
+}
+
+/** Envoie une demande de contact à l'utilisateur `destinataireId`. */
+async function envoyerDemandeContact(destinataireId) {
+  if (!nuageConnecte()) { toast("Connecte-toi d'abord.", true); return false; }
+  const { error } = await sbClient.from("contacts").insert({
+    expediteur: sessionNuage.user.id,
+    destinataire: destinataireId,
+    statut: "en_attente",
+  });
+  if (error) {
+    // 23505 = unique violation : la demande existe déjà (dans un sens).
+    if (error.code === "23505") { toast("Demande déjà envoyée à ce contact.", true); return false; }
+    toast("Impossible d'envoyer la demande : " + (error.message || ""), true);
+    return false;
+  }
+  toast("✓ Demande envoyée.");
+  return true;
+}
+
+/** Accepte une demande reçue (id de la ligne contacts). */
+async function accepterDemandeContact(idDemande) {
+  const { error } = await sbClient.from("contacts")
+    .update({ statut: "accepte" })
+    .eq("id", idDemande);
+  if (error) { toast("Impossible d'accepter : " + (error.message || ""), true); return false; }
+  toast("✓ Contact ajouté.");
+  return true;
+}
+
+/** Supprime une relation : refuser, annuler ou retirer selon le contexte. */
+async function supprimerContact(idDemande) {
+  const { error } = await sbClient.from("contacts").delete().eq("id", idDemande);
+  if (error) { toast("Impossible : " + (error.message || ""), true); return false; }
+  return true;
+}
+
+/** Reconstruit les trois listes (reçues, envoyées, contacts) + résultats de recherche. */
+function renderContacts() {
+  if (!nuageConnecte()) return;
+  const monId = sessionNuage.user.id;
+  const { relations, profils } = contactsCache;
+
+  const recues = relations.filter((r) => r.destinataire === monId && r.statut === "en_attente");
+  const envoyees = relations.filter((r) => r.expediteur === monId && r.statut === "en_attente");
+  const contacts = relations.filter((r) => r.statut === "accepte");
+
+  const badgeRecues = document.getElementById("contacts-recues-nb");
+  if (badgeRecues) {
+    badgeRecues.textContent = recues.length;
+    badgeRecues.hidden = recues.length === 0;
+  }
+  const badgeAmis = document.getElementById("contacts-nb");
+  if (badgeAmis) {
+    badgeAmis.textContent = contacts.length;
+    badgeAmis.hidden = contacts.length === 0;
+  }
+
+  remplirBlocContacts("contacts-recues", recues, (r) => {
+    const autre = profils.get(r.expediteur);
+    return {
+      profil: autre,
+      actions: [
+        { label: "Accepter", classe: "btn btn-accent btn-petit", handler: async () => {
+          if (await accepterDemandeContact(r.id)) { await chargerContacts(); renderContacts(); }
+        }},
+        { label: "Refuser", classe: "btn btn-ghost btn-petit", handler: async () => {
+          if (await supprimerContact(r.id)) { await chargerContacts(); renderContacts(); }
+        }},
+      ],
+    };
+  }, "Aucune demande reçue.");
+
+  remplirBlocContacts("contacts-envoyees", envoyees, (r) => {
+    const autre = profils.get(r.destinataire);
+    return {
+      profil: autre,
+      actions: [
+        { label: "Annuler", classe: "btn btn-ghost btn-petit", handler: async () => {
+          if (await supprimerContact(r.id)) { await chargerContacts(); renderContacts(); }
+        }},
+      ],
+      detail: "Demande envoyée",
+    };
+  }, "Aucune demande en attente.");
+
+  remplirBlocContacts("contacts-liste", contacts, (r) => {
+    const autreId = r.expediteur === monId ? r.destinataire : r.expediteur;
+    const autre = profils.get(autreId);
+    return {
+      profil: autre,
+      actions: [
+        { label: "Retirer", classe: "btn btn-ghost btn-petit", handler: async () => {
+          if (!confirm(`Retirer @${(autre && autre.pseudo) || "ce contact"} de tes contacts ?`)) return;
+          if (await supprimerContact(r.id)) { await chargerContacts(); renderContacts(); }
+        }},
+      ],
+    };
+  }, "Tu n'as pas encore de contacts.");
+}
+
+/** Construit une ligne « profil + actions » et remplit le conteneur. */
+function remplirBlocContacts(idContainer, lignes, faconneur, videTexte) {
+  const cont = document.getElementById(idContainer);
+  if (!cont) return;
+  cont.innerHTML = "";
+  if (lignes.length === 0) {
+    const p = document.createElement("p");
+    p.className = "style-aide contacts-vide";
+    p.textContent = videTexte;
+    cont.appendChild(p);
+    return;
+  }
+  lignes.forEach((ligne) => {
+    const { profil, actions, detail } = faconneur(ligne);
+    cont.appendChild(construireLigneContact(profil, actions, detail));
+  });
+}
+
+function construireLigneContact(profil, actions, detail) {
+  const ligne = document.createElement("div");
+  ligne.className = "contacts-ligne";
+  const avatar = document.createElement("span");
+  avatar.className = "compte-avatar";
+  dessinerAvatar(avatar, profil || {}, (profil && profil.pseudo) || "?");
+  ligne.appendChild(avatar);
+  const corps = document.createElement("div");
+  corps.className = "contacts-ligne-corps";
+  const nom = document.createElement("span");
+  nom.className = "contacts-ligne-nom";
+  nom.textContent = profil ? "@" + profil.pseudo : "(profil introuvable)";
+  corps.appendChild(nom);
+  const det = document.createElement("span");
+  det.className = "contacts-ligne-detail";
+  det.textContent = detail || (profil && (profil.ville || profil.description)) || "";
+  corps.appendChild(det);
+  ligne.appendChild(corps);
+  const actionsDiv = document.createElement("div");
+  actionsDiv.className = "contacts-ligne-actions";
+  (actions || []).forEach((a) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = a.classe || "btn btn-ghost btn-petit";
+    b.textContent = a.label;
+    b.addEventListener("click", a.handler);
+    actionsDiv.appendChild(b);
+  });
+  ligne.appendChild(actionsDiv);
+  return ligne;
+}
+
+/** Résultats de recherche : profils trouvés → bouton « Ajouter ». */
+async function lancerRechercheContact() {
+  const input = document.getElementById("contacts-recherche");
+  const bouton = document.getElementById("contacts-chercher");
+  const cont = document.getElementById("contacts-resultats");
+  if (!cont) return;
+  const q = (input && input.value || "").trim();
+  if (q.length < 2) {
+    cont.innerHTML = '<p class="style-aide contacts-vide">Tape au moins 2 caractères.</p>';
+    return;
+  }
+  await avecChargement(bouton, "Recherche…", (async () => {
+    const trouves = await chercherProfils(q);
+    // On enlève ceux avec qui on a déjà une relation (évite le doublon 23505).
+    const monId = sessionNuage.user.id;
+    const dejaLies = new Set(contactsCache.relations.map((r) =>
+      r.expediteur === monId ? r.destinataire : r.expediteur));
+    cont.innerHTML = "";
+    if (trouves.length === 0) {
+      cont.innerHTML = '<p class="style-aide contacts-vide">Aucun profil trouvé pour « ' +
+        q.replace(/[<>&]/g, "") + ' ».</p>';
+      return;
+    }
+    trouves.forEach((p) => {
+      const dejaLie = dejaLies.has(p.id);
+      const action = dejaLie
+        ? { label: "Déjà lié", classe: "btn btn-ghost btn-petit", handler: () => {} }
+        : { label: "Ajouter", classe: "btn btn-accent btn-petit", handler: async () => {
+          if (await envoyerDemandeContact(p.id)) {
+            await chargerContacts();
+            renderContacts();
+            lancerRechercheContact();
+          }
+        }};
+      cont.appendChild(construireLigneContact(p, [action]));
+    });
+  })());
+}
+
 /** Bascule l'onglet actif dans la fenêtre Compte (« Profil » / « Compte »). */
 function activerOngletCompte(nom) {
   document.querySelectorAll(".modal-compte-onglet").forEach((b) => {
@@ -1604,6 +1852,12 @@ function brancherCompteUI() {
   // Plus de bouton « Synchroniser maintenant » ni de clic sur le bandeau :
   // la synchro se fait automatiquement après chaque sauvegarde (voir
   // planifierPousseeNuage) et au démarrage (INITIAL_SESSION avec session).
+
+  // Onglet Contacts.
+  document.getElementById("contacts-chercher")
+    .addEventListener("click", lancerRechercheContact);
+  document.getElementById("contacts-recherche")
+    .addEventListener("keydown", (e) => { if (e.key === "Enter") lancerRechercheContact(); });
 
   // Onglet Profil : photo / description / ville.
   document.getElementById("compte-photo-input")

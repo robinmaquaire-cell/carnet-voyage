@@ -1719,6 +1719,67 @@ body.chargement-en-cours .layout { visibility: hidden; }
   .modal-compte-contenu { max-height: 60vh; }
 }
 
+/* ---------- Onglet Contacts (fenêtre Paramètres) ---------- */
+.contacts-recherche-ligne {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.contacts-recherche-ligne input { flex: 1; min-width: 0; }
+.contacts-resultats { margin-top: 8px; }
+.contacts-liste {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.contacts-vide {
+  margin: 8px 0 0;
+  font-style: italic;
+}
+.contacts-ligne {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--ligne);
+  border-radius: 12px;
+  background: rgba(47,59,52,0.02);
+}
+.contacts-ligne-corps { flex: 1; min-width: 0; }
+.contacts-ligne-nom {
+  font-weight: 700;
+  color: var(--encre);
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.contacts-ligne-detail {
+  font-size: 12.5px;
+  color: var(--encre-douce);
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.contacts-ligne-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.contacts-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  margin-left: 6px;
+  background: var(--ocre, #c8893d);
+  color: #fff;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  vertical-align: middle;
+}
+
 /* ---------- Fenêtre de conflit de synchronisation ---------- */
 .conflit-versions {
   display: flex;
