@@ -265,11 +265,15 @@ function demarrerNuage() {
       toast("☁️ Connecté ! Synchronisation de tes carnets…");
       assurerProfil();
       synchroniserNuage();
+      // Si un token de partage attendait dans l'URL, on le consomme maintenant.
+      rejoindrePartageDepuisUrl();
     } else if (evenement === "INITIAL_SESSION") {
       if (session) {
         assurerProfil();
         montrerChargementApp("Récupération de tes carnets…");
         synchroniserNuage().finally(masquerChargementApp);
+        // Consomme un eventuel token ?rejoindrepartage=... dans l'URL.
+        rejoindrePartageDepuisUrl();
       } else {
         // Pas de session : les carnets sont liés au compte et le compte est
         // la seule source de vérité. Sans session, on n'affiche rien — même
@@ -1154,6 +1158,240 @@ function fermerModalCompte() {
   document.getElementById("modal-compte").hidden = true;
 }
 
+/* =========================================================
+   Fenêtre « Partager ce carnet »
+   ---------------------------------------------------------
+   Deux façons de partager :
+   - avec un contact accepté (ajout instantané dans carnet_partages_contact) ;
+   - via un lien à copier (un token dans carnet_liens_partage ; la personne
+     rejoint en visitant ?rejoindrepartage=TOKEN une fois connectée).
+   ========================================================= */
+
+let partageCarnetOuvert = null;   // le carnet actuellement partagé (fiche)
+let partagesActuels = [];         // rows de carnet_partages_contact pour ce carnet
+let filtrePartageContacts = "";   // filtre de la liste de contacts
+
+/** Ouvre la fenêtre de partage pour le carnet donné (par défaut : le carnet actif). */
+async function ouvrirModalPartage(carnet) {
+  const c = carnet || (typeof carnetActif === "function" ? carnetActif() : null);
+  if (!c) { toast("Ouvre d'abord un carnet.", true); return; }
+  if (!nuageConnecte()) { toast("Connecte-toi pour partager un carnet.", true); return; }
+  if (c.partage) {
+    toast("Ce carnet t'a été partagé — seul son propriétaire peut le partager.", true);
+    return;
+  }
+  partageCarnetOuvert = c;
+  document.getElementById("partage-nom-carnet").textContent = "« " + (c.nom || "carnet") + " »";
+  document.getElementById("partage-recherche").value = "";
+  document.getElementById("partage-lien-affiche").hidden = true;
+  document.getElementById("partage-lien-url").value = "";
+  statutPartage("");
+  filtrePartageContacts = "";
+  document.getElementById("modal-partage").hidden = false;
+
+  // On charge en parallèle : contacts (pour la liste) + partages actuels.
+  await Promise.all([chargerContacts(), chargerPartagesActuels(c)]);
+  renderPartageContacts();
+  renderPartageActuels();
+}
+
+function fermerModalPartage() {
+  document.getElementById("modal-partage").hidden = true;
+  partageCarnetOuvert = null;
+  partagesActuels = [];
+}
+
+function statutPartage(message, erreur) {
+  const el = document.getElementById("partage-statut");
+  if (!el) return;
+  el.textContent = message || "";
+  el.hidden = !message;
+  el.className = "gen-statut " + (erreur ? "erreur" : "info");
+}
+
+/** Charge la liste des personnes qui ont déjà accès à ce carnet. */
+async function chargerPartagesActuels(carnet) {
+  if (!nuageConnecte() || !carnet || !carnet.uuid) { partagesActuels = []; return; }
+  const { data, error } = await sbClient.from("carnet_partages_contact")
+    .select("id, destinataire, droit, cree_le")
+    .eq("carnet_uuid", carnet.uuid)
+    .eq("proprietaire", sessionNuage.user.id);
+  if (error) { partagesActuels = []; return; }
+  partagesActuels = data || [];
+  // Assurer que les profils des destinataires sont dans le cache contacts.
+  const idsAAjouter = partagesActuels
+    .map((p) => p.destinataire)
+    .filter((id) => !contactsCache.profils.has(id));
+  if (idsAAjouter.length) {
+    const { data: pdata } = await sbClient.from("profils")
+      .select("id, pseudo, photo, description, ville")
+      .in("id", idsAAjouter);
+    (pdata || []).forEach((p) => contactsCache.profils.set(p.id, p));
+  }
+}
+
+/** Rend la liste des contacts partageables (mes contacts acceptés, filtrés). */
+function renderPartageContacts() {
+  const cont = document.getElementById("partage-contacts");
+  if (!cont) return;
+  cont.innerHTML = "";
+  const monId = sessionNuage.user.id;
+  const contactsIds = contactsCache.relations
+    .filter((r) => r.statut === "accepte")
+    .map((r) => r.expediteur === monId ? r.destinataire : r.expediteur);
+  if (contactsIds.length === 0) {
+    cont.innerHTML = '<p class="style-aide contacts-vide">Ajoute d\'abord des contacts (fenêtre Paramètres → Contacts) pour pouvoir leur partager un carnet.</p>';
+    return;
+  }
+  const dejaLies = new Set(partagesActuels.map((p) => p.destinataire));
+  const filtre = (filtrePartageContacts || "").trim().toLowerCase();
+  let affiche = 0;
+  contactsIds.forEach((id) => {
+    const profil = contactsCache.profils.get(id);
+    const pseudo = (profil && profil.pseudo) || "";
+    if (filtre && !pseudo.toLowerCase().includes(filtre)) return;
+    affiche++;
+    const dejaPartage = dejaLies.has(id);
+    const action = dejaPartage
+      ? { label: "Déjà partagé", classe: "btn btn-ghost btn-petit", handler: () => {} }
+      : { label: "Partager", classe: "btn btn-accent btn-petit", handler: async () => {
+          await ajouterPartageContact(id, "lecture");
+        }};
+    cont.appendChild(construireLigneContact(profil || { id, pseudo: "?" }, [action]));
+  });
+  if (affiche === 0) {
+    cont.innerHTML = '<p class="style-aide contacts-vide">Personne ne correspond au filtre.</p>';
+  }
+}
+
+/** Rend la liste des personnes qui ont déjà accès à ce carnet. */
+function renderPartageActuels() {
+  const cont = document.getElementById("partage-actuels");
+  if (!cont) return;
+  cont.innerHTML = "";
+  if (partagesActuels.length === 0) {
+    cont.innerHTML = '<p class="style-aide contacts-vide">Personne d\'autre n\'a accès à ce carnet pour le moment.</p>';
+    return;
+  }
+  partagesActuels.forEach((p) => {
+    const profil = contactsCache.profils.get(p.destinataire) || { pseudo: "?" };
+    const droitAlt = p.droit === "edition" ? "lecture" : "edition";
+    const actions = [
+      { label: p.droit === "edition" ? "✏️ Édition" : "👁 Lecture",
+        classe: "btn btn-ghost btn-petit",
+        handler: async () => { await changerDroitPartage(p, droitAlt); }},
+      { label: "Retirer", classe: "btn btn-ghost btn-petit",
+        handler: async () => {
+          if (!confirm(`Retirer @${profil.pseudo} de ce partage ?`)) return;
+          await retirerPartageContact(p);
+        }},
+    ];
+    cont.appendChild(construireLigneContact(profil, actions));
+  });
+}
+
+async function ajouterPartageContact(contactId, droit) {
+  if (!partageCarnetOuvert) return;
+  const { error } = await sbClient.from("carnet_partages_contact").insert({
+    proprietaire: sessionNuage.user.id,
+    carnet_uuid: partageCarnetOuvert.uuid,
+    destinataire: contactId,
+    droit,
+  });
+  if (error) {
+    statutPartage("Impossible d'ajouter : " + (error.message || "erreur"), true);
+    return;
+  }
+  await chargerPartagesActuels(partageCarnetOuvert);
+  renderPartageContacts();
+  renderPartageActuels();
+  toast("✓ Carnet partagé.");
+}
+
+async function retirerPartageContact(row) {
+  const { error } = await sbClient.from("carnet_partages_contact").delete().eq("id", row.id);
+  if (error) { statutPartage("Impossible de retirer : " + (error.message || ""), true); return; }
+  await chargerPartagesActuels(partageCarnetOuvert);
+  renderPartageContacts();
+  renderPartageActuels();
+  toast("Partage retiré.");
+}
+
+async function changerDroitPartage(row, nouveauDroit) {
+  const { error } = await sbClient.from("carnet_partages_contact")
+    .update({ droit: nouveauDroit }).eq("id", row.id);
+  if (error) { statutPartage("Impossible de changer le droit : " + (error.message || ""), true); return; }
+  await chargerPartagesActuels(partageCarnetOuvert);
+  renderPartageActuels();
+}
+
+/** Génère un lien de partage (token) et l'affiche dans un champ à copier. */
+async function genererLienPartage() {
+  if (!partageCarnetOuvert) return;
+  const droit = document.getElementById("partage-lien-droit").value;
+  const bouton = document.getElementById("partage-lien-generer");
+  await avecChargement(bouton, "Génération…", (async () => {
+    const token = genererToken(24);
+    const { error } = await sbClient.from("carnet_liens_partage").insert({
+      token,
+      proprietaire: sessionNuage.user.id,
+      carnet_uuid: partageCarnetOuvert.uuid,
+      droit,
+    });
+    if (error) { statutPartage("Impossible de créer le lien : " + (error.message || ""), true); return; }
+    const url = window.location.origin + window.location.pathname + "?rejoindrepartage=" + token;
+    document.getElementById("partage-lien-url").value = url;
+    document.getElementById("partage-lien-affiche").hidden = false;
+    statutPartage("✓ Lien créé. Copie-le et envoie-le à qui tu veux.");
+  })());
+}
+
+function genererToken(nbCaracteres) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  const arr = new Uint8Array(nbCaracteres);
+  crypto.getRandomValues(arr);
+  return Array.from(arr, (b) => alphabet[b % alphabet.length]).join("");
+}
+
+/** Au démarrage : si l'URL contient ?rejoindrepartage=TOKEN, on le consomme. */
+async function rejoindrePartageDepuisUrl() {
+  const params = new URLSearchParams(window.location.search);
+  let token = params.get("rejoindrepartage");
+  // Sinon on tente le token mis de cote lors d'une precedente ouverture non connectee.
+  if (!token) {
+    try { token = sessionStorage.getItem("partage-token-en-attente"); } catch (e) {}
+  }
+  if (!token) return;
+  if (!nuageConnecte()) {
+    try { sessionStorage.setItem("partage-token-en-attente", token); } catch (e) {}
+    toast("Connecte-toi pour rejoindre le partage.");
+    return;
+  }
+  // Nettoie l'URL pour ne pas re-consommer au refresh.
+  history.replaceState({}, "", window.location.pathname);
+  try { sessionStorage.removeItem("partage-token-en-attente"); } catch (e) {}
+  try {
+    const { data: lien, error } = await sbClient.from("carnet_liens_partage")
+      .select("token, proprietaire, carnet_uuid, droit, revoque")
+      .eq("token", token).maybeSingle();
+    if (error || !lien || lien.revoque) { toast("Ce lien n'est plus valide.", true); return; }
+    if (lien.proprietaire === sessionNuage.user.id) {
+      toast("C'est ton propre carnet — rien à rejoindre."); return;
+    }
+    const { error: err2 } = await sbClient.from("carnet_partages_contact").insert({
+      proprietaire: lien.proprietaire,
+      carnet_uuid: lien.carnet_uuid,
+      destinataire: sessionNuage.user.id,
+      droit: lien.droit,
+    });
+    if (err2 && err2.code !== "23505") { toast("Impossible de rejoindre : " + (err2.message || ""), true); return; }
+    toast("✓ Tu as maintenant accès à ce carnet — synchro en cours…");
+    synchroniserNuage();
+  } catch (e) {
+    toast("Ce lien n'a pas pu être consommé.", true);
+  }
+}
+
 /** Nom affiché sur le bouton Compte (pseudo, sinon début d'e-mail). */
 function nomAfficheCompte() {
   const p = lirePseudo();
@@ -1859,6 +2097,29 @@ function brancherCompteUI() {
   document.getElementById("contacts-recherche")
     .addEventListener("keydown", (e) => { if (e.key === "Enter") lancerRechercheContact(); });
 
+  // Fenetre Partager.
+  document.getElementById("partage-fermer")
+    .addEventListener("click", fermerModalPartage);
+  document.getElementById("partage-recherche")
+    .addEventListener("input", (e) => {
+      filtrePartageContacts = e.target.value || "";
+      renderPartageContacts();
+    });
+  document.getElementById("partage-lien-generer")
+    .addEventListener("click", genererLienPartage);
+  document.getElementById("partage-lien-copier")
+    .addEventListener("click", async () => {
+      const champ = document.getElementById("partage-lien-url");
+      champ.select();
+      try {
+        await navigator.clipboard.writeText(champ.value);
+        toast("✓ Lien copie dans le presse-papiers.");
+      } catch (e) {
+        // Fallback : la selection reste, l'utilisateur peut faire Ctrl+C.
+        toast("Copie manuellement (Ctrl+C).");
+      }
+    });
+
   // Onglet Profil : photo / description / ville.
   document.getElementById("compte-photo-input")
     .addEventListener("change", choisirPhotoProfil);
@@ -1875,9 +2136,11 @@ function brancherCompteUI() {
       ouvrirModalProfil((monProfil && monProfil.pseudo) || nettoyerPseudo(lirePseudo()));
     });
 
-  // Échap ferme la fenêtre Compte OU la fenêtre Profil (avant les autres raccourcis).
+  // Échap ferme la fenêtre Compte / Profil / Partage (avant les autres raccourcis).
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    const partage = document.getElementById("modal-partage");
+    if (partage && !partage.hidden) { fermerModalPartage(); e.stopPropagation(); return; }
     const profil = document.getElementById("modal-profil");
     if (profil && !profil.hidden) { fermerModalProfil(); e.stopPropagation(); return; }
     if (!document.getElementById("modal-compte").hidden) {

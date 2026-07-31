@@ -2439,9 +2439,12 @@ function brancherUI() {
     });
   document.getElementById("btn-vizu")
     .addEventListener("click", () => { fermerTiroir(); definirMode("visualisation"); });
-  // Partager le carnet (ouvre la section « Partage » qui liste aussi les accès).
+  // Partager le carnet : ouvre la vraie fenetre de partage (contacts + lien).
   document.getElementById("btn-partager-carnet")
-    .addEventListener("click", ouvrirPartageCarnet);
+    .addEventListener("click", () => {
+      if (typeof ouvrirModalPartage === "function") ouvrirModalPartage();
+      else ouvrirPartageCarnet();
+    });
   // Impression : ouvre l'écran de mise en page (module Impression).
   document.getElementById("carnet-imprimer")
     .addEventListener("click", () => {

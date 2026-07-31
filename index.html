@@ -1299,6 +1299,47 @@
     </div>
   </div>
 
+  <!-- Fenêtre : partager le carnet ouvert avec un contact (ou générer un lien) -->
+  <div id="modal-partage" class="modal-overlay" hidden>
+    <div class="modal-card modal-compte-card">
+      <header class="modal-compte-tete">
+        <h2>🤝 Partager <span id="partage-nom-carnet" class="modal-compte-titre" style="border:none;padding:0;margin-left:6px;font-size:15px;font-weight:600;color:var(--encre-douce);"></span></h2>
+        <button id="partage-fermer" class="modal-fermer" title="Fermer" aria-label="Fermer">✕</button>
+      </header>
+
+      <div class="modal-compte-simple">
+        <h3 class="modal-compte-titre">Partager avec un contact</h3>
+        <p class="style-aide">Choisis parmi tes contacts. Tu peux ajouter un droit de lecture ou d'édition. Ils verront ce carnet dans leur volet « Partagés avec moi ».</p>
+
+        <div class="modal-compte-champ">
+          <input id="partage-recherche" type="search" placeholder="Filtrer mes contacts…" autocomplete="off" />
+        </div>
+        <div id="partage-contacts" class="contacts-liste"></div>
+
+        <h3 class="modal-compte-titre" style="margin-top:20px;">Personnes ayant accès</h3>
+        <div id="partage-actuels" class="contacts-liste"></div>
+
+        <h3 class="modal-compte-titre" style="margin-top:20px;">Lien de partage</h3>
+        <p class="style-aide">Génère un lien à copier-coller. La personne devra être connectée pour rejoindre le partage.</p>
+        <div class="modal-compte-champ">
+          <div class="contacts-recherche-ligne">
+            <select id="partage-lien-droit" class="style-input">
+              <option value="lecture">Droit : lecture</option>
+              <option value="edition">Droit : édition</option>
+            </select>
+            <button id="partage-lien-generer" class="btn btn-accent btn-petit" type="button">Générer un lien</button>
+          </div>
+        </div>
+        <div id="partage-lien-affiche" class="contacts-recherche-ligne" hidden style="margin-top:8px;">
+          <input id="partage-lien-url" type="text" readonly />
+          <button id="partage-lien-copier" class="btn btn-ghost btn-petit" type="button">Copier</button>
+        </div>
+
+        <p id="partage-statut" class="gen-statut" hidden></p>
+      </div>
+    </div>
+  </div>
+
   <!-- Fenêtre de conflit : le même carnet a été modifié ici ET en ligne.
        Rien n'est écrasé tant que le choix n'est pas fait. -->
   <div id="modal-conflit" class="modal-overlay" hidden>
