@@ -1365,44 +1365,6 @@
     </div>
   </div>
 
-  <!-- Fenêtre de conflit : le même carnet a été modifié ici ET en ligne.
-       Rien n'est écrasé tant que le choix n'est pas fait. -->
-  <div id="modal-conflit" class="modal-overlay" hidden>
-    <div class="modal-card">
-      <h2>⚠️ Deux versions différentes</h2>
-      <p class="modal-sous-titre">
-        Le carnet <strong id="conflit-nom">—</strong> a été modifié
-        <strong>sur cet appareil</strong> et <strong>en ligne</strong> depuis la
-        dernière synchronisation. Que veux-tu garder ?
-      </p>
-
-      <div class="conflit-versions">
-        <div class="conflit-version">
-          <div class="conflit-version-titre">📱 Sur cet appareil</div>
-          <div id="conflit-ici-resume" class="conflit-version-resume">—</div>
-          <div id="conflit-ici-date" class="conflit-version-date">—</div>
-        </div>
-        <div class="conflit-version">
-          <div class="conflit-version-titre">☁️ En ligne</div>
-          <div id="conflit-ligne-resume" class="conflit-version-resume">—</div>
-          <div id="conflit-ligne-date" class="conflit-version-date">—</div>
-        </div>
-      </div>
-
-      <div class="boutons-espaces">
-        <button id="conflit-garder-deux" class="btn btn-accent" style="width:100%">
-          🔀 Garder les deux <span class="conflit-aide">(recommandé — rien n'est perdu)</span>
-        </button>
-        <button id="conflit-garder-ici" class="btn btn-ghost" style="width:100%">
-          📱 Garder seulement la version de cet appareil
-        </button>
-        <button id="conflit-garder-ligne" class="btn btn-ghost" style="width:100%">
-          ☁️ Garder seulement la version en ligne
-        </button>
-      </div>
-    </div>
-  </div>
-
   <!-- Fenêtre de bienvenue : aucun carnet et pas de compte connecté -->
   <div id="modal-bienvenue" class="modal-overlay" hidden>
     <div class="modal-card">

@@ -977,7 +977,6 @@ async function synchroniserNuage(cible) {
   statutCompte(enCours);
   if (uuidCible) toast("🔄 " + enCours);
   let recus = 0, envoyes = 0, erreurs = 0;
-  const conflits = [];
   const noms = [];
   let detailErreur = "";
 
@@ -1091,8 +1090,14 @@ async function synchroniserNuage(cible) {
           marquerCarnetSynchronise(local);
         } else if (historiqueConnu && bougeEnLigne && bougeIci && peutEcrireNuage(local)) {
           // VRAI CONFLIT : modifié ici ET en ligne depuis la dernière fois.
-          // On ne touche à rien, l'utilisateur tranchera.
-          conflits.push({ uuid: r.uuid, id: local.id, r, partage });
+          // Plutôt que d'interrompre l'utilisateur avec un modal (destructeur
+          // dans les deux sens), on met la version LOCALE de côté comme un
+          // carnet séparé « (conflit du JJ/MM) » — l'utilisateur peut ensuite
+          // « Envoyer vers... » pour la fusionner à l'original s'il le souhaite.
+          // Puis la version en ligne s'installe normalement.
+          await preserverVersionLocaleEnConflit(local);
+          await descendreCarnetDepuisNuage(local, r, partage);
+          recus++;
         } else if (dateDistante > dateLocale) {
           // Le nuage est plus récent. Deux cas :
           // - Carnet marqué « hors ligne » : on télécharge la nouvelle version
@@ -1100,14 +1105,15 @@ async function synchroniserNuage(cible) {
           // - Sinon : on met juste les métadonnées à jour et on efface tout
           //   contenu local qui traînerait (il sera retéléchargé à l'ouverture).
           if (local.horsLigne || local.id === etat.carnetActifId) {
+            // Même règle qu'au-dessus : si le local semble plus riche, on
+            // le préserve avant d'appliquer la version en ligne. Silencieux.
             const avant = await lireContenuLocal(local.id);
             const apres = await telechargerCarnetNuage(local).catch(() => null);
             if (peutEcrireNuage(local) && risqueDePerte(avant, apres)) {
-              conflits.push({ uuid: r.uuid, id: local.id, r, partage });
-            } else {
-              await descendreCarnetDepuisNuage(local, r, partage);
-              recus++;
+              await preserverVersionLocaleEnConflit(local);
             }
+            await descendreCarnetDepuisNuage(local, r, partage);
+            recus++;
           } else {
             appliquerFicheDistante(local, r, partage);
             try { await dbEffacerCle("carnet-" + local.id); } catch (e) {}
@@ -1124,10 +1130,12 @@ async function synchroniserNuage(cible) {
     }
 
     // 2) De l'appareil vers le nuage (jamais les partages en lecture seule).
-    const enConflit = new Set(conflits.map((x) => x.uuid));
+    // Plus besoin d'exclure des uuid en conflit : la phase 1 résout tout
+    // silencieusement (keep-both), donc quand on arrive ici, chaque carnet
+    // local est soit synchronisé, soit à envoyer.
     for (const c of etat.carnets) {
       if (uuidCible && c.uuid !== uuidCible) continue;
-      if (!peutEcrireNuage(c) || enConflit.has(c.uuid)) continue;
+      if (!peutEcrireNuage(c)) continue;
       const r = distants.find((x) => x.uuid === c.uuid);
       const dateLocale = tempsDe(c.modifieLe);
       const dateDistante = r ? tempsDe(r.modifie_le) : -1;
@@ -1163,9 +1171,6 @@ async function synchroniserNuage(cible) {
         `n'a pas pu être synchronisé.` + (detailErreur ? ` Raison : ${detailErreur}` : "");
       statutCompte(message, true);
       toast(message, true);
-    } else if (conflits.length) {
-      statutCompte(`${conflits.length} carnet(s) modifié(s) ici ET en ligne : ` +
-        `à toi de choisir quoi garder.`);
     } else {
       const bilan = uuidCible
         ? `✓ « ${nomCible} » synchronisé`
@@ -1188,134 +1193,78 @@ async function synchroniserNuage(cible) {
     if (typeof majPopupsAccueil === "function") majPopupsAccueil();
   }
 
-  // Les conflits se règlent une fois la synchronisation terminée (la fenêtre
-  // de choix peut relancer un envoi).
-  if (conflits.length) await ouvrirConflitsNuage(conflits);
+  // Les vrais conflits ont déjà été résolus silencieusement pendant la phase 1
+  // (voir preserverVersionLocaleEnConflit) : un toast rappelle où retrouver
+  // les copies « (conflit du ...) » gardées côté « Créés hors ligne ».
+  if (conflitsResolus.length) {
+    toast(`${conflitsResolus.length} carnet(s) présent(s) ici ET en ligne avec ` +
+          `des modifs différentes : ta version locale a été gardée sous « ` +
+          `${conflitsResolus[0]} (conflit du ${new Date().toLocaleDateString("fr-FR")}) ` +
+          `», visible dans « Créés hors ligne ». À toi de la fusionner via ` +
+          `« 📤 Envoyer vers un carnet en ligne » si tu veux.`);
+    conflitsResolus.length = 0;
+  }
 }
 
 /* =========================================================
-   Conflits : « modifié ici ET en ligne »
+   Résolution automatique des conflits (jalon S4)
    ---------------------------------------------------------
-   Plutôt que d'écraser une des deux versions en silence (ce qui faisait
-   disparaître des souvenirs), on montre les deux et on laisse choisir.
+   Ancienne approche : un modal interrompait l'utilisateur pour choisir quelle
+   version garder (ici / en ligne / les deux). Trop agressif, et un mauvais
+   clic pouvait faire disparaître des souvenirs.
+
+   Nouvelle approche : keep-both silencieux. Quand un carnet a été modifié
+   des deux côtés depuis la dernière synchro, la VERSION LOCALE est mise à
+   l'abri dans un nouveau carnet « <nom> (conflit du JJ/MM) » (jamais
+   synchronisé, visible dans « Créés hors ligne »), puis la version en ligne
+   s'installe normalement. L'utilisateur peut ensuite « Envoyer vers... »
+   pour fusionner (jalon S3) — ou juste garder les deux séparément.
+
+   Zéro interruption, zéro perte.
    ========================================================= */
 
-/** Résumé lisible d'une version de carnet : « 26 souvenirs · 3 photos posées ». */
-function resumerVersionCarnet(donnees) {
-  if (!donnees) return "contenu introuvable";
-  const bouts = [];
-  const nbSouvenirs = (donnees.souvenirs || []).length + (donnees.stock || []).length;
-  bouts.push(nbSouvenirs + (nbSouvenirs > 1 ? " souvenirs" : " souvenir"));
-  const nbAnnot = (donnees.annotations || []).length;
-  if (nbAnnot) bouts.push(nbAnnot + (nbAnnot > 1 ? " éléments posés" : " élément posé"));
-  const nbGpx = (donnees.gpx || []).length;
-  if (nbGpx) bouts.push(nbGpx + (nbGpx > 1 ? " tracés" : " tracé"));
-  return bouts.join(" · ");
-}
+// Noms des carnets pour lesquels un keep-both vient d'être fait pendant cette
+// synchro (pour le toast récapitulatif à la fin).
+const conflitsResolus = [];
 
-/** « le 29/07/2026 à 07:55 » à partir d'une date ISO. */
-function dateLisible(dateIso) {
-  const t = Date.parse(dateIso || 0);
-  if (!t) return "date inconnue";
-  const d = new Date(t);
-  return d.toLocaleDateString("fr-FR") + " à " +
-    d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
-}
-
-/** Contenu local d'un carnet (celui en mémoire s'il est ouvert). */
-async function lireContenuLocal(id) {
-  if (id === etat.carnetActifId) return serialiserCarnet();
-  return await dbChargerCle("carnet-" + id).catch(() => null);
-}
-
-/** Traite les conflits l'un après l'autre. */
-async function ouvrirConflitsNuage(conflits) {
-  for (const conflit of conflits) {
-    const local = etat.carnets.find((c) => c.uuid === conflit.uuid);
-    if (!local) continue;
-    try { await reglerUnConflit(local, conflit.r, conflit.partage); }
-    catch (e) { toast("Ce conflit n'a pas pu être réglé — il te sera reproposé.", true); }
-  }
-  await sauverIndexCarnets();
-  renderCarnets();
-  majEtatSyncUI();
-}
-
-/** Affiche la fenêtre de choix pour UN carnet, et applique la décision. */
-async function reglerUnConflit(local, r, partage) {
-  const contenuLocal = await lireContenuLocal(local.id);
-  const contenuDistant = await telechargerCarnetNuage(local).catch(() => null);
-
-  const choix = await demanderChoixConflit({
-    nom: local.nom,
-    resumeIci: resumerVersionCarnet(contenuLocal),
-    dateIci: dateLisible(local.modifieLe),
-    resumeLigne: resumerVersionCarnet(contenuDistant),
-    dateLigne: dateLisible(r.modifie_le),
-  });
-
-  if (choix === "ligne") {
-    await descendreCarnetDepuisNuage(local, r, partage);
-    toast(`« ${local.nom} » : version en ligne conservée.`);
-    return;
-  }
-
-  if (choix === "deux") {
-    // On met la version de CET APPAREIL à l'abri dans un nouveau carnet, puis
-    // on aligne l'original sur la version en ligne.
+/**
+ * Copie la version LOCALE actuelle d'un carnet dans un NOUVEAU carnet
+ * « (conflit du JJ/MM) », gardé hors ligne et non synchronisé. Le carnet
+ * original garde son uuid — la version en ligne pourra donc l'écraser sans
+ * qu'on perde le travail local.
+ */
+async function preserverVersionLocaleEnConflit(local) {
+  try {
+    const contenuLocal = await lireContenuLocal(local.id);
+    if (!carnetADuContenu(contenuLocal)) return; // rien à sauver
     const id = Math.max(0, ...etat.carnets.map((c) => c.id)) + 1;
+    const jour = new Date().toLocaleDateString("fr-FR");
+    const nomCopie = (local.nom + ` (conflit du ${jour})`).slice(0, 80);
     const copie = {
       id, uuid: genUuid(), visible: true,
-      nom: (local.nom + " (version de cet appareil)").slice(0, 80),
+      nom: nomCopie,
       logo: local.logo || "", categorie: local.categorie || "",
       description: local.description || "", du: local.du || "", au: local.au || "",
       modifieLe: new Date().toISOString(), syncLe: "",
       zone: local.zone || null, formatZone: local.formatZone || "",
       orientationZone: local.orientationZone === "paysage" ? "paysage" : "portrait",
       statut: "actif", partage: null,
+      horsLigne: true, // dispo hors ligne : c'est le contenu qui compte
     };
     etat.carnets.push(copie);
-    if (carnetADuContenu(contenuLocal)) await dbSauverCle("carnet-" + id, contenuLocal);
-    await descendreCarnetDepuisNuage(local, r, partage);
-    try { await pousserCarnet(copie); } catch (e) { /* partira à la prochaine synchro */ }
-    toast(`Les deux versions de « ${local.nom} » sont gardées.`);
-    return;
+    await dbSauverCle("carnet-" + id, contenuLocal);
+    conflitsResolus.push(local.nom);
+  } catch (e) {
+    // Si la copie de secours échoue, on préfère se rétracter plutôt que
+    // d'écraser sans filet — on laisse tomber la synchro de ce carnet.
+    throw e;
   }
-
-  // « ici » : ma version devient la version officielle en ligne.
-  local.modifieLe = new Date().toISOString();
-  await pousserCarnet(local);
-  toast(`« ${local.nom} » : ta version a été envoyée en ligne.`);
 }
 
-/** Ouvre la fenêtre et renvoie « ici » | « ligne » | « deux ». */
-function demanderChoixConflit(infos) {
-  return new Promise((resolve) => {
-    const modal = document.getElementById("modal-conflit");
-    document.getElementById("conflit-nom").textContent = infos.nom;
-    document.getElementById("conflit-ici-resume").textContent = infos.resumeIci;
-    document.getElementById("conflit-ici-date").textContent = "Modifié le " + infos.dateIci;
-    document.getElementById("conflit-ligne-resume").textContent = infos.resumeLigne;
-    document.getElementById("conflit-ligne-date").textContent = "Modifié le " + infos.dateLigne;
-    modal.hidden = false;
-
-    const boutons = [
-      ["conflit-garder-ici", "ici"],
-      ["conflit-garder-ligne", "ligne"],
-      ["conflit-garder-deux", "deux"],
-    ];
-    const nettoyer = [];
-    boutons.forEach(([id, valeur]) => {
-      const el = document.getElementById(id);
-      const gestionnaire = () => {
-        nettoyer.forEach((f) => f());
-        modal.hidden = true;
-        resolve(valeur);
-      };
-      el.addEventListener("click", gestionnaire);
-      nettoyer.push(() => el.removeEventListener("click", gestionnaire));
-    });
-  });
+/** Contenu local d'un carnet (celui en mémoire s'il est ouvert). */
+async function lireContenuLocal(id) {
+  if (id === etat.carnetActifId) return serialiserCarnet();
+  return await dbChargerCle("carnet-" + id).catch(() => null);
 }
 
 /* ---------- Poussée automatique après chaque modification ---------- */

@@ -1780,33 +1780,6 @@ body.chargement-en-cours .layout { visibility: hidden; }
   vertical-align: middle;
 }
 
-/* ---------- Fenêtre de conflit de synchronisation ---------- */
-.conflit-versions {
-  display: flex;
-  gap: 10px;
-  margin: 0 0 16px;
-}
-.conflit-version {
-  flex: 1;
-  min-width: 0;
-  border: 1.5px solid var(--ligne);
-  border-radius: var(--rayon);
-  padding: 11px 12px;
-  background: rgba(47, 59, 52, 0.03);
-}
-.conflit-version-titre {
-  font-size: 12px;
-  font-weight: 800;
-  color: var(--foret-fonce);
-  margin-bottom: 5px;
-}
-.conflit-version-resume { font-size: 14px; font-weight: 650; color: var(--encre); }
-.conflit-version-date { font-size: 11.5px; color: var(--encre-douce); margin-top: 4px; }
-.conflit-aide { font-weight: 500; opacity: 0.85; font-size: 12px; }
-
-@media (max-width: 560px) {
-  .conflit-versions { flex-direction: column; }
-}
 .modal-actions {
   display: flex;
   justify-content: flex-end;
