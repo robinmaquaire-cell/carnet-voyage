@@ -402,6 +402,85 @@ function marquerCarnetSynchronise(c, horodatage) {
   c.syncLe = horodatage || c.modifieLe || new Date().toISOString();
 }
 
+/* ---------- Modèle « Sur cet appareil » / « En ligne » (jalon S1) ---------
+ * Jusqu'ici, un carnet local et sa version en ligne étaient fusionnés en un
+ * seul objet, avec choix forcé en cas de divergence. Le nouveau modèle
+ * représente les deux univers séparément, sans jamais écraser en silence :
+ * l'onglet « En ligne » lit `etat.enLigne` (miroir de la table SQL, rafraîchi
+ * à chaque synchro), l'onglet « Sur cet appareil » lit `etat.carnets`.
+ *
+ * S1 (ici) : construire ce miroir et la fonction de comparaison, sans rien
+ * changer à l'UI actuelle.
+ * S2 : accueil à deux onglets utilisant ces fonctions.
+ * S3 : bouton « Envoyer vers... » (fusion additive).
+ * S4 : suppression de l'ancien modal de conflit.
+ * -------------------------------------------------------------------------- */
+
+/** Fiches distantes reçues à la dernière synchro, indexées par uuid. */
+function ficheDistantes() {
+  if (!etat.enLigne) etat.enLigne = new Map();
+  return etat.enLigne;
+}
+
+/**
+ * Note ce qu'on vient de recevoir du serveur pour un uuid donné.
+ * `fiche = null` retire l'entrée (utile si on découvre qu'elle n'existe plus).
+ */
+function noterFicheDistante(uuid, fiche) {
+  const carte = ficheDistantes();
+  if (fiche == null) carte.delete(uuid);
+  else carte.set(uuid, fiche);
+}
+
+/** Remplace TOUTES les fiches connues (après un SELECT sans filtre). */
+function remplacerFichesDistantes(lignes) {
+  const carte = ficheDistantes();
+  carte.clear();
+  (lignes || []).forEach((r) => { if (r && r.uuid) carte.set(r.uuid, r); });
+}
+
+/**
+ * État de synchronisation d'un carnet LOCAL vis-à-vis de sa version en ligne.
+ * Renvoie l'un de :
+ *   - "pas-connecte"       : pas de compte configuré/connecté, on ne sait rien.
+ *   - "jamais-envoye"      : ce carnet n'a aucune fiche en ligne.
+ *   - "synchronise"        : les deux dates coïncident, rien à faire.
+ *   - "modifs-locales"     : modifié ici depuis la dernière synchro (à envoyer).
+ *   - "distant-plus-recent": la version en ligne a évolué (à télécharger).
+ *   - "divergent"          : modifié DES DEUX côtés depuis la dernière synchro.
+ * Le pilotage de l'UI (pastilles, onglets) se base sur cette fonction.
+ */
+function statutSync(c) {
+  if (!c || !nuageConfigure() || !nuageConnecte()) return "pas-connecte";
+  const distant = ficheDistantes().get(c.uuid);
+  if (!distant || distant.statut === "supprime") return "jamais-envoye";
+  const dateLoc = tempsDe(c.modifieLe);
+  const dateDis = tempsDe(distant.modifie_le);
+  if (dateLoc === dateDis) return "synchronise";
+  const dateSync = tempsDe(c.syncLe);
+  const bougeLoc = dateLoc > dateSync;
+  const bougeDis = dateDis > dateSync;
+  // Sans syncLe (carnet d'avant ce mécanisme), on se rabat sur le simple
+  // « le plus récent gagne » — pas de divergence spéculée sur l'inconnu.
+  if (!c.syncLe) return dateLoc > dateDis ? "modifs-locales" : "distant-plus-recent";
+  if (bougeLoc && bougeDis) return "divergent";
+  if (bougeLoc) return "modifs-locales";
+  return "distant-plus-recent";
+}
+
+/** Fiches distantes n'ayant PAS de carnet local correspondant (à télécharger). */
+function fichesDistantesSeules() {
+  if (!nuageConnecte()) return [];
+  const carte = ficheDistantes();
+  const uuidsLocaux = new Set((etat.carnets || []).map((c) => c.uuid));
+  const seules = [];
+  for (const [uuid, fiche] of carte) {
+    if (!fiche || fiche.statut === "supprime") continue;
+    if (!uuidsLocaux.has(uuid)) seules.push(fiche);
+  }
+  return seules;
+}
+
 /** Envoie un carnet en ligne (contenu + fiche pour la liste). */
 async function pousserCarnet(c) {
   if (!nuageConnecte() || !c || !c.uuid || !peutEcrireNuage(c)) return;
@@ -712,6 +791,16 @@ async function synchroniserNuage(cible) {
     const { data: lignes, error } = await requete;
     if (error) throw error;
     const distants = lignes || [];
+    // Miroir en mémoire des fiches distantes — utilisé par statutSync() pour
+    // savoir où en est chaque carnet local par rapport au serveur (jalon S1).
+    // Sur une synchro ciblée, on met à jour seulement cette entrée-là ; sur
+    // une synchro complète, on remplace tout d'un coup.
+    if (uuidCible) {
+      const trouvee = distants.find((r) => r.uuid === uuidCible);
+      noterFicheDistante(uuidCible, trouvee || null);
+    } else {
+      remplacerFichesDistantes(distants);
+    }
     const monId = sessionNuage.user.id;
     const parUuid = new Map(etat.carnets.map((c) => [c.uuid, c]));
 
