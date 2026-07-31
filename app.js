@@ -4193,10 +4193,33 @@ async function demarrerCarnets() {
     }
     etat.carnets = aGarder;
 
+    // MIGRATION (une seule fois) : jusqu'ici, tous les carnets etaient
+    // stockes en local automatiquement. Le champ `horsLigne` n'existait pas.
+    // Pour ne rien casser aux utilisateurs deja installes, on marque
+    // hors-ligne tous les carnets dont un contenu est actuellement stocke
+    // en IndexedDB. Sinon la prochaine synchro pourrait les effacer.
+    const versionMigrationHorsLigne = 1;
+    const dejaMigre = index.migrationHorsLigne === versionMigrationHorsLigne;
+    if (!dejaMigre) {
+      for (const c of etat.carnets) {
+        const donnees = await dbChargerCle("carnet-" + c.id).catch(() => null);
+        if (carnetADuContenu(donnees)) c.horsLigne = true;
+      }
+    }
+
     etat.carnetActifId = etat.carnets.some((c) => c.id === index.actifId)
       ? index.actifId
       : (etat.carnets[0] ? etat.carnets[0].id : 0);
     indexCarnetsPret = true; // l'index a bien été lu : les écritures sont sûres
+    // On memorise que la migration a ete faite (sinon on la referait chaque
+    // demarrage — inutilement couteux : un dbChargerCle par carnet).
+    if (!dejaMigre) {
+      await sauverIndexCarnets();
+      try {
+        const idx = await dbChargerCle("index");
+        if (idx) { idx.migrationHorsLigne = versionMigrationHorsLigne; await dbSauverCle("index", idx); }
+      } catch (e) {}
+    }
 
     if (etat.carnetActifId) {
       const donnees = await dbChargerCle("carnet-" + etat.carnetActifId);
