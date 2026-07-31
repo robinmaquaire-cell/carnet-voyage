@@ -1431,6 +1431,11 @@ body:not(.mode-visualisation) .vecteur-interactif { touch-action: none; }
   background: rgba(47,59,52,0.45);
 }
 .modal-overlay[hidden] { display: none; }
+/* modal-dialogue sert de fenêtre de confirmation posée PAR-DESSUS n'importe
+   quelle autre modale (ex : « Repartir de zéro » depuis la fenêtre Compte).
+   Sans ça, avec le même z-index, la confirmation restait cachée derrière et
+   le clic sur le bouton semblait ne rien faire. */
+#modal-dialogue { z-index: 1600; }
 .modal-card {
   background: var(--carte-bg);
   border-radius: 18px;
