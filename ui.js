@@ -620,6 +620,26 @@ function renderAccueilListe() {
       carte.appendChild(hors);
     }
 
+    // Un carnet créé hors ligne (jamais synchronisé) peut être VERSÉ dans un
+    // carnet en ligne existant, plutôt que de créer un doublon en ligne à la
+    // synchro. Utile quand on a dupliqué un carnet pour bosser dessus hors
+    // connexion et qu'on veut ensuite fusionner dans l'original.
+    if (!c.syncLe && !c.partage
+        && typeof nuageConnecte === "function" && nuageConnecte()
+        && typeof ciblesEnvoiPossibles === "function"
+        && ciblesEnvoiPossibles().length > 0) {
+      const env = document.createElement("button");
+      env.className = "carnet-carte-envoyer";
+      env.type = "button";
+      env.textContent = "📤 Envoyer vers un carnet en ligne";
+      env.title = "Verser le contenu de ce carnet dans un carnet déjà en ligne.";
+      env.addEventListener("click", (e) => {
+        e.stopPropagation();
+        ouvrirModalEnvoi(c);
+      });
+      carte.appendChild(env);
+    }
+
     // Pour les carnets partagés : afficher le pseudo de l'auteur si connu.
     if (c.partage) {
       const auteur = auteursPartagesCache.get(c.partage.proprietaire);

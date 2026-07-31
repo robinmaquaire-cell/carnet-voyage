@@ -64,7 +64,7 @@ body {
 }
 
 .topbar { position: relative; }
-.topbar-right { display: flex; align-items: center; gap: 10px; }
+.topbar-right { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
 
 /* Indicateur "Enregistré" qui apparaît brièvement après chaque sauvegarde */
 .statut-sauvegarde {
@@ -2432,6 +2432,16 @@ body.mode-visualisation #panneau {
     padding: 8px 10px;
     padding-top: calc(8px + env(safe-area-inset-top, 0px)); /* encoche iPhone */
   }
+  /* Barre de droite : les boutons cassent proprement sur 2 lignes plutôt que
+     de forcer un débordement horizontal (qui ferait dézoomer tout le mobile). */
+  .topbar-right { gap: 6px; }
+  .btn-retour { padding: 6px 10px; font-size: 13px; }
+  /* Sur téléphone, on ne garde que l'emoji des boutons éditeur (le libellé
+     complet reste dans le title, lisible via tooltip / lecteur d'écran). */
+  .btn-retour .btn-libelle { display: none; }
+  .editeur-identite { padding: 4px 8px; font-size: 14px; }
+  .editeur-identite #editeur-nom { max-width: 26vw; }
+  .compte-btn { padding: 6px 10px; font-size: 13px; }
   .brand-name { font-size: 15px; }
   .statut-sauvegarde { display: none; } /* le petit "toast" suffit sur mobile */
   .statut-attente { font-size: 11px; padding: 2px 7px; } /* mais celui-ci reste */
@@ -3416,6 +3426,20 @@ body.vue-editeur.mode-visualisation .rail { display: none !important; }
   background: rgba(46, 158, 107, 0.1);
   color: var(--ok, #2e9e6b);
 }
+
+/* Bouton « Envoyer vers un carnet en ligne » — cartes du volet Créés hors ligne. */
+.carnet-carte-envoyer {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin: 8px 0 0 8px;
+  padding: 5px 10px;
+  border: 1px dashed rgba(200, 137, 61, 0.5);
+  border-radius: 999px;
+  background: rgba(200, 137, 61, 0.08);
+  font: inherit; font-size: 12px; font-weight: 600;
+  color: var(--ocre, #c8893d);
+  cursor: pointer;
+}
+.carnet-carte-envoyer:hover { background: rgba(200, 137, 61, 0.18); }
 
 .carnet-carte-desc {
   margin: 8px 0 0;

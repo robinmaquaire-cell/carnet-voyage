@@ -468,6 +468,203 @@ function statutSync(c) {
   return "distant-plus-recent";
 }
 
+/* ---------- Fusion « Envoyer vers un carnet en ligne » (jalon S3) ---------
+ * Cas d'usage : « Lofoten (copie) » a été créé hors ligne pendant qu'on ne
+ * pouvait pas envoyer, il a plus de souvenirs que sa version en ligne. On
+ * veut verser son contenu dans « Lofoten » en ligne, sans en faire un
+ * deuxième carnet en ligne.
+ *
+ * Stratégie : fusion ADDITIVE par id de souvenir. Ce qui existe seulement
+ * dans le carnet local est ajouté ; ce qui existe déjà en ligne n'est jamais
+ * modifié (on ne peut pas savoir si c'est plus récent). Un bilan clair
+ * explique ce qui n'a pas été propagé.
+ * -------------------------------------------------------------------------- */
+
+/** Fusionne le contenu « source » (local) dans « base » (en ligne). Additif. */
+function fusionAdditive(base, source) {
+  const bilan = { ajoutesSouv: 0, ajoutesStock: 0, ajoutesAnnot: 0,
+                  modifsIgnorees: 0, ajoutesGpx: 0 };
+  const clone = JSON.parse(JSON.stringify(base));
+  // Souvenirs (posés) — par id numérique. Deux souvenirs avec le même id des
+  // deux côtés = c'est le même souvenir : on garde celui de la version en
+  // ligne (on ne sait pas si sa version locale est plus récente ou pas).
+  const idsSouv = new Set((clone.souvenirs || []).map((s) => s.id));
+  (source.souvenirs || []).forEach((s) => {
+    if (idsSouv.has(s.id)) {
+      const enLigne = clone.souvenirs.find((x) => x.id === s.id);
+      if (JSON.stringify(enLigne) !== JSON.stringify(s)) bilan.modifsIgnorees++;
+    } else {
+      clone.souvenirs = clone.souvenirs || [];
+      clone.souvenirs.push(s);
+      bilan.ajoutesSouv++;
+    }
+  });
+  // Réserve (souvenirs sans position).
+  const idsStock = new Set((clone.stock || []).map((s) => s.id));
+  (source.stock || []).forEach((s) => {
+    if (idsStock.has(s.id)) {
+      const enLigne = clone.stock.find((x) => x.id === s.id);
+      if (JSON.stringify(enLigne) !== JSON.stringify(s)) bilan.modifsIgnorees++;
+    } else {
+      clone.stock = clone.stock || [];
+      clone.stock.push(s);
+      bilan.ajoutesStock++;
+    }
+  });
+  // Éléments posés (annotations, textes, pictos, dessins). Même règle.
+  const idsAnn = new Set((clone.annotations || []).map((a) => a.id));
+  (source.annotations || []).forEach((a) => {
+    if (idsAnn.has(a.id)) {
+      const enLigne = clone.annotations.find((x) => x.id === a.id);
+      if (JSON.stringify(enLigne) !== JSON.stringify(a)) bilan.modifsIgnorees++;
+    } else {
+      clone.annotations = clone.annotations || [];
+      clone.annotations.push(a);
+      bilan.ajoutesAnnot++;
+    }
+  });
+  // GPX supplémentaires (par id).
+  const idsGpx = new Set((clone.gpx || []).map((g) => g.id));
+  (source.gpx || []).forEach((g) => {
+    if (!idsGpx.has(g.id)) {
+      clone.gpx = clone.gpx || [];
+      clone.gpx.push(g);
+      bilan.ajoutesGpx++;
+    }
+  });
+  // Le compteur d'id ne doit jamais reculer, sinon on risque de re-attribuer
+  // un id déjà utilisé et de casser la fusion suivante.
+  clone.prochainId = Math.max(base.prochainId || 1, source.prochainId || 1);
+  return { fusionne: clone, bilan };
+}
+
+/** Bilan lisible d'une fusion pour l'affiche en toast. */
+function decrireBilanFusion(bilan) {
+  const total = bilan.ajoutesSouv + bilan.ajoutesStock + bilan.ajoutesAnnot + bilan.ajoutesGpx;
+  const parts = [];
+  if (bilan.ajoutesSouv)  parts.push(`${bilan.ajoutesSouv} souvenir(s) ajouté(s)`);
+  if (bilan.ajoutesStock) parts.push(`${bilan.ajoutesStock} en réserve`);
+  if (bilan.ajoutesAnnot) parts.push(`${bilan.ajoutesAnnot} élément(s) posé(s)`);
+  if (bilan.ajoutesGpx)   parts.push(`${bilan.ajoutesGpx} tracé(s) GPX`);
+  const debut = total === 0 ? "Aucun ajout" : parts.join(", ");
+  const suite = bilan.modifsIgnorees
+    ? ` — ${bilan.modifsIgnorees} modification(s) locale(s) NON envoyée(s) (déjà présente(s) en ligne, ligne préservée).`
+    : "";
+  return debut + suite;
+}
+
+/**
+ * Récupère le contenu ACTUEL d'un carnet en ligne : depuis IndexedDB s'il est
+ * disponible hors ligne, sinon en le téléchargeant du serveur.
+ */
+async function chargerContenuCible(c) {
+  if (c.horsLigne) {
+    const local = await dbChargerCle("carnet-" + c.id).catch(() => null);
+    if (local) return local;
+  }
+  return telechargerCarnetResolu(c);
+}
+
+/**
+ * Envoie le contenu d'un carnet LOCAL (jamais synchronisé) DANS un carnet
+ * EN LIGNE existant. Fusion additive. Après succès, le carnet local prend
+ * l'uuid du carnet cible et est retiré de la liste (il devient LA copie
+ * locale de la cible).
+ */
+async function envoyerVersCarnetEnLigne(carnetLocal, cible) {
+  if (!nuageConnecte()) { toast("Connecte-toi d'abord.", true); return false; }
+  if (!carnetLocal || !cible || carnetLocal.uuid === cible.uuid) return false;
+  if (cible.partage && cible.partage.droit !== "edition") {
+    toast("Ce carnet cible est en lecture seule — impossible d'y envoyer.", true);
+    return false;
+  }
+  toast(`Envoi du contenu de « ${carnetLocal.nom} » vers « ${cible.nom} »…`);
+
+  try {
+    const source = await dbChargerCle("carnet-" + carnetLocal.id);
+    if (!carnetADuContenu(source)) {
+      toast("Ce carnet n'a rien à envoyer.", true); return false;
+    }
+    const base = await chargerContenuCible(cible);
+    if (!base) { toast("Impossible de récupérer la cible.", true); return false; }
+    const { fusionne, bilan } = fusionAdditive(base, source);
+
+    // On stocke le résultat en local sous l'id de la CIBLE (l'utilisateur
+    // gardera « Lofoten » disponible hors ligne enrichi), puis on pousse.
+    await dbSauverCle("carnet-" + cible.id, fusionne);
+    cible.horsLigne = true;
+    cible.modifieLe = new Date().toISOString();
+
+    // Rattacher le carnet local à la cible en mémoire, pour que la synchro
+    // qui suit voie « Lofoten » et pas « Lofoten (copie) ».
+    const ancienId = carnetLocal.id;
+    // Sauvegarde de secours de l'ancien contenu local, au cas où (jamais perdu).
+    try { await sauvegarderCopieSecours(ancienId); } catch (e) {}
+    try { await dbEffacerCle("carnet-" + ancienId); } catch (e) {}
+    etat.carnets = etat.carnets.filter((c) => c.id !== ancienId);
+    if (etat.carnetActifId === ancienId) etat.carnetActifId = cible.id;
+
+    // On envoie la cible enrichie.
+    if (cible.id === etat.carnetActifId && typeof restaurerCarnet === "function") {
+      restaurerCarnet(fusionne);
+    }
+    await pousserCarnet(cible);
+    await sauverIndexCarnets();
+    if (typeof renderCarnets === "function") renderCarnets();
+
+    toast(`✓ Envoyé vers « ${cible.nom} ». ${decrireBilanFusion(bilan)}`);
+    return true;
+  } catch (e) {
+    toast("L'envoi a échoué : " + ((e && e.message) || "réessaie plus tard."), true);
+    return false;
+  }
+}
+
+/** Liste des carnets EN LIGNE (à moi) où on peut envoyer le contenu d'un local. */
+function ciblesEnvoiPossibles() {
+  return (etat.carnets || []).filter((c) =>
+    c.syncLe && !c.partage && (c.statut || "actif") !== "archive"
+  );
+}
+
+/** Ouvre la fenêtre « Envoyer vers... » pour un carnet local jamais synchronisé. */
+function ouvrirModalEnvoi(carnetLocal) {
+  const modal = document.getElementById("modal-envoi");
+  if (!modal || !carnetLocal) return;
+  document.getElementById("envoi-source-nom").textContent = `« ${carnetLocal.nom} »`;
+  const cibles = ciblesEnvoiPossibles();
+  const select = document.getElementById("envoi-cible");
+  const vide = document.getElementById("envoi-vide");
+  const valider = document.getElementById("envoi-valider");
+  select.innerHTML = "";
+  cibles.forEach((c) => {
+    const opt = document.createElement("option");
+    opt.value = String(c.id);
+    opt.textContent = (c.logo ? c.logo + " " : "") + c.nom;
+    select.appendChild(opt);
+  });
+  const aucune = cibles.length === 0;
+  select.hidden = aucune;
+  vide.hidden = !aucune;
+  valider.disabled = aucune;
+  modal.hidden = false;
+
+  // Un seul brancheur par ouverture pour éviter les doublons.
+  valider.onclick = async () => {
+    const cible = cibles.find((c) => String(c.id) === select.value);
+    if (!cible) return;
+    valider.disabled = true;
+    const ok = await envoyerVersCarnetEnLigne(carnetLocal, cible);
+    valider.disabled = false;
+    if (ok) modal.hidden = true;
+  };
+}
+
+function fermerModalEnvoi() {
+  const modal = document.getElementById("modal-envoi");
+  if (modal) modal.hidden = true;
+}
+
 /** Fiches distantes n'ayant PAS de carnet local correspondant (à télécharger). */
 function fichesDistantesSeules() {
   if (!nuageConnecte()) return [];
@@ -2187,8 +2384,18 @@ function brancherProfilUI() {
   champ.addEventListener("keydown", (e) => { if (e.key === "Enter") validerModalProfil(); });
 }
 
+function brancherEnvoiUI() {
+  const modal = document.getElementById("modal-envoi");
+  if (!modal) return;
+  document.getElementById("envoi-annuler").addEventListener("click", fermerModalEnvoi);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !modal.hidden) { fermerModalEnvoi(); e.stopPropagation(); }
+  }, true);
+}
+
 function brancherCompteUI() {
   brancherProfilUI();
+  brancherEnvoiUI();
   document.getElementById("compte-btn")
     .addEventListener("click", () => ouvrirModalCompte());
   document.getElementById("compte-fermer")

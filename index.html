@@ -54,7 +54,7 @@
         <span class="brand-name">LogBookMap</span>
       </div>
       <button id="btn-retour-accueil" class="btn-retour editeur-seule" title="Revenir à la carte globale">
-        ← Carte globale
+        <span aria-hidden="true">←</span><span class="btn-libelle"> Carte globale</span>
       </button>
       <button id="editeur-identite" class="editeur-identite editeur-seule" title="Infos du carnet (onglet Carnets)">
         <span id="editeur-logo">📖</span>
@@ -62,7 +62,7 @@
       </button>
       <!-- En consultation (Vizu) : menu ouvrable des souvenirs du carnet -->
       <button id="btn-vizu-souvenirs" class="btn-retour editeur-seule visu-seule focus-carnet-seule" title="Voir les souvenirs de ce carnet">
-        📍 Souvenirs
+        <span aria-hidden="true">📍</span><span class="btn-libelle"> Souvenirs</span>
       </button>
     </div>
 
@@ -74,16 +74,16 @@
       <span id="statut-attente" class="statut-attente" hidden>● Non synchronisé</span>
       <!-- Carnet ouvert en ÉDITION : bascule vers la consultation (Vizu) -->
       <button id="btn-vizu" class="btn-retour editeur-seule edition-seule"
-              title="Voir le carnet comme tes invités (consultation)">👁 Aperçu</button>
+              title="Voir le carnet comme tes invités (consultation)"><span aria-hidden="true">👁</span><span class="btn-libelle"> Aperçu</span></button>
       <!-- Carnet ouvert en CONSULTATION : bascule vers l'édition -->
       <button id="btn-editer" class="btn-retour editeur-seule visu-seule focus-carnet-seule"
-              title="Modifier ce carnet">✏️ Éditer</button>
+              title="Modifier ce carnet"><span aria-hidden="true">✏️</span><span class="btn-libelle"> Éditer</span></button>
       <!-- Partager le carnet / voir qui y a accès (dans les deux modes) -->
       <button id="btn-partager-carnet" class="btn-retour editeur-seule focus-carnet-seule"
-              title="Partager ce carnet et voir qui y a accès">🔗 Partager</button>
+              title="Partager ce carnet et voir qui y a accès"><span aria-hidden="true">🔗</span><span class="btn-libelle"> Partager</span></button>
       <!-- Mise en page / impression du carnet (4e écran : Édition d'impression) -->
       <button id="carnet-imprimer" class="btn-retour editeur-seule focus-carnet-seule"
-              title="Mettre en page et imprimer ce carnet">🖨️ Imprimer</button>
+              title="Mettre en page et imprimer ce carnet"><span aria-hidden="true">🖨️</span><span class="btn-libelle"> Imprimer</span></button>
       <!-- Style de la carte globale (fond, ambiance — indépendant des carnets) -->
       <button id="accueil-style-btn" class="btn-retour accueil-seule" title="Style de la carte globale">🎨</button>
       <!-- Compte en ligne : avatar + pseudo (façon menu utilisateur). -->
@@ -1336,6 +1336,31 @@
         </div>
 
         <p id="partage-statut" class="gen-statut" hidden></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fenêtre « Envoyer vers un carnet en ligne » : verser le contenu d'un
+       carnet créé hors ligne dans un carnet en ligne existant (fusion
+       additive). Utile pour les carnets nés hors connexion (« copie »). -->
+  <div id="modal-envoi" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <h2>📤 Envoyer vers un carnet en ligne</h2>
+      <p class="modal-sous-titre">
+        Le contenu de <strong id="envoi-source-nom">—</strong> va être versé
+        dans le carnet en ligne que tu choisis. Les <strong>nouveaux</strong>
+        souvenirs sont ajoutés ; ceux qui existent déjà en ligne ne sont pas
+        touchés (pas d'écrasement).
+      </p>
+      <label class="style-label">Carnet cible en ligne</label>
+      <select id="envoi-cible" class="style-input"></select>
+      <p id="envoi-vide" class="style-aide" hidden>
+        Aucun carnet en ligne pour l'instant. Utilise plutôt « Synchroniser »
+        pour créer ce carnet en ligne comme un nouveau.
+      </p>
+      <div class="modal-actions">
+        <button id="envoi-annuler" class="btn btn-ghost">Annuler</button>
+        <button id="envoi-valider" class="btn btn-accent">Envoyer</button>
       </div>
     </div>
   </div>

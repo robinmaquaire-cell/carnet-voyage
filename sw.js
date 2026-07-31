@@ -7,7 +7,7 @@
    images de carte, elles, viennent d'Internet à la demande.
    ========================================================= */
 
-const CACHE = "logbookmap-v85";
+const CACHE = "logbookmap-v88";
 
 // Les fichiers locaux de l'application à garder en cache.
 const ASSETS = [
@@ -44,25 +44,28 @@ self.addEventListener("activate", (e) => {
   );
 });
 
-// Requêtes : pour nos fichiers (même origine), on sert le cache puis le réseau.
-// Le reste (tuiles de carte, librairies CDN) part directement sur le réseau.
+// Requêtes : pour nos fichiers (même origine), on tente d'abord le réseau
+// (pour toujours avoir la dernière version), et on retombe sur le cache si
+// on est hors-ligne. Le reste (tuiles de carte, librairies CDN) part
+// directement sur le réseau, sans intervention du service worker.
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return; // tuiles & CDN : réseau direct
 
   e.respondWith(
-    caches.match(e.request).then((cache) => {
-      return (
-        cache ||
-        fetch(e.request)
-          .then((reponse) => {
-            const copie = reponse.clone();
-            caches.open(CACHE).then((c) => c.put(e.request, copie));
-            return reponse;
-          })
-          .catch(() => caches.match("index.html"))
-      );
-    })
+    fetch(e.request)
+      .then((reponse) => {
+        // On ne met en cache que les réponses valides (évite d'écraser un
+        // fichier correct par une page d'erreur du serveur).
+        if (reponse && reponse.ok) {
+          const copie = reponse.clone();
+          caches.open(CACHE).then((c) => c.put(e.request, copie));
+        }
+        return reponse;
+      })
+      .catch(() =>
+        caches.match(e.request).then((cache) => cache || caches.match("index.html"))
+      )
   );
 });
