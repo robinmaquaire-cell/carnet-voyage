@@ -532,19 +532,32 @@ async function supprimerCarnetNuage(carnet) {
   }
 }
 
-/** Recharge la table des droits des carnets partagés AVEC MOI. */
+/** Recharge la table des droits des carnets partagés AVEC MOI (par e-mail
+ *  ET par contact — on garde le plus permissif si les deux tables donnent
+ *  un droit sur le même carnet). */
 async function chargerDroitsPartages() {
   droitsPartages = new Map();
   if (!nuageConnecte()) return;
+  const noterDroit = (uuid, droit) => {
+    const d = droit === "edition" ? "edition" : "lecture";
+    const actuel = droitsPartages.get(uuid);
+    if (actuel !== "edition") droitsPartages.set(uuid, d);
+  };
+  // 1) Ancienne table (partage par e-mail) — encore lue pour compatibilité.
   try {
     const mail = (sessionNuage.user.email || "").toLowerCase();
     const { data } = await sbClient.from("carnet_partages").select("carnet_uuid, email, droit");
     (data || []).forEach((p) => {
-      if ((p.email || "").toLowerCase() === mail) {
-        droitsPartages.set(p.carnet_uuid, p.droit === "edition" ? "edition" : "lecture");
-      }
+      if ((p.email || "").toLowerCase() === mail) noterDroit(p.carnet_uuid, p.droit);
     });
   } catch (e) { /* table absente (SQL pas encore joué) : pas de partages */ }
+  // 2) Nouvelle table (partage par contact / user_id) — source principale.
+  try {
+    const monId = sessionNuage.user.id;
+    const { data } = await sbClient.from("carnet_partages_contact")
+      .select("carnet_uuid, droit").eq("destinataire", monId);
+    (data || []).forEach((p) => noterDroit(p.carnet_uuid, p.droit));
+  } catch (e) { /* table absente (SQL 9 pas encore joué) : pas de partages contact */ }
 }
 
 /**

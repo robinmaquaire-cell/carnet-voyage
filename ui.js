@@ -47,6 +47,7 @@ async function basculerVersAccueil(premierChargement) {
   // Revenir à l'accueil = défocaliser (on repart sur la vue « tous les carnets »).
   etat.carnetFocalise = null;
   document.body.classList.remove("carnet-focalise");
+  document.body.classList.remove("carnet-lecture-seule");
 
   etat.vue = "accueil";
   document.body.classList.add("vue-accueil");
@@ -105,6 +106,7 @@ async function basculerVersEditeur(id) {
 
   definirVisibiliteCarnetActif(true);
   majInterfaceCarnets();
+  majClasseLectureSeule();
   majEcranVide();
   const zone = c && typeof normaliserZone === "function" && normaliserZone(c.zone);
   if (zone) {
@@ -205,6 +207,7 @@ async function focaliserCarnet(id) {
 
   // Affichage des détails du carnet focalisé + zoom sur son étendue.
   definirVisibiliteCarnetActif(true);
+  majClasseLectureSeule();
   renderAccueilListe();          // met à jour la carte « actif » dans la liste
   zoomerSurCarnet(id);
   setTimeout(() => etat.carte.invalidateSize(), 60);
@@ -215,6 +218,7 @@ async function defocaliserCarnet() {
   if (etat.carnetFocalise == null) return;
   etat.carnetFocalise = null;
   document.body.classList.remove("carnet-focalise");
+  document.body.classList.remove("carnet-lecture-seule");
   // On rebascule les détails du carnet actif en état « accueil » (masqués).
   definirVisibiliteCarnetActif(true);
   // On recharge les autres carnets qu'on avait mis de côté.
@@ -420,6 +424,15 @@ function libellePlageDates(c) {
   if (!c.du && !c.au) return "";
   if (c.du === c.au) return formaterDate(c.du);
   return `${formaterDate(c.du)} → ${formaterDate(c.au)}`;
+}
+
+/** Repose la classe body.carnet-lecture-seule selon le carnet actif :
+ *  masque le bouton « ✏️ Éditer » (et l'entrée en édition en général) quand
+ *  ce carnet t'a été partagé en lecture. */
+function majClasseLectureSeule() {
+  const c = typeof carnetActif === "function" ? carnetActif() : null;
+  const lecture = !!(c && c.partage && c.partage.droit !== "edition");
+  document.body.classList.toggle("carnet-lecture-seule", lecture);
 }
 
 // Cache des profils des auteurs de carnets partagés avec moi
@@ -2432,8 +2445,14 @@ function brancherUI() {
     .addEventListener("click", () => { definirMode("edition"); ouvrirOnglet("carnets"); });
   // « Éditer » : passe en mode édition. Depuis l'accueil focalisé, on quitte
   // aussi la carte globale pour entrer dans l'éditeur (rail + tiroir).
+  // Bloque si le carnet actif est partagé en lecture seule.
   document.getElementById("btn-editer")
     .addEventListener("click", () => {
+      const c = typeof carnetActif === "function" ? carnetActif() : null;
+      if (c && c.partage && c.partage.droit !== "edition") {
+        toast("Ce carnet t'a été partagé en lecture seule — tu ne peux pas le modifier.", true);
+        return;
+      }
       if (etat.vue === "accueil") basculerVersEditeur();
       else definirMode("edition");
     });

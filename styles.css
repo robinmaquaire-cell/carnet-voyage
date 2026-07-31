@@ -2796,6 +2796,13 @@ body.vue-editeur .accueil-seule { display: none !important; }
 body.vue-accueil.carnet-focalise .editeur-seule.focus-carnet-seule { display: inline-flex !important; }
 body.vue-accueil.carnet-focalise:not(.mode-visualisation) .visu-seule.focus-carnet-seule { display: inline-flex !important; }
 
+/* Carnet partagé en LECTURE seule : on masque ce qui permettrait de le
+   modifier (« ✏️ Éditer ») et de gerer son partage (seul le proprietaire
+   gere sa liste). L'impression reste possible : elle ne modifie rien. */
+body.carnet-lecture-seule #btn-editer,
+body.carnet-lecture-seule #btn-partager-carnet { display: none !important; }
+body.carnet-lecture-seule .rail { display: none !important; }
+
 /* Carnet en CONSULTATION (Vizu) : on masque le rail d'édition pour laisser
    une carte plein cadre (schéma « Carte Vizu Carnet »). Les souvenirs et le
    partage restent accessibles par les boutons de la barre du haut. */
