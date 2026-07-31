@@ -1591,6 +1591,23 @@ body.pas-connecte .layout { visibility: hidden; }
   background: rgba(63, 125, 82, 0.06);
   border: 1px dashed var(--ligne, #e5dfd0);
 }
+.page-connexion-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0;
+  font-size: 14px;
+  color: var(--encre, #2f3b34);
+  cursor: pointer;
+  user-select: none;
+}
+.page-connexion-switch input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--foret, #3f7d52);
+  cursor: pointer;
+  margin: 0;
+}
 .page-connexion-btn {
   margin-top: 10px;
   width: 100%;

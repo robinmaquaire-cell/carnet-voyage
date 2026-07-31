@@ -231,17 +231,43 @@ function demarrerNuage() {
     masquerChargementApp();
     return;
   }
-  // Options d'auth explicites : la session est mémorisée dans localStorage et
-  // rafraîchie automatiquement — l'utilisateur reste connecté d'une visite à
-  // l'autre, tant qu'il ne clique pas sur « Se déconnecter ». C'est le
-  // comportement par défaut de supabase-js, on l'écrit ici pour se prémunir
-  // contre une future régression et pour rendre le code lisible.
+  // Options d'auth explicites : la session est mémorisée et rafraîchie
+  // automatiquement — l'utilisateur reste connecté d'une visite à l'autre,
+  // tant qu'il ne clique pas sur « Se déconnecter ».
+  //
+  // Stockage « double » : par défaut on écrit dans localStorage (session
+  // conservée d'une ouverture à l'autre). Si l'utilisateur a décoché
+  // « Rester connecté sur cet appareil », on bascule vers sessionStorage
+  // (la session est oubliée dès la fermeture de l'onglet). Le choix est
+  // relu à chaque écriture : changer d'avis après connexion prend effet
+  // dès l'enregistrement suivant, sans reload.
+  const stockageAuth = {
+    getItem(cle) {
+      try { return localStorage.getItem(cle) || sessionStorage.getItem(cle); }
+      catch (e) { return null; }
+    },
+    setItem(cle, valeur) {
+      try {
+        if (localStorage.getItem(CLE_EPHEMERE) === "1") {
+          sessionStorage.setItem(cle, valeur);
+          localStorage.removeItem(cle);
+        } else {
+          localStorage.setItem(cle, valeur);
+          sessionStorage.removeItem(cle);
+        }
+      } catch (e) {}
+    },
+    removeItem(cle) {
+      try { localStorage.removeItem(cle); } catch (e) {}
+      try { sessionStorage.removeItem(cle); } catch (e) {}
+    },
+  };
   sbClient = window.supabase.createClient(window.CONFIG_NUAGE.url, window.CONFIG_NUAGE.cle, {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      storage: (typeof window !== "undefined" && window.localStorage) ? window.localStorage : undefined,
+      storage: stockageAuth,
     },
   });
 
@@ -327,6 +353,13 @@ function majPageConnexion() {
   }
 }
 
+/** Enregistre le choix « Rester connecté » de la page de connexion. */
+function enregistrerChoixRester() {
+  const rester = document.getElementById("connexion-rester");
+  if (!rester) return;
+  try { localStorage.setItem(CLE_EPHEMERE, rester.checked ? "0" : "1"); } catch (e) {}
+}
+
 /** Envoie un lien magique depuis la page de connexion plein écran. */
 async function envoyerLienDepuisConnexion() {
   if (!sbClient) return;
@@ -335,6 +368,7 @@ async function envoyerLienDepuisConnexion() {
     statutConnexion("Écris une adresse e-mail valide.", true);
     return;
   }
+  enregistrerChoixRester();
   const bouton = document.getElementById("connexion-lien");
   await avecChargement(bouton, "Envoi du lien…", (async () => {
     statutConnexion("Envoi du lien de connexion…");
@@ -361,6 +395,7 @@ async function connecterMdpDepuisConnexion() {
     statutConnexion("Saisis ton mot de passe (ou utilise le bouton « Recevoir un lien »).", true);
     return;
   }
+  enregistrerChoixRester();
   const bouton = document.getElementById("connexion-mdp-btn");
   await avecChargement(bouton, "Connexion…", (async () => {
     statutConnexion("Connexion…");
@@ -380,6 +415,12 @@ function brancherPageConnexion() {
   const champMdp = document.getElementById("connexion-mdp");
   const bascule = document.getElementById("connexion-bascule-mdp");
   const zoneMdp = document.getElementById("connexion-zone-mdp");
+  const rester = document.getElementById("connexion-rester");
+  // Reflète le choix mémorisé (par défaut : coché = rester connecté).
+  if (rester) {
+    try { rester.checked = localStorage.getItem(CLE_EPHEMERE) !== "1"; } catch (e) {}
+    rester.addEventListener("change", enregistrerChoixRester);
+  }
   if (lien) lien.addEventListener("click", envoyerLienDepuisConnexion);
   if (btnMdp) btnMdp.addEventListener("click", connecterMdpDepuisConnexion);
   if (champEmail) champEmail.addEventListener("keydown", (e) => {
