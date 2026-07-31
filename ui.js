@@ -52,6 +52,9 @@ async function basculerVersAccueil(premierChargement) {
   etat.vue = "accueil";
   document.body.classList.add("vue-accueil");
   document.body.classList.remove("vue-editeur");
+  // Nouvelle composition de la carte globale : on remet a zero le compteur
+  // qui evite la superposition des etiquettes.
+  if (typeof reinitPositionsEtiquettes === "function") reinitPositionsEtiquettes();
   // Le masque/bornage de zone est propre à l'éditeur : on le retire.
   if (typeof appliquerZoneCarnet === "function") appliquerZoneCarnet(false);
 
@@ -164,8 +167,10 @@ function definirVisibiliteCarnetActif(visible) {
       centre = [fiche.point.lat, fiche.point.lng];
     }
     if (centre) {
+      const idx = typeof reserverPositionEtiquette === "function"
+        ? reserverPositionEtiquette(centre) : 0;
       etiquetteCarnetActif = L.marker(centre, {
-        icon: creerEtiquetteCarnet(fiche, etat.style),
+        icon: creerEtiquetteCarnet(fiche, etat.style, idx),
       })
         .on("click", () => focaliserCarnet(fiche.id))
         .addTo(carte);
@@ -591,9 +596,14 @@ function renderAccueilListe() {
     }
 
     // Bascule « Sauvegarder hors ligne » : télécharge le contenu du carnet
-    // en local (utile pour un voyage sans connexion), ou le retire.
+    // en local (utile pour un voyage sans connexion), ou le retire. On
+    // l'interdit pour les carnets qui NOUS SONT partagés en lecture seule :
+    // sans ca, le destinataire pourrait garder une copie locale meme apres
+    // que le proprietaire ait retire son acces.
+    const partageEnLecture = c.partage && c.partage.droit !== "edition";
     if (typeof basculerHorsLigne === "function"
-        && typeof nuageConnecte === "function" && nuageConnecte()) {
+        && typeof nuageConnecte === "function" && nuageConnecte()
+        && !partageEnLecture) {
       const hors = document.createElement("button");
       hors.className = "carnet-carte-horsligne" + (c.horsLigne ? " actif" : "");
       hors.type = "button";

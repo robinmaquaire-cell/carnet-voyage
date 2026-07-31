@@ -4502,8 +4502,9 @@ async function afficherFantome(id) {
     : (zoneFiche ? bornesZone(zoneFiche).getCenter()
       : (fiche && fiche.point ? L.latLng(fiche.point.lat, fiche.point.lng) : null));
   if (fiche && centre) {
+    const idx = reserverPositionEtiquette(centre);
     L.marker(centre, {
-      icon: creerEtiquetteCarnet(fiche, style),
+      icon: creerEtiquetteCarnet(fiche, style, idx),
       interactive: true,
     })
       .on("click", () => {
@@ -4516,11 +4517,31 @@ async function afficherFantome(id) {
   etat.fantomes.set(id, fantome);
 }
 
-/** L'étiquette « nom du carnet » affichée sur la carte globale. */
-function creerEtiquetteCarnet(fiche, style) {
+/* Pour éviter que les étiquettes de carnets situés au même endroit se
+ * superposent, on compte combien d'étiquettes existent déjà à cette position
+ * et on décale la nouvelle verticalement de N lignes. Le compteur se remet
+ * à zéro à chaque grande re-composition de la carte (accueil, focus…). */
+const _positionsEtiquettes = new Map();
+
+function reinitPositionsEtiquettes() { _positionsEtiquettes.clear(); }
+
+/** Renvoie combien d'étiquettes sont déjà à cette position (0 = première). */
+function reserverPositionEtiquette(latLng) {
+  if (!latLng) return 0;
+  const cle = latLng.lat.toFixed(3) + "_" + latLng.lng.toFixed(3);
+  const n = _positionsEtiquettes.get(cle) || 0;
+  _positionsEtiquettes.set(cle, n + 1);
+  return n;
+}
+
+/** L'étiquette « nom du carnet » affichée sur la carte globale.
+ *  `indexEmpilement` décale l'étiquette verticalement quand plusieurs
+ *  carnets se retrouvent au même endroit (évite la superposition illisible). */
+function creerEtiquetteCarnet(fiche, style, indexEmpilement) {
   const police = cssDePolice((style && style.titrePolice) || "titre");
   const couleur = (style && style.trace && style.trace.couleur) || "#2f3b34";
   const texte = `${fiche.logo ? echapperHtml(fiche.logo) + " " : ""}${echapperHtml(fiche.nom)}`;
+  const decalY = (indexEmpilement || 0) * 22; // px
   const css = [
     `font-family:${police.replace(/"/g, "&quot;")}`,
     "font-size:15px",
@@ -4528,7 +4549,7 @@ function creerEtiquetteCarnet(fiche, style) {
     `color:${couleur}`,
     "white-space:nowrap",
     "text-shadow:0 1px 3px rgba(255,255,255,0.95), 0 -1px 3px rgba(255,255,255,0.95), 1px 0 3px rgba(255,255,255,0.95), -1px 0 3px rgba(255,255,255,0.95)",
-    "transform:translate(-50%,-50%)",
+    `transform:translate(-50%, calc(-50% + ${decalY}px))`,
     "cursor:pointer",
   ].join(";");
   return L.divIcon({
@@ -4551,6 +4572,7 @@ function retirerFantome(id) {
 /** Retire tous les carnets affichés en plus. */
 function retirerTousFantomes() {
   [...etat.fantomes.keys()].forEach(retirerFantome);
+  reinitPositionsEtiquettes();
 }
 
 /** À l'entrée en visualisation : affiche les carnets cochés « visibles ». */

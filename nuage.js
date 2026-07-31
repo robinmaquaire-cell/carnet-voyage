@@ -629,6 +629,12 @@ async function basculerHorsLigne(c) {
     toast("Connecte-toi pour changer la sauvegarde hors ligne.", true);
     return;
   }
+  // Interdit pour les carnets partages en LECTURE : on ne veut pas qu'un
+  // destinataire garde une copie apres retrait du partage.
+  if (c.partage && c.partage.droit !== "edition") {
+    toast("Ce carnet t'a ete partage en lecture seule : pas de sauvegarde hors ligne.", true);
+    return;
+  }
   if (c.horsLigne) {
     // Retirer de l'appareil. On ne touche pas au carnet ouvert : sinon on
     // perdrait la version en mémoire (potentiellement modifiée non poussée).
@@ -708,6 +714,32 @@ async function synchroniserNuage(cible) {
     const distants = lignes || [];
     const monId = sessionNuage.user.id;
     const parUuid = new Map(etat.carnets.map((c) => [c.uuid, c]));
+
+    // 0) Retrait de partage : un carnet qui m'etait partage mais qui n'est
+    // plus dans les distants (le proprietaire a supprime la ligne
+    // carnet_partages_contact) doit disparaitre chez moi. Sans ce nettoyage,
+    // la fiche restait dans etat.carnets et le contenu hors ligne persistait.
+    if (!uuidCible) {
+      const uuidsDistants = new Set(distants.map((r) => r.uuid));
+      const partagesRetires = etat.carnets.filter(
+        (c) => c.partage && c.uuid && !uuidsDistants.has(c.uuid)
+      );
+      for (const c of partagesRetires) {
+        try { await dbEffacerCle("carnet-" + c.id); } catch (e) {}
+        if (typeof retirerFantome === "function") retirerFantome(c.id);
+        const etaitActif = c.id === etat.carnetActifId;
+        etat.carnets = etat.carnets.filter((x) => x.id !== c.id);
+        parUuid.delete(c.uuid);
+        if (etaitActif && typeof basculerVersAutreCarnetActif === "function") {
+          await basculerVersAutreCarnetActif();
+        }
+      }
+      if (partagesRetires.length) {
+        toast(partagesRetires.length === 1
+          ? `« ${partagesRetires[0].nom} » ne t'est plus partage.`
+          : `${partagesRetires.length} carnets partages retires.`);
+      }
+    }
 
     // 1) Du nuage vers l'appareil.
     for (const r of distants) {
