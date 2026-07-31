@@ -2235,6 +2235,97 @@ async function deconnecterNuage() {
   statutCompte("Déconnecté. Reconnecte-toi pour retrouver tes carnets.");
 }
 
+/**
+ * Purge TOUS mes carnets (ici + en ligne : fiches, fichiers, photos, sons).
+ * Ne touche PAS au compte, au profil (pseudo), aux contacts. Utile pour
+ * repartir d'une base propre avant de réimporter des .json.
+ *
+ * L'utilisateur confirme deux fois avant que l'opération démarre — c'est
+ * irréversible, aucun retour possible.
+ */
+async function purgerTousLesCarnets() {
+  if (!nuageConnecte()) {
+    toast("Connecte-toi d'abord (bouton ☁️ en haut).", true);
+    return;
+  }
+  const ok1 = await demanderConfirmation(
+    "Tout supprimer ?",
+    "Cette action va effacer TOUS tes carnets — sur cet appareil ET sur ton " +
+    "compte en ligne : fiches, tracés, souvenirs, photos et sons. Ton compte, " +
+    "ton pseudo et tes contacts sont préservés. C'est irréversible.",
+    { okLibelle: "Continuer" }
+  );
+  if (!ok1) return;
+  const ok2 = await demanderConfirmation(
+    "Vraiment tout supprimer ?",
+    "Dernière confirmation. Tu as bien tes exports .json sur ton ordinateur ? " +
+    "Une fois lancée, la purge ne peut pas être annulée.",
+    { okLibelle: "Oui, tout supprimer" }
+  );
+  if (!ok2) return;
+
+  toast("🧹 Purge en cours…");
+  const monId = sessionNuage.user.id;
+  let erreurs = 0;
+
+  // 1) Storage : lister puis supprimer tous mes fichiers (carnet + médias).
+  try {
+    const chemins = [];
+    // Racine de mon dossier (les .json des carnets sont ici).
+    const { data: racine } = await sbClient.storage.from("carnets").list(monId);
+    (racine || []).forEach((f) => { if (f && f.name) chemins.push(`${monId}/${f.name}`); });
+    // Sous-dossier medias/.
+    const { data: medias } = await sbClient.storage.from("carnets").list(`${monId}/medias`);
+    (medias || []).forEach((f) => { if (f && f.name) chemins.push(`${monId}/medias/${f.name}`); });
+    // Supprimer par lots de 100 (limite habituelle des APIs de storage).
+    for (let i = 0; i < chemins.length; i += 100) {
+      const lot = chemins.slice(i, i + 100);
+      const { error } = await sbClient.storage.from("carnets").remove(lot);
+      if (error) erreurs++;
+    }
+  } catch (e) { erreurs++; }
+
+  // 2) Table `carnets` : je supprime toutes mes lignes (RLS m'y autorise déjà).
+  try {
+    const { error } = await sbClient.from("carnets").delete().eq("user_id", monId);
+    if (error) erreurs++;
+  } catch (e) { erreurs++; }
+
+  // 3) Mes partages sortants (les carnets que J'AI partagés). Les tables
+  //    du contact-graph — carnet_partages_contact — peuvent ne pas exister
+  //    partout : on tolère l'erreur.
+  try { await sbClient.from("carnet_partages").delete().eq("proprietaire", monId); } catch (e) {}
+  try { await sbClient.from("carnet_partages_contact").delete().eq("proprietaire", monId); } catch (e) {}
+
+  // 4) IndexedDB : effacer chaque carnet-<id>, ses secours, et l'index.
+  try {
+    for (const c of etat.carnets || []) {
+      try { await dbEffacerCle("carnet-" + c.id); } catch (e) {}
+      try { await dbEffacerCle("carnet-" + c.id + "-secours"); } catch (e) {}
+    }
+    try { await dbEffacerCle("index"); } catch (e) {}
+  } catch (e) { erreurs++; }
+
+  // 5) État en mémoire : vider les listes, le miroir en ligne, les fantômes.
+  if (typeof retirerTousFantomes === "function") retirerTousFantomes();
+  etat.carnets = [];
+  etat.carnetActifId = 0;
+  etat.carnetFocalise = null;
+  if (etat.enLigne && typeof etat.enLigne.clear === "function") etat.enLigne.clear();
+  if (typeof viderCarnetCourant === "function") viderCarnetCourant();
+
+  // 6) Rafraîchir l'accueil.
+  if (typeof renderCarnets === "function") renderCarnets();
+  if (typeof majEtatSyncUI === "function") majEtatSyncUI();
+
+  if (erreurs > 0) {
+    toast(`Purge terminée avec ${erreurs} avertissement(s). Tu peux réimporter tes carnets.`, true);
+  } else {
+    toast("✓ Purge terminée. Tu peux réimporter tes carnets (📥 Importer sur la carte globale).");
+  }
+  fermerModalCompte();
+}
+
 /** Messages d'erreur Supabase → français simple. */
 function traduireErreurAuth(error) {
   const m = (error && error.message) || "";
@@ -2377,6 +2468,10 @@ function brancherCompteUI() {
     });
   document.getElementById("compte-deconnecter")
     .addEventListener("click", deconnecterNuage);
+  // Zone dangereuse : purge totale des carnets. Deux confirmations en amont
+  // dans purgerTousLesCarnets, donc pas de garde supplémentaire ici.
+  const btnPurger = document.getElementById("compte-purger-carnets");
+  if (btnPurger) btnPurger.addEventListener("click", purgerTousLesCarnets);
   // Plus de bouton « Synchroniser maintenant » ni de clic sur le bandeau :
   // la synchro se fait automatiquement après chaque sauvegarde (voir
   // planifierPousseeNuage) et au démarrage (INITIAL_SESSION avec session).

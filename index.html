@@ -1268,6 +1268,20 @@
               </button>
               <div id="compte-archives" class="compte-archives" hidden></div>
             </div>
+
+            <!-- Zone dangereuse : purge totale des carnets (utile après import
+                 raté ou incohérences). Ne touche PAS au compte / pseudo /
+                 contacts / partages. Deux confirmations avant d'agir. -->
+            <h3 class="modal-compte-titre" style="color:var(--refus,#c0533e)">Zone dangereuse</h3>
+            <button id="compte-purger-carnets" class="btn btn-danger btn-petit" style="width:100%">
+              🧹 Repartir de zéro (tous mes carnets)
+            </button>
+            <p class="style-aide">
+              Supprime tous tes carnets, ici <strong>et</strong> en ligne (fiches,
+              photos, sons). Ton compte, ton pseudo et tes contacts sont conservés.
+              À utiliser pour repartir propre avant de réimporter tes exports .json.
+              <strong>Irréversible.</strong>
+            </p>
           </section>
 
         </div>
