@@ -33,7 +33,17 @@
   <!-- Nos styles à nous -->
   <link rel="stylesheet" href="styles.css" />
 </head>
-<body class="vue-accueil">
+<body class="vue-accueil chargement-en-cours">
+
+  <!-- Écran de chargement plein cadre : masque l'accueil tant qu'on ne sait
+       pas si l'utilisateur est connecté (évite le flash « carnets visibles
+       puis disparus »). Retiré par masquerChargementApp() dans nuage.js. -->
+  <div id="chargement-app" class="chargement-app" role="status" aria-live="polite">
+    <div class="chargement-app-carte">
+      <div class="chargement-spinner" aria-hidden="true"></div>
+      <div id="chargement-app-message" class="chargement-app-message">Chargement…</div>
+    </div>
+  </div>
 
   <!-- ===================== Barre du haut ===================== -->
   <header class="topbar">
@@ -640,9 +650,10 @@
           <label class="accueil-date-label">Au <input id="accueil-au" class="style-input" type="date" /></label>
         </div>
       </div>
-      <!-- Rappel global : combien de carnets attendent d'être envoyés en ligne -->
-      <button id="accueil-attente" class="accueil-attente" hidden
-              title="Synchroniser maintenant"></button>
+      <!-- Rappel discret : combien de carnets attendent d'être envoyés en ligne
+           (la synchro se déclenche automatiquement — c'est une simple info). -->
+      <div id="accueil-attente" class="accueil-attente" hidden
+           title="La synchro se fait automatiquement en arrière-plan."></div>
       <div id="accueil-liste" class="accueil-liste"></div>
       <div class="accueil-pied">
         <button id="accueil-nouveau" class="btn btn-accent btn-petit" style="flex:1">
@@ -1181,11 +1192,6 @@
               <input id="compte-mdp-confirm" type="password" autocomplete="new-password" />
             </div>
             <button id="compte-mdp-enregistrer" class="btn btn-accent btn-petit">Enregistrer le mot de passe</button>
-
-            <h3 class="modal-compte-titre">Synchronisation</h3>
-            <button id="compte-synchroniser" class="btn btn-accent btn-petit" style="width:100%">
-              🔄 Synchroniser maintenant
-            </button>
 
             <h3 class="modal-compte-titre">Session</h3>
             <button id="compte-deconnecter" class="btn btn-ghost btn-petit" style="width:100%">

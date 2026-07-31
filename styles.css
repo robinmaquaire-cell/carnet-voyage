@@ -1456,6 +1456,46 @@ body:not(.mode-visualisation) .vecteur-interactif { touch-action: none; }
 }
 .modal-card input:focus { outline: none; border-color: var(--foret); }
 
+/* ---------- Écran de chargement (démarrage / synchro initiale) ---------- */
+.chargement-app {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--papier, #f1efe8);
+  transition: opacity 0.25s ease;
+}
+.chargement-app[hidden] { display: none !important; }
+.chargement-app.fondu-sortie { opacity: 0; pointer-events: none; }
+.chargement-app-carte {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 32px 40px;
+  text-align: center;
+}
+.chargement-spinner {
+  width: 46px;
+  height: 46px;
+  border: 3px solid rgba(47,59,52,0.15);
+  border-top-color: var(--foret-fonce, #2f3b34);
+  border-radius: 50%;
+  animation: btn-spin 0.75s linear infinite;
+}
+.chargement-app-message {
+  font-size: 15px;
+  color: var(--encre-douce, #6a746e);
+  font-weight: 650;
+  max-width: 320px;
+}
+/* Pendant que l'écran est affiché, on cache la barre du haut : on ne montre
+   qu'un vrai fond neutre — pas d'éléments à moitié initialisés. */
+body.chargement-en-cours .topbar,
+body.chargement-en-cours .layout { visibility: hidden; }
+
 /* ---------- Bouton « Compte » de la barre du haut (avatar + nom) ---------- */
 .compte-btn {
   display: inline-flex;
@@ -3181,7 +3221,8 @@ body.vue-editeur.mode-visualisation .rail { display: none !important; }
   white-space: nowrap;
 }
 .carnet-carte-dates { font-size: 12px; color: var(--encre-douce); }
-/* Bandeau d'accueil : « 2 carnets ne sont pas encore en ligne » (cliquable). */
+/* Bandeau d'accueil : « 2 carnets ne sont pas encore en ligne » — simple
+   info, la synchro se fait automatiquement en arrière-plan. */
 .accueil-attente {
   display: block;
   width: calc(100% - 28px);
@@ -3194,10 +3235,8 @@ body.vue-editeur.mode-visualisation .rail { display: none !important; }
   background: rgba(200, 137, 61, 0.1);
   border: 1.5px solid rgba(200, 137, 61, 0.28);
   border-radius: var(--rayon);
-  cursor: pointer;
 }
 .accueil-attente::before { content: "☁️ "; }
-.accueil-attente:hover { background: rgba(200, 137, 61, 0.17); }
 
 /* Pastille « pas encore en ligne » sur la carte d'un carnet : cliquable, elle
    synchronise ce carnet-là uniquement. */

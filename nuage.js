@@ -180,12 +180,54 @@ async function assurerProfil() {
   ouvrirModalProfil(nettoyerPseudo(ancien));
 }
 
+/* ---------- Écran de chargement (démarrage de l'app) ---------- */
+
+let chargementAppMasque = false;
+let chargementAppTimer = null;
+
+/** Affiche/relibelle l'écran de chargement plein cadre. */
+function montrerChargementApp(message) {
+  const overlay = document.getElementById("chargement-app");
+  if (!overlay) return;
+  chargementAppMasque = false;
+  overlay.hidden = false;
+  overlay.classList.remove("fondu-sortie");
+  document.body.classList.add("chargement-en-cours");
+  if (message) {
+    const el = document.getElementById("chargement-app-message");
+    if (el) el.textContent = message;
+  }
+}
+
+/** Masque l'écran de chargement, avec un petit fondu. */
+function masquerChargementApp() {
+  if (chargementAppMasque) return;
+  chargementAppMasque = true;
+  clearTimeout(chargementAppTimer);
+  const overlay = document.getElementById("chargement-app");
+  document.body.classList.remove("chargement-en-cours");
+  if (!overlay) return;
+  overlay.classList.add("fondu-sortie");
+  setTimeout(() => { overlay.hidden = true; }, 280);
+}
+
+// Filet de sécurité : si rien ne se passe (Supabase indispo, JS d'auth planté),
+// on retire l'écran de chargement au bout de 6 s pour ne pas bloquer.
+if (typeof window !== "undefined") {
+  window.addEventListener("load", () => {
+    chargementAppTimer = setTimeout(masquerChargementApp, 6000);
+  });
+}
+
 /** Point d'entrée : appelé par demarrerUI() une fois les carnets chargés. */
 function demarrerNuage() {
   brancherCompteUI();
   if (!nuageConfigure()) {
     majCompteUI();
     if (typeof majPopupsAccueil === "function") majPopupsAccueil();
+    // Pas de compte en ligne configuré → on quitte tout de suite l'écran de
+    // chargement (l'app fonctionne en local dans ce cas particulier).
+    masquerChargementApp();
     return;
   }
   sbClient = window.supabase.createClient(window.CONFIG_NUAGE.url, window.CONFIG_NUAGE.cle);
@@ -217,24 +259,28 @@ function demarrerNuage() {
 
     if (evenement === "SIGNED_IN" && session) {
       // Retour du lien magique : on ferme la fenêtre Compte et on synchronise.
+      // (Ici l'app tourne déjà — pas d'overlay plein cadre, juste un toast :
+      //  la fenêtre Compte reste visible, et la pastille de synchro suit.)
       fermerModalCompte();
       toast("☁️ Connecté ! Synchronisation de tes carnets…");
       assurerProfil();
       synchroniserNuage();
     } else if (evenement === "INITIAL_SESSION") {
-      if (session) { assurerProfil(); synchroniserNuage(); }
-      else {
-        // Pas de session au démarrage. Si on avait déjà été connecté depuis
-        // ce navigateur, on cache les carnets locaux : le compte est la
-        // source de vérité, il faut se reconnecter pour les revoir.
-        let dejaConnecte = false;
-        try { dejaConnecte = localStorage.getItem(CLE_ETAIT_CONNECTE) === "1"; } catch (e) {}
-        if (dejaConnecte) viderCarnetsDeVue();
-        else if (typeof majPopupsAccueil === "function") majPopupsAccueil();
+      if (session) {
+        assurerProfil();
+        montrerChargementApp("Récupération de tes carnets…");
+        synchroniserNuage().finally(masquerChargementApp);
+      } else {
+        // Pas de session : les carnets sont liés au compte et le compte est
+        // la seule source de vérité. Sans session, on n'affiche rien — même
+        // si des carnets traînent en local (ils réapparaîtront à la connexion).
+        viderCarnetsDeVue();
+        masquerChargementApp();
       }
     } else if (evenement === "SIGNED_OUT") {
       monProfil = null;
       viderCarnetsDeVue();
+      masquerChargementApp();
     }
   });
 }
@@ -1499,17 +1545,9 @@ function brancherCompteUI() {
     });
   document.getElementById("compte-deconnecter")
     .addEventListener("click", deconnecterNuage);
-  // Attention : surtout pas `addEventListener("click", synchroniserNuage)` —
-  // l'événement serait passé comme carnet cible.
-  document.getElementById("compte-synchroniser")
-    .addEventListener("click", (e) => {
-      avecChargement(e.currentTarget, "Synchronisation…", synchroniserNuage());
-    });
-  // Le bandeau « N carnets ne sont pas encore en ligne » lance la synchro.
-  const attente = document.getElementById("accueil-attente");
-  if (attente) attente.addEventListener("click", (e) => {
-    avecChargement(e.currentTarget, "Synchronisation…", synchroniserNuage());
-  });
+  // Plus de bouton « Synchroniser maintenant » ni de clic sur le bandeau :
+  // la synchro se fait automatiquement après chaque sauvegarde (voir
+  // planifierPousseeNuage) et au démarrage (INITIAL_SESSION avec session).
 
   // Onglet Profil : photo / description / ville.
   document.getElementById("compte-photo-input")
