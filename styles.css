@@ -1501,6 +1501,138 @@ body:not(.mode-visualisation) .vecteur-interactif { touch-action: none; }
 body.chargement-en-cours .topbar,
 body.chargement-en-cours .layout { visibility: hidden; }
 
+/* ---------- Page de connexion plein écran (pas connecté) ---------- */
+.page-connexion {
+  position: fixed;
+  inset: 0;
+  z-index: 1900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--papier, #f3eee2);
+  overflow-y: auto;
+}
+.page-connexion[hidden] { display: none !important; }
+body.pas-connecte .topbar,
+body.pas-connecte .layout { visibility: hidden; }
+.page-connexion-carte {
+  width: 100%;
+  max-width: 420px;
+  background: var(--carte-bg, #ffffff);
+  border: 1.5px solid var(--ligne, #e5dfd0);
+  border-radius: 18px;
+  padding: 32px 28px 28px;
+  box-shadow: 0 12px 40px rgba(15, 30, 25, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.page-connexion-titre {
+  margin: 0;
+  font-family: "Bricolage Grotesque", "Public Sans", system-ui, sans-serif;
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--encre, #2f3b34);
+  line-height: 1.1;
+}
+.page-connexion-marque {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  align-self: flex-start;
+  padding: 8px 14px;
+  border: 2px solid var(--foret, #3f7d52);
+  border-radius: 12px;
+  color: var(--foret-fonce, #2f5e3e);
+  font-family: "Bricolage Grotesque", "Public Sans", system-ui, sans-serif;
+  font-size: 22px;
+  font-weight: 800;
+  margin-bottom: 6px;
+}
+.page-connexion-marque-icone {
+  font-size: 20px;
+  line-height: 1;
+}
+.page-connexion-intro {
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: var(--encre-douce, #5b6b60);
+  line-height: 1.45;
+}
+.page-connexion-label {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--encre, #2f3b34);
+  margin-top: 4px;
+}
+.page-connexion-input {
+  width: 100%;
+  border: 1.5px solid var(--ligne, #e5dfd0);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 15px;
+  font-family: inherit;
+  background: var(--papier, #f3eee2);
+  color: var(--encre, #2f3b34);
+}
+.page-connexion-input:focus {
+  outline: none;
+  border-color: var(--foret, #3f7d52);
+  background: #ffffff;
+}
+.page-connexion-zone-mdp {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+  padding: 14px;
+  border-radius: 12px;
+  background: rgba(63, 125, 82, 0.06);
+  border: 1px dashed var(--ligne, #e5dfd0);
+}
+.page-connexion-btn {
+  margin-top: 10px;
+  width: 100%;
+  padding: 14px 16px;
+  font-size: 15px;
+  font-weight: 700;
+  border-radius: 12px;
+}
+.page-connexion-btn-second {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+.page-connexion-lien {
+  align-self: center;
+  background: none;
+  border: none;
+  color: var(--foret, #3f7d52);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 4px 8px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.page-connexion-lien:hover { color: var(--foret-fonce, #2f5e3e); }
+.page-connexion-aide {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--encre-douce, #5b6b60);
+  line-height: 1.5;
+  text-align: center;
+}
+
+@media (max-width: 480px) {
+  .page-connexion { padding: 16px; }
+  .page-connexion-carte { padding: 26px 20px 22px; border-radius: 14px; }
+  .page-connexion-titre { font-size: 26px; }
+  .page-connexion-marque { font-size: 20px; }
+}
+
 /* ---------- Bouton « Compte » de la barre du haut (avatar + nom) ---------- */
 .compte-btn {
   display: inline-flex;

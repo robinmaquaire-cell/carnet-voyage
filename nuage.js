@@ -222,6 +222,7 @@ if (typeof window !== "undefined") {
 /** Point d'entrée : appelé par demarrerUI() une fois les carnets chargés. */
 function demarrerNuage() {
   brancherCompteUI();
+  brancherPageConnexion();
   if (!nuageConfigure()) {
     majCompteUI();
     if (typeof majPopupsAccueil === "function") majPopupsAccueil();
@@ -230,18 +231,19 @@ function demarrerNuage() {
     masquerChargementApp();
     return;
   }
-  sbClient = window.supabase.createClient(window.CONFIG_NUAGE.url, window.CONFIG_NUAGE.cle);
-
-  // « Rester connecté » décoché la dernière fois + navigateur rouvert
-  // depuis → on oublie la session.
-  let ephemere = false, sessionVue = false;
-  try {
-    ephemere = localStorage.getItem(CLE_EPHEMERE) === "1";
-    sessionVue = sessionStorage.getItem(CLE_SESSION_VUE) === "1";
-  } catch (e) {}
-  if (ephemere && !sessionVue) {
-    sbClient.auth.signOut().catch(() => {});
-  }
+  // Options d'auth explicites : la session est mémorisée dans localStorage et
+  // rafraîchie automatiquement — l'utilisateur reste connecté d'une visite à
+  // l'autre, tant qu'il ne clique pas sur « Se déconnecter ». C'est le
+  // comportement par défaut de supabase-js, on l'écrit ici pour se prémunir
+  // contre une future régression et pour rendre le code lisible.
+  sbClient = window.supabase.createClient(window.CONFIG_NUAGE.url, window.CONFIG_NUAGE.cle, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      storage: (typeof window !== "undefined" && window.localStorage) ? window.localStorage : undefined,
+    },
+  });
 
   sbClient.auth.onAuthStateChange((evenement, session) => {
     sessionNuage = session;
@@ -255,6 +257,7 @@ function demarrerNuage() {
     } catch (e) {}
     majCompteUI();
     majEtatSyncUI();
+    majPageConnexion();
     if (typeof majTitreCarteGlobale === "function") majTitreCarteGlobale();
 
     if (evenement === "SIGNED_IN" && session) {
@@ -287,6 +290,117 @@ function demarrerNuage() {
       masquerChargementApp();
     }
   });
+}
+
+/* =========================================================
+   Page de connexion plein écran
+   ---------------------------------------------------------
+   Quand aucun compte n'est connecté (et que le service en ligne est
+   configuré), on affiche une page dédiée qui masque tout le reste de
+   l'application : impossible d'utiliser l'app sans s'authentifier. La
+   fenêtre « Compte » reste utilisée pour les paramètres une fois connecté.
+   ========================================================= */
+
+/** Message d'état dans la page de connexion. */
+function statutConnexion(message, erreur) {
+  const el = document.getElementById("connexion-statut");
+  if (!el) return;
+  el.textContent = message || "";
+  el.hidden = !message;
+  el.className = "gen-statut " + (erreur ? "erreur" : "info");
+}
+
+/** Affiche ou masque la page de connexion selon l'état d'authentification. */
+function majPageConnexion() {
+  const page = document.getElementById("page-connexion");
+  if (!page) return;
+  const doitAfficher = nuageConfigure() && !nuageConnecte();
+  page.hidden = !doitAfficher;
+  document.body.classList.toggle("pas-connecte", doitAfficher);
+  if (doitAfficher) {
+    statutConnexion("");
+    // Petit focus sur le champ e-mail pour aller vite au clavier.
+    setTimeout(() => {
+      const champ = document.getElementById("connexion-email");
+      if (champ && !page.hidden) champ.focus();
+    }, 100);
+  }
+}
+
+/** Envoie un lien magique depuis la page de connexion plein écran. */
+async function envoyerLienDepuisConnexion() {
+  if (!sbClient) return;
+  const email = document.getElementById("connexion-email").value.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    statutConnexion("Écris une adresse e-mail valide.", true);
+    return;
+  }
+  const bouton = document.getElementById("connexion-lien");
+  await avecChargement(bouton, "Envoi du lien…", (async () => {
+    statutConnexion("Envoi du lien de connexion…");
+    const { error } = await sbClient.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: window.location.origin + window.location.pathname },
+    });
+    if (error) { statutConnexion(traduireErreurAuth(error), true); return; }
+    statutConnexion("✓ C'est envoyé ! Ouvre ta boîte mail et clique sur le lien " +
+      "de connexion (regarde aussi les indésirables).");
+  })());
+}
+
+/** Connexion avec mot de passe depuis la page de connexion plein écran. */
+async function connecterMdpDepuisConnexion() {
+  if (!sbClient) return;
+  const email = document.getElementById("connexion-email").value.trim();
+  const mdp = document.getElementById("connexion-mdp").value;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    statutConnexion("Écris une adresse e-mail valide.", true);
+    return;
+  }
+  if (!mdp) {
+    statutConnexion("Saisis ton mot de passe (ou utilise le bouton « Recevoir un lien »).", true);
+    return;
+  }
+  const bouton = document.getElementById("connexion-mdp-btn");
+  await avecChargement(bouton, "Connexion…", (async () => {
+    statutConnexion("Connexion…");
+    const { error } = await sbClient.auth.signInWithPassword({ email, password: mdp });
+    if (error) { statutConnexion(traduireErreurAuth(error), true); return; }
+    statutConnexion("✓ Connecté.");
+  })());
+}
+
+/** Branche les événements de la page de connexion (une seule fois au démarrage). */
+function brancherPageConnexion() {
+  const page = document.getElementById("page-connexion");
+  if (!page) return;
+  const lien = document.getElementById("connexion-lien");
+  const btnMdp = document.getElementById("connexion-mdp-btn");
+  const champEmail = document.getElementById("connexion-email");
+  const champMdp = document.getElementById("connexion-mdp");
+  const bascule = document.getElementById("connexion-bascule-mdp");
+  const zoneMdp = document.getElementById("connexion-zone-mdp");
+  if (lien) lien.addEventListener("click", envoyerLienDepuisConnexion);
+  if (btnMdp) btnMdp.addEventListener("click", connecterMdpDepuisConnexion);
+  if (champEmail) champEmail.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    if (champMdp && champMdp.value) connecterMdpDepuisConnexion();
+    else envoyerLienDepuisConnexion();
+  });
+  if (champMdp) champMdp.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") connecterMdpDepuisConnexion();
+  });
+  if (bascule && zoneMdp) {
+    bascule.addEventListener("click", (e) => {
+      e.preventDefault();
+      const cache = zoneMdp.hidden;
+      zoneMdp.hidden = !cache;
+      bascule.textContent = cache
+        ? "Utiliser un lien magique à la place"
+        : "Mot de passe oublié";
+      if (cache) setTimeout(() => champMdp && champMdp.focus(), 30);
+    });
+  }
 }
 
 /* =========================================================

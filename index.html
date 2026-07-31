@@ -45,6 +45,52 @@
     </div>
   </div>
 
+  <!-- Page de connexion plein écran : affichée par nuage.js quand aucun
+       compte n'est connecté. Bloque l'accès au reste de l'application. -->
+  <div id="page-connexion" class="page-connexion" hidden>
+    <div class="page-connexion-carte">
+      <h1 class="page-connexion-titre">Se connecter à</h1>
+      <div class="page-connexion-marque">
+        <span class="page-connexion-marque-icone">▲</span>
+        <span>Log Book Map</span>
+      </div>
+      <p class="page-connexion-intro">
+        Avec un compte, tes carnets sont sauvegardés en ligne et se retrouvent
+        sur tous tes appareils. On t'envoie un lien à cliquer par e-mail
+        — aucun mot de passe à retenir.
+      </p>
+
+      <label class="page-connexion-label" for="connexion-email">Adresse e-mail</label>
+      <input id="connexion-email" class="page-connexion-input" type="email"
+             placeholder="toi@exemple.fr" autocomplete="email" />
+
+      <div id="connexion-zone-mdp" class="page-connexion-zone-mdp" hidden>
+        <label class="page-connexion-label" for="connexion-mdp">Mot de passe</label>
+        <input id="connexion-mdp" class="page-connexion-input" type="password"
+               autocomplete="current-password" placeholder="Ton mot de passe" />
+        <button id="connexion-mdp-btn" class="btn btn-ghost page-connexion-btn-second">
+          🔑 Me connecter
+        </button>
+      </div>
+
+      <button id="connexion-lien" class="btn btn-accent page-connexion-btn">
+        ✉️ Recevoir un lien de connexion
+      </button>
+
+      <button id="connexion-bascule-mdp" class="page-connexion-lien" type="button">
+        Mot de passe oublié
+      </button>
+
+      <p id="connexion-statut" class="gen-statut" hidden></p>
+
+      <p class="page-connexion-aide">
+        La session est mémorisée sur cet appareil : tu n'auras pas à te
+        reconnecter à chaque ouverture. Pour changer d'appareil, redemande
+        simplement un lien.
+      </p>
+    </div>
+  </div>
+
   <!-- ===================== Barre du haut ===================== -->
   <header class="topbar">
     <!-- Côté gauche : marque (accueil) ou retour (éditeur) -->
