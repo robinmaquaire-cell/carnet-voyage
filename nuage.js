@@ -231,44 +231,44 @@ function demarrerNuage() {
     masquerChargementApp();
     return;
   }
-  // Options d'auth explicites : la session est mémorisée et rafraîchie
-  // automatiquement — l'utilisateur reste connecté d'une visite à l'autre,
-  // tant qu'il ne clique pas sur « Se déconnecter ».
+  // Options d'auth explicites : la session est mémorisée dans localStorage et
+  // rafraîchie automatiquement. C'est localStorage QUI EST PARTAGÉ entre les
+  // onglets — indispensable pour qu'un onglet ne perde pas sa session parce
+  // qu'un autre l'a réécrite.
   //
-  // Stockage « double » : par défaut on écrit dans localStorage (session
-  // conservée d'une ouverture à l'autre). Si l'utilisateur a décoché
-  // « Rester connecté sur cet appareil », on bascule vers sessionStorage
-  // (la session est oubliée dès la fermeture de l'onglet). Le choix est
-  // relu à chaque écriture : changer d'avis après connexion prend effet
-  // dès l'enregistrement suivant, sans reload.
-  const stockageAuth = {
-    getItem(cle) {
-      try { return localStorage.getItem(cle) || sessionStorage.getItem(cle); }
-      catch (e) { return null; }
-    },
-    setItem(cle, valeur) {
-      try {
-        if (localStorage.getItem(CLE_EPHEMERE) === "1") {
-          sessionStorage.setItem(cle, valeur);
-          localStorage.removeItem(cle);
-        } else {
-          localStorage.setItem(cle, valeur);
-          sessionStorage.removeItem(cle);
-        }
-      } catch (e) {}
-    },
-    removeItem(cle) {
-      try { localStorage.removeItem(cle); } catch (e) {}
-      try { sessionStorage.removeItem(cle); } catch (e) {}
-    },
-  };
+  // Le choix « Rester connecté / Ne pas rester connecté » est appliqué
+  // séparément : si décoché, on efface la session à la fermeture de l'onglet
+  // (handler pagehide plus bas). Ce filet de sécurité n'affecte pas les autres
+  // onglets ouverts au même moment.
   sbClient = window.supabase.createClient(window.CONFIG_NUAGE.url, window.CONFIG_NUAGE.cle, {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      storage: stockageAuth,
+      storage: (typeof window !== "undefined" && window.localStorage) ? window.localStorage : undefined,
     },
+  });
+
+  // Migration douce : si l'utilisateur avait décoché « rester connecté » dans
+  // l'ancienne fenêtre Compte, on ne veut plus le déconnecter automatiquement
+  // — c'est explicitement ce qu'il demande maintenant. On repart d'une valeur
+  // neutre. Le choix actuel sera mémorisé à sa prochaine connexion.
+  try {
+    if (localStorage.getItem(CLE_EPHEMERE) === "1" && localStorage.getItem(CLE_ETAIT_CONNECTE) === "1") {
+      localStorage.removeItem(CLE_EPHEMERE);
+    }
+  } catch (e) {}
+
+  // « Ne pas rester connecté » : à la fermeture de l'onglet, on efface les
+  // clés d'auth de localStorage. Best-effort — pagehide est le plus fiable
+  // sur mobile (unload/beforeunload sont parfois skipés).
+  window.addEventListener("pagehide", () => {
+    try {
+      if (localStorage.getItem(CLE_EPHEMERE) !== "1") return;
+      Object.keys(localStorage).forEach((cle) => {
+        if (cle.startsWith("sb-")) localStorage.removeItem(cle);
+      });
+    } catch (e) {}
   });
 
   sbClient.auth.onAuthStateChange((evenement, session) => {
