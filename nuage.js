@@ -26,6 +26,12 @@ let monProfil = null;
 const CLE_EPHEMERE = "nuage-ephemere";      // "1" = ne pas rester connecté
 const CLE_SESSION_VUE = "nuage-session-vue"; // marqueur de session d'onglet
 const CLE_PSEUDO = "carnet-pseudo";
+// Marqueur : « cet appareil a déjà été connecté à un compte ». Sert à masquer
+// les carnets locaux au chargement quand aucune session n'est retrouvée
+// (le compte est censé être la source de vérité). Un utilisateur qui n'a
+// jamais créé de compte n'a jamais ce marqueur → ses carnets locaux restent
+// visibles hors ligne.
+const CLE_ETAIT_CONNECTE = "nuage-etait-connecte";
 
 // Format d'un pseudo valide (identique à la contrainte SQL) : 3-30 caractères
 // pris parmi lettres, chiffres, tiret et tiret-bas.
@@ -197,7 +203,14 @@ function demarrerNuage() {
 
   sbClient.auth.onAuthStateChange((evenement, session) => {
     sessionNuage = session;
-    try { if (session) sessionStorage.setItem(CLE_SESSION_VUE, "1"); } catch (e) {}
+    try {
+      if (session) {
+        sessionStorage.setItem(CLE_SESSION_VUE, "1");
+        // Ce navigateur a désormais un compte connu : on s'en souvient pour
+        // masquer les carnets locaux à la prochaine ouverture sans session.
+        localStorage.setItem(CLE_ETAIT_CONNECTE, "1");
+      }
+    } catch (e) {}
     majCompteUI();
     majEtatSyncUI();
     if (typeof majTitreCarteGlobale === "function") majTitreCarteGlobale();
@@ -210,9 +223,18 @@ function demarrerNuage() {
       synchroniserNuage();
     } else if (evenement === "INITIAL_SESSION") {
       if (session) { assurerProfil(); synchroniserNuage(); }
-      else if (typeof majPopupsAccueil === "function") majPopupsAccueil();
+      else {
+        // Pas de session au démarrage. Si on avait déjà été connecté depuis
+        // ce navigateur, on cache les carnets locaux : le compte est la
+        // source de vérité, il faut se reconnecter pour les revoir.
+        let dejaConnecte = false;
+        try { dejaConnecte = localStorage.getItem(CLE_ETAIT_CONNECTE) === "1"; } catch (e) {}
+        if (dejaConnecte) viderCarnetsDeVue();
+        else if (typeof majPopupsAccueil === "function") majPopupsAccueil();
+      }
     } else if (evenement === "SIGNED_OUT") {
       monProfil = null;
+      viderCarnetsDeVue();
     }
   });
 }
@@ -1307,13 +1329,42 @@ function activerOngletCompte(nom) {
   if (contenu) contenu.scrollTop = 0;
 }
 
-/** Se déconnecte (les carnets restent sur l'appareil). */
+/**
+ * Vide de l'écran tous les carnets (liste, carte, éditeur). Les données
+ * IndexedDB ne sont PAS effacées : elles réapparaîtront à la prochaine
+ * connexion. On utilise ça à la déconnexion et au chargement quand la
+ * session n'a pas pu être retrouvée alors qu'on avait déjà un compte.
+ */
+function viderCarnetsDeVue() {
+  try {
+    if (typeof retirerTousFantomes === "function") retirerTousFantomes();
+    if (typeof viderCarnetCourant === "function") viderCarnetCourant();
+  } catch (e) {}
+  etat.carnets = [];
+  etat.carnetActifId = 0;
+  etat.carnetFocalise = null;
+  document.body.classList.remove("carnet-focalise");
+  // On force le retour à l'accueil (au cas où on était dans l'éditeur).
+  etat.vue = "accueil";
+  document.body.classList.add("vue-accueil");
+  document.body.classList.remove("vue-editeur");
+  if (typeof renderCarnets === "function") renderCarnets();
+  if (typeof appliquerFiltresAccueil === "function") appliquerFiltresAccueil();
+  if (typeof ajusterVueMonde === "function") ajusterVueMonde();
+  if (typeof majPopupsAccueil === "function") majPopupsAccueil();
+}
+
+/** Se déconnecte : les carnets disparaissent de l'écran (data locale intacte). */
 async function deconnecterNuage() {
   await sbClient.auth.signOut();
   sessionNuage = null;
+  monProfil = null;
   majCompteUI();
+  // On vide immédiatement l'écran (l'événement SIGNED_OUT le referait sinon,
+  // mais avec un temps de latence visible).
+  viderCarnetsDeVue();
   ouvrirModalCompte();
-  statutCompte("Déconnecté. Tes carnets restent sur cet appareil.");
+  statutCompte("Déconnecté. Reconnecte-toi pour retrouver tes carnets.");
 }
 
 /** Messages d'erreur Supabase → français simple. */
