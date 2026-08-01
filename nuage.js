@@ -241,6 +241,43 @@ async function assurerProfil() {
   ouvrirModalProfil(nettoyerPseudo(ancien));
 }
 
+/* ---------- Chrono de démarrage (diagnostic « c'est lent ») ---------- */
+// Mesure où passe le temps entre l'ouverture de la page et l'app prête :
+// chargement de la page et des scripts (CDN), préparation de la carte et des
+// carnets locaux, restauration de la session, synchronisation. Si le total
+// dépasse 4 s, un toast détaille les postes — l'utilisateur peut recopier ce
+// message tel quel pour signaler un démarrage lent.
+const chronoEtapes = {};
+let chronoDejaAffiche = false;
+
+function chronoNote(etape) {
+  if (chronoEtapes[etape] == null) chronoEtapes[etape] = Math.round(performance.now());
+}
+
+function chronoSecondes(ms) {
+  return (Math.max(0, ms) / 1000).toFixed(1).replace(".", ",") + " s";
+}
+
+function chronoBilanDemarrage() {
+  if (chronoDejaAffiche) return;
+  chronoDejaAffiche = true;
+  const fin = Math.round(performance.now());
+  let scripts = 0;
+  try {
+    const nav = performance.getEntriesByType("navigation")[0];
+    if (nav && nav.domContentLoadedEventEnd) scripts = Math.round(nav.domContentLoadedEventEnd);
+  } catch (e) {}
+  const tNuage = chronoEtapes.nuage != null ? chronoEtapes.nuage : scripts;
+  const tSession = chronoEtapes.session != null ? chronoEtapes.session : tNuage;
+  const detail = "Démarrage " + chronoSecondes(fin) +
+    " (page et scripts " + chronoSecondes(scripts) +
+    " · carte et carnets " + chronoSecondes(tNuage - scripts) +
+    " · connexion " + chronoSecondes(tSession - tNuage) +
+    " · synchro " + chronoSecondes(fin - tSession) + ")";
+  try { console.info("[LogBookMap] ⏱️ " + detail); } catch (e) {}
+  if (fin > 4000 && typeof toast === "function") toast("⏱️ " + detail);
+}
+
 /* ---------- Écran de chargement (démarrage de l'app) ---------- */
 
 let chargementAppMasque = false;
@@ -292,6 +329,7 @@ if (typeof window !== "undefined") {
 
 /** Point d'entrée : appelé par demarrerUI() une fois les carnets chargés. */
 function demarrerNuage() {
+  chronoNote("nuage");
   brancherCompteUI();
   brancherPageConnexion();
   if (!nuageConfigure()) {
@@ -434,8 +472,9 @@ function resoudreDemarrageConnecte(session) {
   // vierge, on ne bloque plus l'écran — les carnets apparaissent au fil de
   // la synchro (le pop-up « nouveau carnet » attend la fin, voir
   // majPopupsAccueil).
+  chronoNote("session");
   masquerChargementApp();
-  synchroniserNuage();
+  synchroniserNuage().finally(chronoBilanDemarrage);
   // Consomme un eventuel token ?rejoindrepartage=... dans l'URL.
   rejoindrePartageDepuisUrl();
 }
@@ -444,6 +483,8 @@ function resoudreDemarrageConnecte(session) {
 function resoudreDemarrageDeconnecte(message) {
   if (demarrageResolu) return;
   demarrageResolu = true;
+  chronoNote("session");
+  chronoBilanDemarrage();
   clearTimeout(essaiSessionTimer);
   sessionNuage = null;
   monProfil = null;
@@ -541,7 +582,7 @@ function majDiagnosticConnexion() {
   const el = document.getElementById("connexion-diagnostic-contenu");
   if (!el) return;
   const infos = {
-    version_sw: "v102",
+    version_sw: "v103",
     heure: new Date().toISOString(),
     token_present: tokenSessionPresent(),
     demarrage_resolu: demarrageResolu,
