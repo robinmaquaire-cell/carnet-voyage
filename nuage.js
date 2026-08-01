@@ -255,7 +255,18 @@ function demarrerNuage() {
   // que l'utilisateur ne clique pas explicitement sur « Se déconnecter ».
   try { localStorage.removeItem(CLE_EPHEMERE); } catch (e) {}
 
+  // Log au demarrage : quel etait l'etat du token AVANT que Supabase le
+  // consomme ? Utile pour diagnostiquer les deconnexions inattendues :
+  // l'utilisateur peut copier ce log dans son message si le probleme
+  // reapparait.
+  try {
+    console.info("[LogBookMap] Demarrage auth — token present dans localStorage :", tokenSessionPresent());
+  } catch (e) {}
+
   sbClient.auth.onAuthStateChange((evenement, session) => {
+    try {
+      console.info("[LogBookMap] onAuthStateChange :", evenement, "session ?", !!session);
+    } catch (e) {}
     sessionNuage = session;
     try {
       if (session) {
@@ -320,11 +331,35 @@ function statutConnexion(message, erreur) {
   el.className = "gen-statut " + (erreur ? "erreur" : "info");
 }
 
+/**
+ * Y a-t-il un token de session Supabase encore stocke sur cet appareil ?
+ * Sert de filet de securite : si oui, on ne va PAS afficher la page de
+ * connexion tant que Supabase n'a pas explicitement confirme qu'il n'y a
+ * plus de session (evenement SIGNED_OUT). Cela evite l'affichage furtif
+ * de la page de connexion pendant que le client se re-hydrate.
+ */
+function tokenSessionPresent() {
+  try {
+    const ref = (window.CONFIG_NUAGE && window.CONFIG_NUAGE.url || "")
+      .replace(/^https?:\/\//, "").split(".")[0];
+    if (!ref) return false;
+    const brut = localStorage.getItem("sb-" + ref + "-auth-token");
+    if (!brut) return false;
+    const parse = JSON.parse(brut);
+    return !!(parse && (parse.access_token || (parse.currentSession && parse.currentSession.access_token)));
+  } catch (e) { return false; }
+}
+
 /** Affiche ou masque la page de connexion selon l'état d'authentification. */
 function majPageConnexion() {
   const page = document.getElementById("page-connexion");
   if (!page) return;
-  const doitAfficher = nuageConfigure() && !nuageConnecte();
+  // On affiche uniquement si (a) le nuage est configure ET (b) on est
+  // reellement non connecte ET (c) il n'y a AUCUN token en attente de
+  // reprise dans localStorage. Ce dernier point est le filet de securite
+  // demande : si un token traine encore, on garde la page masquee et on
+  // laisse Supabase confirmer/rejeter la session avant de statuer.
+  const doitAfficher = nuageConfigure() && !nuageConnecte() && !tokenSessionPresent();
   page.hidden = !doitAfficher;
   document.body.classList.toggle("pas-connecte", doitAfficher);
   if (doitAfficher) {
