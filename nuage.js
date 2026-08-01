@@ -249,27 +249,11 @@ function demarrerNuage() {
     },
   });
 
-  // Migration douce : si l'utilisateur avait décoché « rester connecté » dans
-  // l'ancienne fenêtre Compte, on ne veut plus le déconnecter automatiquement
-  // — c'est explicitement ce qu'il demande maintenant. On repart d'une valeur
-  // neutre. Le choix actuel sera mémorisé à sa prochaine connexion.
-  try {
-    if (localStorage.getItem(CLE_EPHEMERE) === "1" && localStorage.getItem(CLE_ETAIT_CONNECTE) === "1") {
-      localStorage.removeItem(CLE_EPHEMERE);
-    }
-  } catch (e) {}
-
-  // « Ne pas rester connecté » : à la fermeture de l'onglet, on efface les
-  // clés d'auth de localStorage. Best-effort — pagehide est le plus fiable
-  // sur mobile (unload/beforeunload sont parfois skipés).
-  window.addEventListener("pagehide", () => {
-    try {
-      if (localStorage.getItem(CLE_EPHEMERE) !== "1") return;
-      Object.keys(localStorage).forEach((cle) => {
-        if (cle.startsWith("sb-")) localStorage.removeItem(cle);
-      });
-    } catch (e) {}
-  });
+  // Purge systématique de toute ancienne valeur « éphémère » qui aurait pu
+  // rester d'une version précédente : on ne se déconnecte plus JAMAIS
+  // automatiquement à la fermeture. La session reste dans localStorage tant
+  // que l'utilisateur ne clique pas explicitement sur « Se déconnecter ».
+  try { localStorage.removeItem(CLE_EPHEMERE); } catch (e) {}
 
   sbClient.auth.onAuthStateChange((evenement, session) => {
     sessionNuage = session;
@@ -353,11 +337,12 @@ function majPageConnexion() {
   }
 }
 
-/** Enregistre le choix « Rester connecté » de la page de connexion. */
+/** No-op : la case « Rester connecté » est purement informative maintenant,
+ *  on garde la session en permanence. Cette fonction reste pour éviter de
+ *  casser d'anciens appels ; elle peut être retirée plus tard. */
 function enregistrerChoixRester() {
-  const rester = document.getElementById("connexion-rester");
-  if (!rester) return;
-  try { localStorage.setItem(CLE_EPHEMERE, rester.checked ? "0" : "1"); } catch (e) {}
+  // Anciennement : écrivait CLE_EPHEMERE pour effacer la session à la
+  // fermeture. On ne le fait plus — la session persiste toujours.
 }
 
 /** Envoie un lien magique depuis la page de connexion plein écran. */
@@ -1922,10 +1907,6 @@ async function envoyerLienMagique() {
     statutCompte("Écris une adresse e-mail valide.", true);
     return;
   }
-  // Mémorise le choix « rester connecté » (appliqué au retour du lien).
-  const rester = document.getElementById("compte-rester").checked;
-  try { localStorage.setItem(CLE_EPHEMERE, rester ? "0" : "1"); } catch (e) {}
-
   const bouton = document.getElementById("compte-lien");
   await avecChargement(bouton, "Envoi du lien…", (async () => {
     statutCompte("Envoi du lien de connexion…");
@@ -1951,9 +1932,6 @@ async function connecterAvecMotDePasse() {
     statutCompte("Saisis ton mot de passe (ou utilise le bouton « Recevoir un lien »).", true);
     return;
   }
-  const rester = document.getElementById("compte-rester").checked;
-  try { localStorage.setItem(CLE_EPHEMERE, rester ? "0" : "1"); } catch (e) {}
-
   const bouton = document.getElementById("compte-connexion-mdp");
   await avecChargement(bouton, "Connexion…", (async () => {
     statutCompte("Connexion…");
@@ -2617,10 +2595,8 @@ function brancherCompteUI() {
   document.querySelectorAll(".modal-compte-onglet").forEach((b) => {
     b.addEventListener("click", () => activerOngletCompte(b.dataset.compteOnglet));
   });
-  document.getElementById("compte-rester")
-    .addEventListener("change", (e) => {
-      try { localStorage.setItem(CLE_EPHEMERE, e.target.checked ? "0" : "1"); } catch (err) {}
-    });
+  // (Ancien listener sur « compte-rester » retire : on ne memorise plus le
+  // choix ephemere, la session persiste toujours.)
   document.getElementById("compte-deconnecter")
     .addEventListener("click", deconnecterNuage);
   // Zone dangereuse : purge totale des carnets. Deux confirmations en amont
