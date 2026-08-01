@@ -272,20 +272,21 @@ function masquerChargementApp() {
   setTimeout(() => { overlay.hidden = true; }, 280);
 }
 
-// Filet de sécurité : si l'état de connexion n'est toujours pas tranché au
-// bout de 12 s (Supabase injoignable, JS d'auth planté…), on bascule sur la
-// page de connexion avec un message clair plutôt que de bloquer sur l'écran
-// de chargement.
+// Filet de sécurité à 8 s : l'écran de chargement ne doit jamais rester
+// bloqué. S'il n'y a aucun jeton en stock et que rien n'est tranché (Supabase
+// injoignable, JS d'auth planté…), on montre la page de connexion avec un
+// message ; sinon on retire simplement l'écran (l'app est utilisable, la
+// restauration continue en arrière-plan).
 if (typeof window !== "undefined") {
   window.addEventListener("load", () => {
     chargementAppTimer = setTimeout(() => {
-      if (!demarrageResolu && nuageConfigure()) {
+      if (!demarrageResolu && nuageConfigure() && !tokenSessionPresent()) {
         resoudreDemarrageDeconnecte("Le service en ligne ne répond pas — " +
           "vérifie ta connexion Internet, puis recharge la page.");
       } else {
         masquerChargementApp();
       }
-    }, 12000);
+    }, 8000);
   });
 }
 
@@ -320,12 +321,18 @@ function demarrerNuage() {
   // sans objet — le choix vit désormais sous CLE_RESTER.
   try { localStorage.removeItem("nuage-ephemere"); } catch (e) {}
 
-  // Un jeton traîne sur l'appareil → l'utilisateur est probablement connecté :
-  // on garde l'écran de chargement (avec un libellé dédié) tant que la session
-  // n'est pas restaurée, pour ne jamais montrer l'interface « non connecté ».
-  if (tokenSessionPresent()) montrerChargementApp("Connexion à ton compte…");
+  // Écran de chargement : UNIQUEMENT pour les cas où la réponse est
+  // instantanée (session encore valide en stock : aucun appel réseau ; ou
+  // aucun jeton : page de connexion immédiate). Si le jeton doit être
+  // rafraîchi EN LIGNE, on ne bloque pas l'écran sur le réseau : l'app
+  // s'affiche tout de suite avec les carnets de l'appareil, et la session
+  // se restaure en arrière-plan (bouton du compte : « Connexion… »).
+  const jeton = jetonLocalInfos();
+  if (jeton.present && jeton.expire) masquerChargementApp();
+  else if (jeton.present) montrerChargementApp("Connexion à ton compte…");
   try {
-    console.info("[LogBookMap] Demarrage auth — token present :", tokenSessionPresent());
+    console.info("[LogBookMap] Demarrage auth — jeton :",
+      jeton.present ? (jeton.expire ? "present (expire)" : "present (valide)") : "absent");
   } catch (e) {}
 
   sbClient.auth.onAuthStateChange((evenement, session) => {
@@ -392,10 +399,11 @@ function demarrerNuage() {
   resoudreSessionAuDemarrage();
 
   // Si le réseau revient alors que la session n'a pas pu être restaurée, on
-  // retente aussitôt (l'événement TOKEN_REFRESHED rebranchera l'app).
+  // retente aussitôt.
   window.addEventListener("online", () => {
-    if (sbClient && !nuageConnecte() && tokenSessionPresent()) {
-      sbClient.auth.refreshSession().catch(() => {});
+    if (!nuageConnecte() && tokenSessionPresent()) {
+      essaiSessionIndex = 0;
+      retenterRestaurationSession();
     }
   });
 }
@@ -406,14 +414,23 @@ function demarrerNuage() {
 function resoudreDemarrageConnecte(session) {
   if (demarrageResolu) return;
   demarrageResolu = true;
+  clearTimeout(essaiSessionTimer);
   sessionNuage = session;
   majCompteUI();
   majEtatSyncUI();
   majPageConnexion();
   if (typeof majTitreCarteGlobale === "function") majTitreCarteGlobale();
   assurerProfil();
-  montrerChargementApp("Récupération de tes carnets…");
-  synchroniserNuage().finally(masquerChargementApp);
+  // Premier appareil vide (rien en local) : un écran « Récupération… » évite
+  // l'accueil vide pendant le premier téléchargement. Sinon, les carnets
+  // locaux sont déjà affichés : la synchro se fait discrètement en fond.
+  if (!etat.carnets || etat.carnets.length === 0) {
+    montrerChargementApp("Récupération de tes carnets…");
+    synchroniserNuage().finally(masquerChargementApp);
+  } else {
+    masquerChargementApp();
+    synchroniserNuage();
+  }
   // Consomme un eventuel token ?rejoindrepartage=... dans l'URL.
   rejoindrePartageDepuisUrl();
 }
@@ -422,6 +439,7 @@ function resoudreDemarrageConnecte(session) {
 function resoudreDemarrageDeconnecte(message) {
   if (demarrageResolu) return;
   demarrageResolu = true;
+  clearTimeout(essaiSessionTimer);
   sessionNuage = null;
   monProfil = null;
   majCompteUI();
@@ -433,10 +451,46 @@ function resoudreDemarrageDeconnecte(message) {
   majDiagnosticConnexion();
 }
 
+// Re-essais de restauration en arrière-plan (réseau lent, coupé, VPN…) :
+// 5 s, 15 s, 30 s, puis toutes les 60 s. L'app reste utilisable pendant ce
+// temps — seul le bouton du compte indique « Connexion… ».
+let essaiSessionTimer = null;
+let essaiSessionIndex = 0;
+const ESSAIS_SESSION_DELAIS = [5000, 15000, 30000, 60000];
+
+function planifierNouvelEssaiSession() {
+  if (demarrageResolu) return;
+  clearTimeout(essaiSessionTimer);
+  const delai = ESSAIS_SESSION_DELAIS[Math.min(essaiSessionIndex, ESSAIS_SESSION_DELAIS.length - 1)];
+  essaiSessionIndex++;
+  essaiSessionTimer = setTimeout(retenterRestaurationSession, delai);
+}
+
+/** Tente de rafraîchir la session en fond. Ne bloque jamais l'interface. */
+async function retenterRestaurationSession() {
+  if (demarrageResolu || !sbClient || !tokenSessionPresent()) return;
+  try {
+    const r = await sbClient.auth.refreshSession();
+    if (demarrageResolu) return;
+    if (r && r.data && r.data.session) { resoudreDemarrageConnecte(r.data.session); return; }
+    const m = (r && r.error && r.error.message) || "";
+    if (/network|fetch|failed|abort|timeout/i.test(m)) {
+      // Problème de réseau : on garde l'app utilisable et on réessaiera.
+      planifierNouvelEssaiSession();
+      return;
+    }
+    // Refus du serveur (jeton révoqué/expiré définitivement) : déconnecté.
+    resoudreDemarrageDeconnecte("Ta session a expiré — reconnecte-toi.");
+  } catch (e) {
+    planifierNouvelEssaiSession();
+  }
+}
+
 /**
  * Restaure la session au démarrage, de façon active :
  *   - session valide en stock → app connectée tout de suite ;
- *   - jeton présent mais expiré → rafraîchissement immédiat ;
+ *   - jeton présent mais expiré → rafraîchissement immédiat, en arrière-plan
+ *     (l'app est déjà affichée, on ne fait pas attendre l'utilisateur) ;
  *   - rien du tout → page de connexion.
  * Les événements onAuthStateChange restent branchés en parallèle : le premier
  * chemin qui aboutit gagne (verrou demarrageResolu).
@@ -447,20 +501,12 @@ async function resoudreSessionAuDemarrage() {
     if (demarrageResolu) return;
     if (data && data.session) { resoudreDemarrageConnecte(data.session); return; }
     if (!tokenSessionPresent()) { resoudreDemarrageDeconnecte(); return; }
-    try { console.info("[LogBookMap] Jeton expire — rafraichissement immediat…"); } catch (e) {}
-    const r = await sbClient.auth.refreshSession();
-    if (demarrageResolu) return;
-    if (r && r.data && r.data.session) { resoudreDemarrageConnecte(r.data.session); return; }
-    const m = (r && r.error && r.error.message) || "";
-    resoudreDemarrageDeconnecte(/network|fetch/i.test(m)
-      ? "Pas de connexion Internet : impossible de vérifier ta session. " +
-        "Elle sera restaurée dès que le réseau revient."
-      : "Ta session a expiré — reconnecte-toi.");
+    try { console.info("[LogBookMap] Jeton expire — rafraichissement en arriere-plan…"); } catch (e) {}
+    retenterRestaurationSession();
   } catch (e) {
-    if (!demarrageResolu) {
-      resoudreDemarrageDeconnecte("La connexion au service en ligne a échoué — " +
-        "recharge la page pour réessayer.");
-    }
+    if (demarrageResolu) return;
+    if (tokenSessionPresent()) planifierNouvelEssaiSession();
+    else resoudreDemarrageDeconnecte();
   }
 }
 
@@ -516,17 +562,36 @@ function majDiagnosticConnexion() {
  * de la page de connexion pendant que le client se re-hydrate.
  */
 function tokenSessionPresent() {
+  return jetonLocalInfos().present;
+}
+
+/**
+ * Lit le jeton de session stocké sur l'appareil, SANS passer par Supabase.
+ * Renvoie { present, expire } :
+ *   - present : un jeton est en stock (localStorage ou sessionStorage) ;
+ *   - expire  : son ticket d'accès est périmé → le restaurer demandera un
+ *               appel réseau (rafraîchissement). Sert à décider si on peut
+ *               attendre la restauration à l'écran (instantanée) ou s'il faut
+ *               afficher l'app sans attendre (réseau = durée imprévisible).
+ */
+function jetonLocalInfos() {
   try {
     const ref = (window.CONFIG_NUAGE && window.CONFIG_NUAGE.url || "")
       .replace(/^https?:\/\//, "").split(".")[0];
-    if (!ref) return false;
+    if (!ref) return { present: false, expire: false };
     // La session peut vivre dans sessionStorage (« Rester connecté » décoché)
     // ou localStorage (coché) : on regarde aux deux endroits.
     const brut = stockageAuth.getItem("sb-" + ref + "-auth-token");
-    if (!brut) return false;
+    if (!brut) return { present: false, expire: false };
     const parse = JSON.parse(brut);
-    return !!(parse && (parse.access_token || (parse.currentSession && parse.currentSession.access_token)));
-  } catch (e) { return false; }
+    const session = (parse && parse.currentSession) || parse;
+    if (!session || !session.access_token) return { present: false, expire: false };
+    // Marge de 30 s : un ticket qui expire dans quelques secondes sera
+    // rafraîchi de toute façon, autant le traiter comme périmé.
+    const expire = !session.expires_at ||
+      (session.expires_at * 1000) < Date.now() + 30000;
+    return { present: true, expire };
+  } catch (e) { return { present: false, expire: false }; }
 }
 
 /** Affiche ou masque la page de connexion selon l'état d'authentification. */
@@ -2104,7 +2169,10 @@ function majCompteUI() {
     return;
   }
   if (!nuageConnecte()) {
-    if (nomEl) nomEl.textContent = "Se connecter";
+    // Restauration de session en cours (jeton en stock, pas encore tranché) :
+    // on ne montre pas « Se connecter », qui serait trompeur.
+    const enCours = !demarrageResolu && tokenSessionPresent();
+    if (nomEl) nomEl.textContent = enCours ? "Connexion…" : "Se connecter";
     if (avatarEl) { avatarEl.textContent = "☁"; avatarEl.style.background = ""; }
     return;
   }
