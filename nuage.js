@@ -25,6 +25,16 @@ let droitsPartages = new Map(); // carnet_uuid → "lecture" | "edition" (partag
 // que je n'ai pas encore choisi de pseudo.
 let monProfil = null;
 
+// Le démarrage de l'authentification est-il tranché (connecté OU déconnecté,
+// de façon sûre) ? Tant que non, on ne montre NI la page de connexion NI le
+// pop-up de bienvenue : uniquement l'écran de chargement. Sans ce verrou,
+// l'interface « non connecté » apparaissait ~30 s pendant que Supabase
+// rafraîchissait un jeton expiré en arrière-plan.
+let demarrageResolu = false;
+
+/** Exposé à ui.js : l'état de connexion est-il connu de façon sûre ? */
+function demarrageAuthResolu() { return demarrageResolu; }
+
 const CLE_RESTER = "nuage-rester";           // "0" = ne pas rester connecté (défaut : "1")
 const CLE_SESSION_VUE = "nuage-session-vue"; // marqueur de session d'onglet
 const CLE_PSEUDO = "carnet-pseudo";
@@ -262,11 +272,20 @@ function masquerChargementApp() {
   setTimeout(() => { overlay.hidden = true; }, 280);
 }
 
-// Filet de sécurité : si rien ne se passe (Supabase indispo, JS d'auth planté),
-// on retire l'écran de chargement au bout de 6 s pour ne pas bloquer.
+// Filet de sécurité : si l'état de connexion n'est toujours pas tranché au
+// bout de 12 s (Supabase injoignable, JS d'auth planté…), on bascule sur la
+// page de connexion avec un message clair plutôt que de bloquer sur l'écran
+// de chargement.
 if (typeof window !== "undefined") {
   window.addEventListener("load", () => {
-    chargementAppTimer = setTimeout(masquerChargementApp, 6000);
+    chargementAppTimer = setTimeout(() => {
+      if (!demarrageResolu && nuageConfigure()) {
+        resoudreDemarrageDeconnecte("Le service en ligne ne répond pas — " +
+          "vérifie ta connexion Internet, puis recharge la page.");
+      } else {
+        masquerChargementApp();
+      }
+    }, 12000);
   });
 }
 
@@ -275,6 +294,9 @@ function demarrerNuage() {
   brancherCompteUI();
   brancherPageConnexion();
   if (!nuageConfigure()) {
+    // Pas de compte en ligne : l'état est trivialement connu (déconnecté),
+    // l'app fonctionne en local.
+    demarrageResolu = true;
     majCompteUI();
     if (typeof majPopupsAccueil === "function") majPopupsAccueil();
     // Pas de compte en ligne configuré → on quitte tout de suite l'écran de
@@ -298,35 +320,20 @@ function demarrerNuage() {
   // sans objet — le choix vit désormais sous CLE_RESTER.
   try { localStorage.removeItem("nuage-ephemere"); } catch (e) {}
 
-  // Log au demarrage : quel etait l'etat du token AVANT que Supabase le
-  // consomme ? Utile pour diagnostiquer les deconnexions inattendues :
-  // l'utilisateur peut copier ce log dans son message si le probleme
-  // reapparait.
+  // Un jeton traîne sur l'appareil → l'utilisateur est probablement connecté :
+  // on garde l'écran de chargement (avec un libellé dédié) tant que la session
+  // n'est pas restaurée, pour ne jamais montrer l'interface « non connecté ».
+  if (tokenSessionPresent()) montrerChargementApp("Connexion à ton compte…");
   try {
-    console.info("[LogBookMap] Demarrage auth — token present dans localStorage :", tokenSessionPresent());
+    console.info("[LogBookMap] Demarrage auth — token present :", tokenSessionPresent());
   } catch (e) {}
-
-  // Appel explicite a getSession() : force Supabase a lire le stockage
-  // et a nous restituer la session s'il y en a une. On n'attend pas la
-  // reponse ici — l'evenement INITIAL_SESSION sera dispatche de toute
-  // facon — mais cela stabilise le comportement au demarrage sur certains
-  // navigateurs qui peuvent retarder l'evenement.
-  sbClient.auth.getSession().then(({ data, error }) => {
-    try {
-      console.info("[LogBookMap] getSession() =>",
-        data && data.session ? "session trouvee (user=" + data.session.user.id + ")" : "aucune session",
-        error ? "erreur: " + error.message : "");
-    } catch (e) {}
-  }).catch((e) => {
-    try { console.warn("[LogBookMap] getSession() rejete :", e); } catch (e2) {}
-  });
 
   sbClient.auth.onAuthStateChange((evenement, session) => {
     try {
       console.info("[LogBookMap] onAuthStateChange :", evenement, "session ?", !!session);
     } catch (e) {}
     dernierEvenementAuth = evenement + (session ? " (avec session)" : " (sans session)");
-    majDiagnosticConnexion();
+    const etaitConnecte = nuageConnecte();
     sessionNuage = session;
     try {
       if (session) {
@@ -339,43 +346,122 @@ function demarrerNuage() {
     majCompteUI();
     majEtatSyncUI();
     majPageConnexion();
+    majDiagnosticConnexion();
     if (typeof majTitreCarteGlobale === "function") majTitreCarteGlobale();
 
     if (evenement === "PASSWORD_RECOVERY") {
-      // L'utilisateur arrive par le lien « Mot de passe oublié » : il est
-      // connecté, on lui demande tout de suite son nouveau mot de passe.
+      // Retour du lien « Mot de passe oublié » : l'utilisateur est connecté ;
+      // on branche l'app puis on demande le nouveau mot de passe par-dessus.
+      if (session) resoudreDemarrageConnecte(session);
       fermerModalCompte();
       ouvrirModalNouveauMdp();
-    } else if (evenement === "SIGNED_IN" && session) {
-      // Retour du lien magique : on ferme la fenêtre Compte et on synchronise.
-      // (Ici l'app tourne déjà — pas d'overlay plein cadre, juste un toast :
-      //  la fenêtre Compte reste visible, et la pastille de synchro suit.)
+    } else if (evenement === "SIGNED_OUT") {
+      // Déconnexion sûre et définitive (clic sur « Se déconnecter », ou jeton
+      // révoqué côté serveur) : la page de connexion peut s'afficher.
+      demarrageResolu = true;
+      monProfil = null;
+      majPageConnexion();
+      viderCarnetsDeVue();
+      masquerChargementApp();
+    } else if (session && !demarrageResolu) {
+      // Première session vue au démarrage (INITIAL_SESSION, retour de lien
+      // magique…) : on branche l'app connectée.
+      resoudreDemarrageConnecte(session);
+    } else if (session && !etaitConnecte) {
+      // (Re)connexion pendant que l'app tourne : depuis la page de connexion,
+      // la fenêtre Compte, ou au retour du réseau.
       fermerModalCompte();
       toast("☁️ Connecté ! Synchronisation de tes carnets…");
       assurerProfil();
       synchroniserNuage();
       // Si un token de partage attendait dans l'URL, on le consomme maintenant.
       rejoindrePartageDepuisUrl();
-    } else if (evenement === "INITIAL_SESSION") {
-      if (session) {
-        assurerProfil();
-        montrerChargementApp("Récupération de tes carnets…");
-        synchroniserNuage().finally(masquerChargementApp);
-        // Consomme un eventuel token ?rejoindrepartage=... dans l'URL.
-        rejoindrePartageDepuisUrl();
-      } else {
-        // Pas de session : les carnets sont liés au compte et le compte est
-        // la seule source de vérité. Sans session, on n'affiche rien — même
-        // si des carnets traînent en local (ils réapparaîtront à la connexion).
-        viderCarnetsDeVue();
-        masquerChargementApp();
-      }
-    } else if (evenement === "SIGNED_OUT") {
-      monProfil = null;
-      viderCarnetsDeVue();
-      masquerChargementApp();
+    } else if (evenement === "INITIAL_SESSION" && !session && !demarrageResolu &&
+               !tokenSessionPresent()) {
+      // Aucune session ET aucun jeton en stock : réellement déconnecté — la
+      // page de connexion s'affiche sans attendre. (S'il reste un jeton, on
+      // laisse resoudreSessionAuDemarrage tenter le rafraîchissement.)
+      resoudreDemarrageDeconnecte();
     }
   });
+
+  // Résolution EXPLICITE de la session, sans attendre les cycles internes de
+  // Supabase : un jeton expiré est rafraîchi immédiatement (avant ce correctif,
+  // l'app pouvait rester « non connectée » ~30 s en attendant le prochain
+  // cycle automatique).
+  resoudreSessionAuDemarrage();
+
+  // Si le réseau revient alors que la session n'a pas pu être restaurée, on
+  // retente aussitôt (l'événement TOKEN_REFRESHED rebranchera l'app).
+  window.addEventListener("online", () => {
+    if (sbClient && !nuageConnecte() && tokenSessionPresent()) {
+      sbClient.auth.refreshSession().catch(() => {});
+    }
+  });
+}
+
+/* ---------- Résolution de la session au démarrage ---------- */
+
+/** Branche l'app « connectée » (une seule fois) : profil, carnets, synchro. */
+function resoudreDemarrageConnecte(session) {
+  if (demarrageResolu) return;
+  demarrageResolu = true;
+  sessionNuage = session;
+  majCompteUI();
+  majEtatSyncUI();
+  majPageConnexion();
+  if (typeof majTitreCarteGlobale === "function") majTitreCarteGlobale();
+  assurerProfil();
+  montrerChargementApp("Récupération de tes carnets…");
+  synchroniserNuage().finally(masquerChargementApp);
+  // Consomme un eventuel token ?rejoindrepartage=... dans l'URL.
+  rejoindrePartageDepuisUrl();
+}
+
+/** Tranche « pas de session » (une seule fois) : page de connexion. */
+function resoudreDemarrageDeconnecte(message) {
+  if (demarrageResolu) return;
+  demarrageResolu = true;
+  sessionNuage = null;
+  monProfil = null;
+  majCompteUI();
+  majEtatSyncUI();
+  majPageConnexion();
+  viderCarnetsDeVue();
+  masquerChargementApp();
+  if (message) statutConnexion(message, true);
+  majDiagnosticConnexion();
+}
+
+/**
+ * Restaure la session au démarrage, de façon active :
+ *   - session valide en stock → app connectée tout de suite ;
+ *   - jeton présent mais expiré → rafraîchissement immédiat ;
+ *   - rien du tout → page de connexion.
+ * Les événements onAuthStateChange restent branchés en parallèle : le premier
+ * chemin qui aboutit gagne (verrou demarrageResolu).
+ */
+async function resoudreSessionAuDemarrage() {
+  try {
+    const { data } = await sbClient.auth.getSession();
+    if (demarrageResolu) return;
+    if (data && data.session) { resoudreDemarrageConnecte(data.session); return; }
+    if (!tokenSessionPresent()) { resoudreDemarrageDeconnecte(); return; }
+    try { console.info("[LogBookMap] Jeton expire — rafraichissement immediat…"); } catch (e) {}
+    const r = await sbClient.auth.refreshSession();
+    if (demarrageResolu) return;
+    if (r && r.data && r.data.session) { resoudreDemarrageConnecte(r.data.session); return; }
+    const m = (r && r.error && r.error.message) || "";
+    resoudreDemarrageDeconnecte(/network|fetch/i.test(m)
+      ? "Pas de connexion Internet : impossible de vérifier ta session. " +
+        "Elle sera restaurée dès que le réseau revient."
+      : "Ta session a expiré — reconnecte-toi.");
+  } catch (e) {
+    if (!demarrageResolu) {
+      resoudreDemarrageDeconnecte("La connexion au service en ligne a échoué — " +
+        "recharge la page pour réessayer.");
+    }
+  }
 }
 
 /* =========================================================
@@ -404,9 +490,10 @@ function majDiagnosticConnexion() {
   const el = document.getElementById("connexion-diagnostic-contenu");
   if (!el) return;
   const infos = {
-    version_sw: "v101",
+    version_sw: "v102",
     heure: new Date().toISOString(),
     token_present: tokenSessionPresent(),
+    demarrage_resolu: demarrageResolu,
     rester_connecte: choixResterConnecte(),
     session_active: !!(sessionNuage && sessionNuage.user),
     dernier_evenement_supabase: dernierEvenementAuth,
@@ -446,12 +533,11 @@ function tokenSessionPresent() {
 function majPageConnexion() {
   const page = document.getElementById("page-connexion");
   if (!page) return;
-  // On affiche uniquement si (a) le nuage est configure ET (b) on est
-  // reellement non connecte ET (c) il n'y a AUCUN token en attente de
-  // reprise dans localStorage. Ce dernier point est le filet de securite
-  // demande : si un token traine encore, on garde la page masquee et on
-  // laisse Supabase confirmer/rejeter la session avant de statuer.
-  const doitAfficher = nuageConfigure() && !nuageConnecte() && !tokenSessionPresent();
+  // On affiche uniquement si (a) le nuage est configuré, (b) l'état de
+  // connexion a été TRANCHÉ au démarrage (verrou demarrageResolu — tant que
+  // la session est en cours de restauration, on reste sur l'écran de
+  // chargement) et (c) on est réellement non connecté.
+  const doitAfficher = nuageConfigure() && demarrageResolu && !nuageConnecte();
   page.hidden = !doitAfficher;
   document.body.classList.toggle("pas-connecte", doitAfficher);
   if (doitAfficher) {

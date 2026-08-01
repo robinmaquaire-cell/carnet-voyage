@@ -298,6 +298,16 @@ function majEcranVide() {
 function majPopupsAccueil() {
   const bienvenue = document.getElementById("modal-bienvenue");
   const creation = document.getElementById("modal-nouveau-carnet");
+  // Tant que la restauration de session n'est pas tranchée au démarrage, on
+  // ne montre AUCUN pop-up : sinon la « Bienvenue » apparaît à tort pendant
+  // que Supabase rafraîchit le jeton. Idem quand la page de connexion plein
+  // écran est affichée : elle se suffit à elle-même.
+  const pageConnexion = document.getElementById("page-connexion");
+  if ((typeof demarrageAuthResolu === "function" && !demarrageAuthResolu()) ||
+      (pageConnexion && !pageConnexion.hidden)) {
+    bienvenue.hidden = true;
+    return;
+  }
   if (etat.vue !== "accueil" || etat.carnets.length > 0) {
     bienvenue.hidden = true;
     return;
