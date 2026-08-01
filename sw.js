@@ -7,7 +7,7 @@
    images de carte, elles, viennent d'Internet à la demande.
    ========================================================= */
 
-const CACHE = "logbookmap-v99";
+const CACHE = "logbookmap-v100";
 
 // Les fichiers locaux de l'application à garder en cache.
 const ASSETS = [
@@ -33,6 +33,13 @@ self.addEventListener("install", (e) => {
   e.waitUntil(
     caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting())
   );
+});
+
+// La page peut nous demander de sauter la file d'attente (nouveau SW
+// installe mais pas encore actif car l'ancien SW controle toujours des
+// clients). On saute pour appliquer la nouvelle version tout de suite.
+self.addEventListener("message", (e) => {
+  if (e && e.data && e.data.type === "SKIP_WAITING") self.skipWaiting();
 });
 
 // Activation : on supprime les anciens caches.

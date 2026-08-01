@@ -356,7 +356,7 @@ function majDiagnosticConnexion() {
   const el = document.getElementById("connexion-diagnostic-contenu");
   if (!el) return;
   const infos = {
-    version_sw: "v99",
+    version_sw: "v100",
     heure: new Date().toISOString(),
     token_dans_localStorage: tokenSessionPresent(),
     session_active: !!(sessionNuage && sessionNuage.user),

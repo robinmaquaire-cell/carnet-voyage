@@ -6353,12 +6353,28 @@ function init() {
       rechargement = true;
       window.location.reload();
     });
-    navigator.serviceWorker.register("sw.js")
+    // updateViaCache: 'none' → le navigateur ne met plus sw.js en cache HTTP.
+    // Sans ca, GitHub Pages peut servir un vieux sw.js pendant des heures,
+    // ce qui empeche toute mise a jour du code de l'app.
+    navigator.serviceWorker.register("sw.js", { updateViaCache: "none" })
       .then((reg) => {
         if (!reg) return;
         // Vérification immédiate au démarrage : si une nouvelle version du
         // service worker est en ligne, on la télécharge tout de suite.
         reg.update().catch(() => {});
+        // Si une nouvelle version est en attente d'activation (l'utilisateur
+        // avait deja des onglets ouverts au moment du deploiement), on la
+        // force a prendre la main tout de suite.
+        if (reg.waiting) { try { reg.waiting.postMessage({ type: "SKIP_WAITING" }); } catch (e) {} }
+        reg.addEventListener("updatefound", () => {
+          const nouveau = reg.installing;
+          if (!nouveau) return;
+          nouveau.addEventListener("statechange", () => {
+            if (nouveau.state === "installed" && navigator.serviceWorker.controller) {
+              try { nouveau.postMessage({ type: "SKIP_WAITING" }); } catch (e) {}
+            }
+          });
+        });
         // Nouvelle vérification quand la PWA revient au premier plan
         // (l'utilisateur ouvre l'app après l'avoir laissée en arrière-plan).
         document.addEventListener("visibilitychange", () => {
