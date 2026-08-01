@@ -1599,15 +1599,20 @@ body.pas-connecte .layout { visibility: hidden; }
   border-color: var(--foret, #3f7d52);
   background: #ffffff;
 }
-.page-connexion-zone-mdp {
+/* Séparateur « ou » entre la connexion par mot de passe et le lien e-mail. */
+.page-connexion-ou {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 4px;
-  padding: 14px;
-  border-radius: 12px;
-  background: rgba(63, 125, 82, 0.06);
-  border: 1px dashed var(--ligne, #e5dfd0);
+  align-items: center;
+  gap: 12px;
+  margin: 2px 0;
+  color: var(--encre-douce, #5b6b60);
+  font-size: 12px;
+}
+.page-connexion-ou::before,
+.page-connexion-ou::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--ligne, #e5dfd0);
 }
 .page-connexion-switch {
   display: flex;

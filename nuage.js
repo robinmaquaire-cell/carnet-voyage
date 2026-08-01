@@ -582,7 +582,7 @@ function majDiagnosticConnexion() {
   const el = document.getElementById("connexion-diagnostic-contenu");
   if (!el) return;
   const infos = {
-    version_sw: "v103",
+    version_sw: "v104",
     heure: new Date().toISOString(),
     token_present: tokenSessionPresent(),
     demarrage_resolu: demarrageResolu,
@@ -673,35 +673,6 @@ function emailValide(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-// Mode courant de la page de connexion : lien magique (défaut) ou mot de passe.
-let connexionAvecMdp = false;
-
-/** Bascule la page de connexion entre « lien magique » et « mot de passe ». */
-function basculerModeConnexion(avecMdp) {
-  connexionAvecMdp = !!avecMdp;
-  const zoneMdp = document.getElementById("connexion-zone-mdp");
-  const envoyer = document.getElementById("connexion-envoyer");
-  const bascule = document.getElementById("connexion-bascule-mdp");
-  const intro = document.getElementById("connexion-intro");
-  if (zoneMdp) zoneMdp.hidden = !connexionAvecMdp;
-  if (envoyer) envoyer.textContent = connexionAvecMdp
-    ? "🔑 Se connecter"
-    : "✉️ Recevoir un lien de connexion";
-  if (bascule) bascule.textContent = connexionAvecMdp
-    ? "Recevoir un lien par e-mail à la place"
-    : "Se connecter avec un mot de passe";
-  if (intro) intro.textContent = connexionAvecMdp
-    ? "Connecte-toi avec l'adresse e-mail et le mot de passe de ton compte."
-    : "Connecte-toi pour retrouver tes carnets sur tous tes appareils. " +
-      "On t'envoie un lien à cliquer par e-mail — le compte se crée tout " +
-      "seul à la première connexion.";
-  statutConnexion("");
-  if (connexionAvecMdp) {
-    const champMdp = document.getElementById("connexion-mdp");
-    if (champMdp) setTimeout(() => champMdp.focus(), 30);
-  }
-}
-
 /** Envoie un lien magique depuis la page de connexion plein écran. */
 async function envoyerLienDepuisConnexion() {
   if (!sbClient) return;
@@ -711,7 +682,7 @@ async function envoyerLienDepuisConnexion() {
     return;
   }
   noterChoixResterDepuis("connexion-rester");
-  const bouton = document.getElementById("connexion-envoyer");
+  const bouton = document.getElementById("connexion-lien");
   await avecChargement(bouton, "Envoi du lien…", (async () => {
     statutConnexion("Envoi du lien de connexion…");
     const { error } = await sbClient.auth.signInWithOtp({
@@ -734,7 +705,10 @@ async function connecterMdpDepuisConnexion() {
     return;
   }
   if (!mdp) {
-    statutConnexion("Saisis ton mot de passe — ou repasse par le lien e-mail.", true);
+    statutConnexion("Saisis ton mot de passe — ou utilise le bouton " +
+      "« Recevoir un lien de connexion par e-mail » juste en dessous.", true);
+    const champMdp = document.getElementById("connexion-mdp");
+    if (champMdp) champMdp.focus();
     return;
   }
   noterChoixResterDepuis("connexion-rester");
@@ -774,7 +748,7 @@ function brancherPageConnexion() {
   const page = document.getElementById("page-connexion");
   if (!page) return;
   const form = document.getElementById("connexion-form");
-  const bascule = document.getElementById("connexion-bascule-mdp");
+  const lien = document.getElementById("connexion-lien");
   const oubli = document.getElementById("connexion-oubli");
   const rester = document.getElementById("connexion-rester");
   // Reflète le choix mémorisé (par défaut : coché = rester connecté), et
@@ -784,14 +758,13 @@ function brancherPageConnexion() {
     rester.checked = choixResterConnecte();
     rester.addEventListener("change", () => enregistrerChoixRester(rester.checked));
   }
-  // Un seul point d'entrée : la soumission du formulaire (clic sur le bouton
-  // ou touche Entrée), routée selon le mode courant.
+  // Action principale (bouton « Se connecter » ou touche Entrée) : connexion
+  // par mot de passe. Le lien par e-mail est le bouton secondaire dédié.
   if (form) form.addEventListener("submit", (e) => {
     e.preventDefault();
-    if (connexionAvecMdp) connecterMdpDepuisConnexion();
-    else envoyerLienDepuisConnexion();
+    connecterMdpDepuisConnexion();
   });
-  if (bascule) bascule.addEventListener("click", () => basculerModeConnexion(!connexionAvecMdp));
+  if (lien) lien.addEventListener("click", envoyerLienDepuisConnexion);
   if (oubli) oubli.addEventListener("click", envoyerReinitialisationMdp);
 }
 

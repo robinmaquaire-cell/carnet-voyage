@@ -55,29 +55,29 @@
         <span>Log Book Map</span>
       </div>
       <p id="connexion-intro" class="page-connexion-intro">
-        Connecte-toi pour retrouver tes carnets sur tous tes appareils.
-        On t'envoie un lien à cliquer par e-mail — le compte se crée tout
-        seul à la première connexion.
+        Connecte-toi avec ton e-mail et ton mot de passe — ou reçois un
+        lien à cliquer par e-mail (le compte se crée tout seul à la
+        première connexion, aucun mot de passe requis).
       </p>
 
       <!-- Vrai formulaire : Entrée valide, et le navigateur peut proposer
-           l'enregistrement / le pré-remplissage des identifiants. -->
+           l'enregistrement / le pré-remplissage des identifiants. Les deux
+           façons de se connecter sont sur le même écran : mot de passe en
+           action principale, lien par e-mail en secours. -->
       <form id="connexion-form" class="page-connexion-form" novalidate>
         <label class="page-connexion-label" for="connexion-email">Adresse e-mail</label>
         <input id="connexion-email" name="email" class="page-connexion-input" type="email"
                placeholder="toi@exemple.fr" autocomplete="email"
                inputmode="email" autocapitalize="none" spellcheck="false" required />
 
-        <div id="connexion-zone-mdp" class="page-connexion-zone-mdp" hidden>
-          <div class="page-connexion-label-ligne">
-            <label class="page-connexion-label" for="connexion-mdp">Mot de passe</label>
-            <button id="connexion-oubli" class="page-connexion-lien page-connexion-lien-petit" type="button">
-              Mot de passe oublié&nbsp;?
-            </button>
-          </div>
-          <input id="connexion-mdp" name="password" class="page-connexion-input" type="password"
-                 autocomplete="current-password" placeholder="Ton mot de passe" />
+        <div class="page-connexion-label-ligne">
+          <label class="page-connexion-label" for="connexion-mdp">Mot de passe</label>
+          <button id="connexion-oubli" class="page-connexion-lien page-connexion-lien-petit" type="button">
+            Mot de passe oublié&nbsp;?
+          </button>
         </div>
+        <input id="connexion-mdp" name="password" class="page-connexion-input" type="password"
+               autocomplete="current-password" placeholder="Ton mot de passe" />
 
         <label class="page-connexion-switch">
           <input id="connexion-rester" type="checkbox" checked />
@@ -85,13 +85,15 @@
         </label>
 
         <button id="connexion-envoyer" class="btn btn-accent page-connexion-btn" type="submit">
-          ✉️ Recevoir un lien de connexion
+          🔑 Se connecter
+        </button>
+
+        <div class="page-connexion-ou"><span>ou</span></div>
+
+        <button id="connexion-lien" class="btn btn-ghost page-connexion-btn-second" type="button">
+          ✉️ Recevoir un lien de connexion par e-mail
         </button>
       </form>
-
-      <button id="connexion-bascule-mdp" class="page-connexion-lien" type="button">
-        Se connecter avec un mot de passe
-      </button>
 
       <p id="connexion-statut" class="gen-statut" role="status" aria-live="polite" hidden></p>
 
