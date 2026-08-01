@@ -1,11 +1,13 @@
 /* =========================================================
    nuage.js — Compte et sauvegarde en ligne (Supabase)
    ---------------------------------------------------------
-   - Connexion SANS mot de passe : on reçoit un « lien magique »
-     par e-mail ; le compte se crée tout seul à la première fois.
-   - « Rester connecté » : la session est mémorisée sur l'appareil
-     (on ne se reconnecte pas à chaque visite). Si la case est
-     décochée, la session est oubliée à la fermeture du navigateur.
+   - Connexion par « lien magique » e-mail (le compte se crée tout
+     seul à la première fois) ou par mot de passe, avec parcours
+     « Mot de passe oublié » standard (e-mail de réinitialisation).
+   - « Rester connecté » : coché, la session vit dans localStorage
+     et survit à la fermeture du navigateur. Décoché, elle vit dans
+     sessionStorage : elle disparaît à la fermeture, comme sur
+     n'importe quel site avec une case « Se souvenir de moi ».
    - Chaque carnet est sauvegardé en ligne : une ligne (fiche) dans
      la table `carnets` + son contenu complet en JSON dans le
      stockage. La version la plus récente gagne, dans les deux sens.
@@ -23,7 +25,7 @@ let droitsPartages = new Map(); // carnet_uuid → "lecture" | "edition" (partag
 // que je n'ai pas encore choisi de pseudo.
 let monProfil = null;
 
-const CLE_EPHEMERE = "nuage-ephemere";      // "1" = ne pas rester connecté
+const CLE_RESTER = "nuage-rester";           // "0" = ne pas rester connecté (défaut : "1")
 const CLE_SESSION_VUE = "nuage-session-vue"; // marqueur de session d'onglet
 const CLE_PSEUDO = "carnet-pseudo";
 // Marqueur : « cet appareil a déjà été connecté à un compte ». Sert à masquer
@@ -36,6 +38,55 @@ const CLE_ETAIT_CONNECTE = "nuage-etait-connecte";
 // Format d'un pseudo valide (identique à la contrainte SQL) : 3-30 caractères
 // pris parmi lettres, chiffres, tiret et tiret-bas.
 const PSEUDO_MOTIF = /^[A-Za-z0-9_-]{3,30}$/;
+
+/* =========================================================
+   « Rester connecté » — stockage de la session
+   ---------------------------------------------------------
+   Le choix est noté dans localStorage (clé CLE_RESTER) pour être
+   partagé entre les onglets — y compris l'onglet qu'ouvre le lien
+   magique reçu par e-mail. Selon ce choix, les jetons de session
+   Supabase sont rangés :
+   - dans localStorage  → session durable, commune aux onglets ;
+   - dans sessionStorage → session limitée à l'onglet, oubliée à la
+     fermeture du navigateur (comportement standard du web quand la
+     case « Se souvenir de moi » est décochée).
+   ========================================================= */
+
+/** L'utilisateur veut-il rester connecté ? (défaut : oui) */
+function choixResterConnecte() {
+  try { return localStorage.getItem(CLE_RESTER) !== "0"; } catch (e) { return true; }
+}
+
+/** Mémorise le choix de la case « Rester connecté ». */
+function enregistrerChoixRester(rester) {
+  try { localStorage.setItem(CLE_RESTER, rester ? "1" : "0"); } catch (e) {}
+}
+
+/**
+ * Adaptateur de stockage passé au client Supabase : il range les jetons au
+ * bon endroit selon le choix « Rester connecté », et sait les retrouver où
+ * qu'ils soient (une session éphémère d'un côté, une durable de l'autre).
+ */
+const stockageAuth = {
+  getItem: (cle) => {
+    try {
+      const ephemere = sessionStorage.getItem(cle);
+      if (ephemere != null) return ephemere;
+    } catch (e) {}
+    try { return localStorage.getItem(cle); } catch (e) { return null; }
+  },
+  setItem: (cle, valeur) => {
+    const durable = choixResterConnecte();
+    try { (durable ? localStorage : sessionStorage).setItem(cle, valeur); } catch (e) {}
+    // On nettoie l'autre emplacement pour ne jamais avoir deux sessions
+    // divergentes (l'ancienne ressurgirait au mauvais moment).
+    try { (durable ? sessionStorage : localStorage).removeItem(cle); } catch (e) {}
+  },
+  removeItem: (cle) => {
+    try { localStorage.removeItem(cle); } catch (e) {}
+    try { sessionStorage.removeItem(cle); } catch (e) {}
+  },
+};
 
 /** Le nuage est-il configuré (clés présentes) ? */
 function nuageConfigure() {
@@ -231,29 +282,21 @@ function demarrerNuage() {
     masquerChargementApp();
     return;
   }
-  // Options d'auth explicites : la session est mémorisée dans localStorage et
-  // rafraîchie automatiquement. C'est localStorage QUI EST PARTAGÉ entre les
-  // onglets — indispensable pour qu'un onglet ne perde pas sa session parce
-  // qu'un autre l'a réécrite.
-  //
-  // Le choix « Rester connecté / Ne pas rester connecté » est appliqué
-  // séparément : si décoché, on efface la session à la fermeture de l'onglet
-  // (handler pagehide plus bas). Ce filet de sécurité n'affecte pas les autres
-  // onglets ouverts au même moment.
+  // Options d'auth explicites : session persistée et rafraîchie
+  // automatiquement. L'emplacement des jetons (localStorage ou
+  // sessionStorage) dépend du choix « Rester connecté » — voir stockageAuth.
   sbClient = window.supabase.createClient(window.CONFIG_NUAGE.url, window.CONFIG_NUAGE.cle, {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      storage: (typeof window !== "undefined" && window.localStorage) ? window.localStorage : undefined,
+      storage: stockageAuth,
     },
   });
 
-  // Purge systématique de toute ancienne valeur « éphémère » qui aurait pu
-  // rester d'une version précédente : on ne se déconnecte plus JAMAIS
-  // automatiquement à la fermeture. La session reste dans localStorage tant
-  // que l'utilisateur ne clique pas explicitement sur « Se déconnecter ».
-  try { localStorage.removeItem(CLE_EPHEMERE); } catch (e) {}
+  // Nettoyage d'une clé d'une ancienne version (« nuage-ephemere ») devenue
+  // sans objet — le choix vit désormais sous CLE_RESTER.
+  try { localStorage.removeItem("nuage-ephemere"); } catch (e) {}
 
   // Log au demarrage : quel etait l'etat du token AVANT que Supabase le
   // consomme ? Utile pour diagnostiquer les deconnexions inattendues :
@@ -298,7 +341,12 @@ function demarrerNuage() {
     majPageConnexion();
     if (typeof majTitreCarteGlobale === "function") majTitreCarteGlobale();
 
-    if (evenement === "SIGNED_IN" && session) {
+    if (evenement === "PASSWORD_RECOVERY") {
+      // L'utilisateur arrive par le lien « Mot de passe oublié » : il est
+      // connecté, on lui demande tout de suite son nouveau mot de passe.
+      fermerModalCompte();
+      ouvrirModalNouveauMdp();
+    } else if (evenement === "SIGNED_IN" && session) {
       // Retour du lien magique : on ferme la fenêtre Compte et on synchronise.
       // (Ici l'app tourne déjà — pas d'overlay plein cadre, juste un toast :
       //  la fenêtre Compte reste visible, et la pastille de synchro suit.)
@@ -356,14 +404,19 @@ function majDiagnosticConnexion() {
   const el = document.getElementById("connexion-diagnostic-contenu");
   if (!el) return;
   const infos = {
-    version_sw: "v100",
+    version_sw: "v101",
     heure: new Date().toISOString(),
-    token_dans_localStorage: tokenSessionPresent(),
+    token_present: tokenSessionPresent(),
+    rester_connecte: choixResterConnecte(),
     session_active: !!(sessionNuage && sessionNuage.user),
     dernier_evenement_supabase: dernierEvenementAuth,
     nuage_configure: nuageConfigure(),
     url: window.location.href.split("#")[0],
     localStorage_keys: Object.keys(localStorage).filter((k) => k.startsWith("sb-") || k.startsWith("nuage-")),
+    sessionStorage_keys: (function () {
+      try { return Object.keys(sessionStorage).filter((k) => k.startsWith("sb-") || k.startsWith("nuage-")); }
+      catch (e) { return []; }
+    })(),
   };
   el.textContent = JSON.stringify(infos, null, 2);
 }
@@ -380,7 +433,9 @@ function tokenSessionPresent() {
     const ref = (window.CONFIG_NUAGE && window.CONFIG_NUAGE.url || "")
       .replace(/^https?:\/\//, "").split(".")[0];
     if (!ref) return false;
-    const brut = localStorage.getItem("sb-" + ref + "-auth-token");
+    // La session peut vivre dans sessionStorage (« Rester connecté » décoché)
+    // ou localStorage (coché) : on regarde aux deux endroits.
+    const brut = stockageAuth.getItem("sb-" + ref + "-auth-token");
     if (!brut) return false;
     const parse = JSON.parse(brut);
     return !!(parse && (parse.access_token || (parse.currentSession && parse.currentSession.access_token)));
@@ -410,24 +465,56 @@ function majPageConnexion() {
   }
 }
 
-/** No-op : la case « Rester connecté » est purement informative maintenant,
- *  on garde la session en permanence. Cette fonction reste pour éviter de
- *  casser d'anciens appels ; elle peut être retirée plus tard. */
-function enregistrerChoixRester() {
-  // Anciennement : écrivait CLE_EPHEMERE pour effacer la session à la
-  // fermeture. On ne le fait plus — la session persiste toujours.
+/** Applique le choix de la case « Rester connecté » du formulaire visible. */
+function noterChoixResterDepuis(idCase) {
+  const c = document.getElementById(idCase);
+  if (c) enregistrerChoixRester(c.checked);
+}
+
+/** L'e-mail saisi est-il plausible ? (validation simple côté client) */
+function emailValide(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+// Mode courant de la page de connexion : lien magique (défaut) ou mot de passe.
+let connexionAvecMdp = false;
+
+/** Bascule la page de connexion entre « lien magique » et « mot de passe ». */
+function basculerModeConnexion(avecMdp) {
+  connexionAvecMdp = !!avecMdp;
+  const zoneMdp = document.getElementById("connexion-zone-mdp");
+  const envoyer = document.getElementById("connexion-envoyer");
+  const bascule = document.getElementById("connexion-bascule-mdp");
+  const intro = document.getElementById("connexion-intro");
+  if (zoneMdp) zoneMdp.hidden = !connexionAvecMdp;
+  if (envoyer) envoyer.textContent = connexionAvecMdp
+    ? "🔑 Se connecter"
+    : "✉️ Recevoir un lien de connexion";
+  if (bascule) bascule.textContent = connexionAvecMdp
+    ? "Recevoir un lien par e-mail à la place"
+    : "Se connecter avec un mot de passe";
+  if (intro) intro.textContent = connexionAvecMdp
+    ? "Connecte-toi avec l'adresse e-mail et le mot de passe de ton compte."
+    : "Connecte-toi pour retrouver tes carnets sur tous tes appareils. " +
+      "On t'envoie un lien à cliquer par e-mail — le compte se crée tout " +
+      "seul à la première connexion.";
+  statutConnexion("");
+  if (connexionAvecMdp) {
+    const champMdp = document.getElementById("connexion-mdp");
+    if (champMdp) setTimeout(() => champMdp.focus(), 30);
+  }
 }
 
 /** Envoie un lien magique depuis la page de connexion plein écran. */
 async function envoyerLienDepuisConnexion() {
   if (!sbClient) return;
   const email = document.getElementById("connexion-email").value.trim();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (!emailValide(email)) {
     statutConnexion("Écris une adresse e-mail valide.", true);
     return;
   }
-  enregistrerChoixRester();
-  const bouton = document.getElementById("connexion-lien");
+  noterChoixResterDepuis("connexion-rester");
+  const bouton = document.getElementById("connexion-envoyer");
   await avecChargement(bouton, "Envoi du lien…", (async () => {
     statutConnexion("Envoi du lien de connexion…");
     const { error } = await sbClient.auth.signInWithOtp({
@@ -445,16 +532,16 @@ async function connecterMdpDepuisConnexion() {
   if (!sbClient) return;
   const email = document.getElementById("connexion-email").value.trim();
   const mdp = document.getElementById("connexion-mdp").value;
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (!emailValide(email)) {
     statutConnexion("Écris une adresse e-mail valide.", true);
     return;
   }
   if (!mdp) {
-    statutConnexion("Saisis ton mot de passe (ou utilise le bouton « Recevoir un lien »).", true);
+    statutConnexion("Saisis ton mot de passe — ou repasse par le lien e-mail.", true);
     return;
   }
-  enregistrerChoixRester();
-  const bouton = document.getElementById("connexion-mdp-btn");
+  noterChoixResterDepuis("connexion-rester");
+  const bouton = document.getElementById("connexion-envoyer");
   await avecChargement(bouton, "Connexion…", (async () => {
     statutConnexion("Connexion…");
     const { error } = await sbClient.auth.signInWithPassword({ email, password: mdp });
@@ -463,43 +550,52 @@ async function connecterMdpDepuisConnexion() {
   })());
 }
 
+/**
+ * « Mot de passe oublié ? » : envoie l'e-mail de réinitialisation standard.
+ * Au clic sur le lien reçu, l'utilisateur revient connecté et l'événement
+ * PASSWORD_RECOVERY ouvre la fenêtre « Nouveau mot de passe ».
+ */
+async function envoyerReinitialisationMdp() {
+  if (!sbClient) return;
+  const email = document.getElementById("connexion-email").value.trim();
+  if (!emailValide(email)) {
+    statutConnexion("Écris d'abord ton adresse e-mail ci-dessus, puis reclique " +
+      "sur « Mot de passe oublié ? ».", true);
+    return;
+  }
+  statutConnexion("Envoi de l'e-mail de réinitialisation…");
+  const { error } = await sbClient.auth.resetPasswordForEmail(email, {
+    redirectTo: window.location.origin + window.location.pathname,
+  });
+  if (error) { statutConnexion(traduireErreurAuth(error), true); return; }
+  statutConnexion("✓ E-mail envoyé ! Clique sur le lien reçu : tu seras " +
+    "connecté et invité à choisir un nouveau mot de passe.");
+}
+
 /** Branche les événements de la page de connexion (une seule fois au démarrage). */
 function brancherPageConnexion() {
   const page = document.getElementById("page-connexion");
   if (!page) return;
-  const lien = document.getElementById("connexion-lien");
-  const btnMdp = document.getElementById("connexion-mdp-btn");
-  const champEmail = document.getElementById("connexion-email");
-  const champMdp = document.getElementById("connexion-mdp");
+  const form = document.getElementById("connexion-form");
   const bascule = document.getElementById("connexion-bascule-mdp");
-  const zoneMdp = document.getElementById("connexion-zone-mdp");
+  const oubli = document.getElementById("connexion-oubli");
   const rester = document.getElementById("connexion-rester");
-  // Reflète le choix mémorisé (par défaut : coché = rester connecté).
+  // Reflète le choix mémorisé (par défaut : coché = rester connecté), et
+  // l'enregistre dès que la case change — l'onglet ouvert par le lien
+  // magique lira ce choix pour ranger la session au bon endroit.
   if (rester) {
-    try { rester.checked = localStorage.getItem(CLE_EPHEMERE) !== "1"; } catch (e) {}
-    rester.addEventListener("change", enregistrerChoixRester);
+    rester.checked = choixResterConnecte();
+    rester.addEventListener("change", () => enregistrerChoixRester(rester.checked));
   }
-  if (lien) lien.addEventListener("click", envoyerLienDepuisConnexion);
-  if (btnMdp) btnMdp.addEventListener("click", connecterMdpDepuisConnexion);
-  if (champEmail) champEmail.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
-    if (champMdp && champMdp.value) connecterMdpDepuisConnexion();
+  // Un seul point d'entrée : la soumission du formulaire (clic sur le bouton
+  // ou touche Entrée), routée selon le mode courant.
+  if (form) form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (connexionAvecMdp) connecterMdpDepuisConnexion();
     else envoyerLienDepuisConnexion();
   });
-  if (champMdp) champMdp.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") connecterMdpDepuisConnexion();
-  });
-  if (bascule && zoneMdp) {
-    bascule.addEventListener("click", (e) => {
-      e.preventDefault();
-      const cache = zoneMdp.hidden;
-      zoneMdp.hidden = !cache;
-      bascule.textContent = cache
-        ? "Utiliser un lien magique à la place"
-        : "Mot de passe oublié";
-      if (cache) setTimeout(() => champMdp && champMdp.focus(), 30);
-    });
-  }
+  if (bascule) bascule.addEventListener("click", () => basculerModeConnexion(!connexionAvecMdp));
+  if (oubli) oubli.addEventListener("click", envoyerReinitialisationMdp);
 }
 
 /* =========================================================
@@ -1640,10 +1736,8 @@ function ouvrirModalCompte() {
     const mdpConn = document.getElementById("compte-mdp-connexion");
     if (mdpConn) mdpConn.value = "";
   }
-  try {
-    document.getElementById("compte-rester").checked =
-      localStorage.getItem(CLE_EPHEMERE) !== "1";
-  } catch (e) {}
+  const rester = document.getElementById("compte-rester");
+  if (rester) rester.checked = choixResterConnecte();
   document.getElementById("modal-compte").hidden = false;
 }
 
@@ -1980,6 +2074,7 @@ async function envoyerLienMagique() {
     statutCompte("Écris une adresse e-mail valide.", true);
     return;
   }
+  noterChoixResterDepuis("compte-rester");
   const bouton = document.getElementById("compte-lien");
   await avecChargement(bouton, "Envoi du lien…", (async () => {
     statutCompte("Envoi du lien de connexion…");
@@ -2005,6 +2100,7 @@ async function connecterAvecMotDePasse() {
     statutCompte("Saisis ton mot de passe (ou utilise le bouton « Recevoir un lien »).", true);
     return;
   }
+  noterChoixResterDepuis("compte-rester");
   const bouton = document.getElementById("compte-connexion-mdp");
   await avecChargement(bouton, "Connexion…", (async () => {
     statutCompte("Connexion…");
@@ -2535,11 +2631,82 @@ async function purgerTousLesCarnets() {
 /** Messages d'erreur Supabase → français simple. */
 function traduireErreurAuth(error) {
   const m = (error && error.message) || "";
+  if (/invalid login credentials|invalid_credentials/i.test(m)) {
+    return "E-mail ou mot de passe incorrect. Vérifie ta saisie — ou utilise " +
+      "« Mot de passe oublié ? » pour en choisir un nouveau.";
+  }
   if (/rate limit|too many|after \d+ seconds/i.test(m)) {
-    return "Trop de liens demandés d'affilée — attends une minute et réessaie.";
+    return "Trop de tentatives d'affilée — attends une minute et réessaie.";
+  }
+  if (/email not confirmed/i.test(m)) {
+    return "Cette adresse n'a pas encore été confirmée : connecte-toi une " +
+      "première fois via le lien reçu par e-mail.";
+  }
+  if (/should be different from the old password/i.test(m)) {
+    return "Ce mot de passe est identique à l'ancien — choisis-en un différent.";
+  }
+  if (/password should be at least/i.test(m)) {
+    return "Le mot de passe est trop court.";
   }
   if (/network|fetch/i.test(m)) return "Pas de connexion Internet pour l'instant.";
   return "Ça n'a pas marché : " + (m || "erreur inconnue.");
+}
+
+/* =========================================================
+   Fenêtre « Nouveau mot de passe » (retour du lien de
+   réinitialisation — événement PASSWORD_RECOVERY)
+   ========================================================= */
+
+function statutNouveauMdp(message, erreur) {
+  const el = document.getElementById("nouveau-mdp-statut");
+  if (!el) return;
+  el.textContent = message || "";
+  el.hidden = !message;
+  el.className = "gen-statut " + (erreur ? "erreur" : "info");
+}
+
+function ouvrirModalNouveauMdp() {
+  const modal = document.getElementById("modal-nouveau-mdp");
+  if (!modal) return;
+  document.getElementById("nouveau-mdp").value = "";
+  document.getElementById("nouveau-mdp-confirm").value = "";
+  statutNouveauMdp("");
+  modal.hidden = false;
+  setTimeout(() => document.getElementById("nouveau-mdp").focus(), 50);
+}
+
+function fermerModalNouveauMdp() {
+  const modal = document.getElementById("modal-nouveau-mdp");
+  if (modal) modal.hidden = true;
+}
+
+async function validerNouveauMdp() {
+  const mdp = document.getElementById("nouveau-mdp").value;
+  const confirm = document.getElementById("nouveau-mdp-confirm").value;
+  if (mdp.length < 8) {
+    statutNouveauMdp("Le mot de passe doit faire au moins 8 caractères.", true);
+    return;
+  }
+  if (mdp !== confirm) {
+    statutNouveauMdp("Les deux mots de passe ne sont pas identiques.", true);
+    return;
+  }
+  const bouton = document.getElementById("nouveau-mdp-valider");
+  await avecChargement(bouton, "Enregistrement…", (async () => {
+    const { error } = await sbClient.auth.updateUser({ password: mdp });
+    if (error) { statutNouveauMdp(traduireErreurAuth(error), true); return; }
+    fermerModalNouveauMdp();
+    toast("🔑 Nouveau mot de passe enregistré.");
+  })());
+}
+
+function brancherNouveauMdpUI() {
+  const modal = document.getElementById("modal-nouveau-mdp");
+  if (!modal) return;
+  document.getElementById("nouveau-mdp-valider").addEventListener("click", validerNouveauMdp);
+  document.getElementById("nouveau-mdp-plus-tard").addEventListener("click", fermerModalNouveauMdp);
+  document.getElementById("nouveau-mdp-confirm")
+    .addEventListener("keydown", (e) => { if (e.key === "Enter") validerNouveauMdp(); });
 }
 
 /* =========================================================
@@ -2642,6 +2809,7 @@ function brancherEnvoiUI() {
 function brancherCompteUI() {
   brancherProfilUI();
   brancherEnvoiUI();
+  brancherNouveauMdpUI();
   document.getElementById("compte-btn")
     .addEventListener("click", () => ouvrirModalCompte());
   document.getElementById("compte-fermer")
@@ -2668,8 +2836,11 @@ function brancherCompteUI() {
   document.querySelectorAll(".modal-compte-onglet").forEach((b) => {
     b.addEventListener("click", () => activerOngletCompte(b.dataset.compteOnglet));
   });
-  // (Ancien listener sur « compte-rester » retire : on ne memorise plus le
-  // choix ephemere, la session persiste toujours.)
+  // Case « Rester connecté » de la fenêtre Compte : même choix partagé que
+  // celle de la page de connexion.
+  const compteRester = document.getElementById("compte-rester");
+  if (compteRester) compteRester.addEventListener("change",
+    () => enregistrerChoixRester(compteRester.checked));
   document.getElementById("compte-deconnecter")
     .addEventListener("click", deconnecterNuage);
   // Zone dangereuse : purge totale des carnets. Deux confirmations en amont

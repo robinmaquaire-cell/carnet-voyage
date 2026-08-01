@@ -1560,11 +1560,29 @@ body.pas-connecte .layout { visibility: hidden; }
   color: var(--encre-douce, #5b6b60);
   line-height: 1.45;
 }
+.page-connexion-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 .page-connexion-label {
   font-size: 13px;
   font-weight: 650;
   color: var(--encre, #2f3b34);
   margin-top: 4px;
+}
+/* Ligne « Mot de passe … Mot de passe oublié ? » : libellé à gauche, lien à droite. */
+.page-connexion-label-ligne {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.page-connexion-lien.page-connexion-lien-petit {
+  align-self: auto;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0;
 }
 .page-connexion-input {
   width: 100%;

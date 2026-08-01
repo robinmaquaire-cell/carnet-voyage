@@ -54,44 +54,51 @@
         <span class="page-connexion-marque-icone">▲</span>
         <span>Log Book Map</span>
       </div>
-      <p class="page-connexion-intro">
-        Avec un compte, tes carnets sont sauvegardés en ligne et se retrouvent
-        sur tous tes appareils. On t'envoie un lien à cliquer par e-mail
-        — aucun mot de passe à retenir.
+      <p id="connexion-intro" class="page-connexion-intro">
+        Connecte-toi pour retrouver tes carnets sur tous tes appareils.
+        On t'envoie un lien à cliquer par e-mail — le compte se crée tout
+        seul à la première connexion.
       </p>
 
-      <label class="page-connexion-label" for="connexion-email">Adresse e-mail</label>
-      <input id="connexion-email" class="page-connexion-input" type="email"
-             placeholder="toi@exemple.fr" autocomplete="email" />
+      <!-- Vrai formulaire : Entrée valide, et le navigateur peut proposer
+           l'enregistrement / le pré-remplissage des identifiants. -->
+      <form id="connexion-form" class="page-connexion-form" novalidate>
+        <label class="page-connexion-label" for="connexion-email">Adresse e-mail</label>
+        <input id="connexion-email" name="email" class="page-connexion-input" type="email"
+               placeholder="toi@exemple.fr" autocomplete="email"
+               inputmode="email" autocapitalize="none" spellcheck="false" required />
 
-      <div id="connexion-zone-mdp" class="page-connexion-zone-mdp" hidden>
-        <label class="page-connexion-label" for="connexion-mdp">Mot de passe</label>
-        <input id="connexion-mdp" class="page-connexion-input" type="password"
-               autocomplete="current-password" placeholder="Ton mot de passe" />
-        <button id="connexion-mdp-btn" class="btn btn-ghost page-connexion-btn-second">
-          🔑 Me connecter
+        <div id="connexion-zone-mdp" class="page-connexion-zone-mdp" hidden>
+          <div class="page-connexion-label-ligne">
+            <label class="page-connexion-label" for="connexion-mdp">Mot de passe</label>
+            <button id="connexion-oubli" class="page-connexion-lien page-connexion-lien-petit" type="button">
+              Mot de passe oublié&nbsp;?
+            </button>
+          </div>
+          <input id="connexion-mdp" name="password" class="page-connexion-input" type="password"
+                 autocomplete="current-password" placeholder="Ton mot de passe" />
+        </div>
+
+        <label class="page-connexion-switch">
+          <input id="connexion-rester" type="checkbox" checked />
+          <span>Rester connecté sur cet appareil</span>
+        </label>
+
+        <button id="connexion-envoyer" class="btn btn-accent page-connexion-btn" type="submit">
+          ✉️ Recevoir un lien de connexion
         </button>
-      </div>
-
-      <label class="page-connexion-switch">
-        <input id="connexion-rester" type="checkbox" checked />
-        <span>Rester connecté sur cet appareil</span>
-      </label>
-
-      <button id="connexion-lien" class="btn btn-accent page-connexion-btn">
-        ✉️ Recevoir un lien de connexion
-      </button>
+      </form>
 
       <button id="connexion-bascule-mdp" class="page-connexion-lien" type="button">
-        Mot de passe oublié
+        Se connecter avec un mot de passe
       </button>
 
-      <p id="connexion-statut" class="gen-statut" hidden></p>
+      <p id="connexion-statut" class="gen-statut" role="status" aria-live="polite" hidden></p>
 
       <p class="page-connexion-aide">
-        La session est mémorisée sur cet appareil : tu n'auras pas à te
-        reconnecter à chaque ouverture. Pour changer d'appareil, redemande
-        simplement un lien.
+        « Rester connecté » garde ta session sur cet appareil : pas besoin de
+        te reconnecter à chaque visite. Décoche la case sur un ordinateur
+        partagé — tu seras déconnecté à la fermeture du navigateur.
       </p>
 
       <details class="page-connexion-diagnostic">
@@ -1344,6 +1351,31 @@
       </div>
 
       <p id="compte-statut" class="gen-statut" hidden></p>
+    </div>
+  </div>
+
+  <!-- Nouveau mot de passe — ouverte automatiquement quand l'utilisateur
+       arrive par un lien « Mot de passe oublié » (événement PASSWORD_RECOVERY
+       de Supabase). -->
+  <div id="modal-nouveau-mdp" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <h2>🔑 Choisis un nouveau mot de passe</h2>
+      <p class="modal-sous-titre">Tu es bien connecté. Enregistre un nouveau
+         mot de passe pour pouvoir l'utiliser lors de tes prochaines connexions.</p>
+      <label class="style-label" for="nouveau-mdp">Nouveau mot de passe</label>
+      <input id="nouveau-mdp" type="password" autocomplete="new-password"
+             placeholder="8 caractères minimum" />
+      <label class="style-label" for="nouveau-mdp-confirm">Confirme-le</label>
+      <input id="nouveau-mdp-confirm" type="password" autocomplete="new-password" />
+      <p id="nouveau-mdp-statut" class="gen-statut" hidden></p>
+      <div class="boutons-espaces">
+        <button id="nouveau-mdp-valider" class="btn btn-accent" style="width:100%">
+          Enregistrer le mot de passe
+        </button>
+        <button id="nouveau-mdp-plus-tard" class="btn btn-ghost btn-petit" style="width:100%">
+          Plus tard
+        </button>
+      </div>
     </div>
   </div>
 
