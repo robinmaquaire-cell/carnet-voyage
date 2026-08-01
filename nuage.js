@@ -263,10 +263,27 @@ function demarrerNuage() {
     console.info("[LogBookMap] Demarrage auth — token present dans localStorage :", tokenSessionPresent());
   } catch (e) {}
 
+  // Appel explicite a getSession() : force Supabase a lire le stockage
+  // et a nous restituer la session s'il y en a une. On n'attend pas la
+  // reponse ici — l'evenement INITIAL_SESSION sera dispatche de toute
+  // facon — mais cela stabilise le comportement au demarrage sur certains
+  // navigateurs qui peuvent retarder l'evenement.
+  sbClient.auth.getSession().then(({ data, error }) => {
+    try {
+      console.info("[LogBookMap] getSession() =>",
+        data && data.session ? "session trouvee (user=" + data.session.user.id + ")" : "aucune session",
+        error ? "erreur: " + error.message : "");
+    } catch (e) {}
+  }).catch((e) => {
+    try { console.warn("[LogBookMap] getSession() rejete :", e); } catch (e2) {}
+  });
+
   sbClient.auth.onAuthStateChange((evenement, session) => {
     try {
       console.info("[LogBookMap] onAuthStateChange :", evenement, "session ?", !!session);
     } catch (e) {}
+    dernierEvenementAuth = evenement + (session ? " (avec session)" : " (sans session)");
+    majDiagnosticConnexion();
     sessionNuage = session;
     try {
       if (session) {
@@ -331,6 +348,26 @@ function statutConnexion(message, erreur) {
   el.className = "gen-statut " + (erreur ? "erreur" : "info");
 }
 
+// Etat courant du dernier evenement auth pour l'affichage diagnostique.
+let dernierEvenementAuth = "aucun encore";
+
+/** Remplit le panneau de diagnostic de la page de connexion. */
+function majDiagnosticConnexion() {
+  const el = document.getElementById("connexion-diagnostic-contenu");
+  if (!el) return;
+  const infos = {
+    version_sw: "v99",
+    heure: new Date().toISOString(),
+    token_dans_localStorage: tokenSessionPresent(),
+    session_active: !!(sessionNuage && sessionNuage.user),
+    dernier_evenement_supabase: dernierEvenementAuth,
+    nuage_configure: nuageConfigure(),
+    url: window.location.href.split("#")[0],
+    localStorage_keys: Object.keys(localStorage).filter((k) => k.startsWith("sb-") || k.startsWith("nuage-")),
+  };
+  el.textContent = JSON.stringify(infos, null, 2);
+}
+
 /**
  * Y a-t-il un token de session Supabase encore stocke sur cet appareil ?
  * Sert de filet de securite : si oui, on ne va PAS afficher la page de
@@ -364,6 +401,7 @@ function majPageConnexion() {
   document.body.classList.toggle("pas-connecte", doitAfficher);
   if (doitAfficher) {
     statutConnexion("");
+    majDiagnosticConnexion();
     // Petit focus sur le champ e-mail pour aller vite au clavier.
     setTimeout(() => {
       const champ = document.getElementById("connexion-email");
