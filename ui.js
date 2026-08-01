@@ -298,12 +298,14 @@ function majEcranVide() {
 function majPopupsAccueil() {
   const bienvenue = document.getElementById("modal-bienvenue");
   const creation = document.getElementById("modal-nouveau-carnet");
-  // Tant que la restauration de session n'est pas tranchée au démarrage, on
-  // ne montre AUCUN pop-up : sinon la « Bienvenue » apparaît à tort pendant
-  // que Supabase rafraîchit le jeton. Idem quand la page de connexion plein
-  // écran est affichée : elle se suffit à elle-même.
+  // Tant que la restauration de session n'est pas tranchée au démarrage, ou
+  // qu'une synchronisation tourne encore, on ne montre AUCUN pop-up : sinon
+  // la « Bienvenue » (ou le « nouveau carnet ») apparaît à tort pendant que
+  // les carnets sont en train d'arriver. Idem quand la page de connexion
+  // plein écran est affichée : elle se suffit à elle-même.
   const pageConnexion = document.getElementById("page-connexion");
   if ((typeof demarrageAuthResolu === "function" && !demarrageAuthResolu()) ||
+      (typeof syncEnCours !== "undefined" && syncEnCours) ||
       (pageConnexion && !pageConnexion.hidden)) {
     bienvenue.hidden = true;
     return;

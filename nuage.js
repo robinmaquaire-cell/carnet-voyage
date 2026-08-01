@@ -328,8 +328,16 @@ function demarrerNuage() {
   // s'affiche tout de suite avec les carnets de l'appareil, et la session
   // se restaure en arrière-plan (bouton du compte : « Connexion… »).
   const jeton = jetonLocalInfos();
-  if (jeton.present && jeton.expire) masquerChargementApp();
-  else if (jeton.present) montrerChargementApp("Connexion à ton compte…");
+  if (jeton.present && jeton.expire) {
+    masquerChargementApp();
+  } else if (jeton.present) {
+    montrerChargementApp("Connexion à ton compte…");
+    // Échappatoire : la restauration d'un jeton valide est normalement
+    // instantanée. Si elle traîne malgré tout (verrous entre onglets…), on
+    // libère l'écran au bout de 2 s — l'app est utilisable pendant que la
+    // connexion se termine en arrière-plan.
+    setTimeout(() => { if (!demarrageResolu) masquerChargementApp(); }, 2000);
+  }
   try {
     console.info("[LogBookMap] Demarrage auth — jeton :",
       jeton.present ? (jeton.expire ? "present (expire)" : "present (valide)") : "absent");
@@ -421,16 +429,13 @@ function resoudreDemarrageConnecte(session) {
   majPageConnexion();
   if (typeof majTitreCarteGlobale === "function") majTitreCarteGlobale();
   assurerProfil();
-  // Premier appareil vide (rien en local) : un écran « Récupération… » évite
-  // l'accueil vide pendant le premier téléchargement. Sinon, les carnets
-  // locaux sont déjà affichés : la synchro se fait discrètement en fond.
-  if (!etat.carnets || etat.carnets.length === 0) {
-    montrerChargementApp("Récupération de tes carnets…");
-    synchroniserNuage().finally(masquerChargementApp);
-  } else {
-    masquerChargementApp();
-    synchroniserNuage();
-  }
+  // L'app est utilisable tout de suite : la synchronisation se fait en
+  // arrière-plan (pastille d'état en haut). Même sur un appareil encore
+  // vierge, on ne bloque plus l'écran — les carnets apparaissent au fil de
+  // la synchro (le pop-up « nouveau carnet » attend la fin, voir
+  // majPopupsAccueil).
+  masquerChargementApp();
+  synchroniserNuage();
   // Consomme un eventuel token ?rejoindrepartage=... dans l'URL.
   rejoindrePartageDepuisUrl();
 }
